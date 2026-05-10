@@ -16,14 +16,25 @@ OP = {
     "PUSH": 0x10,
     "POP":  0x11,
 
-    "LDR":  0x20,
-    "STR":  0x21,
+    "LDB":  0x20,
+    "LDH":  0x21,
+    "LDW":  0x22,
+    "STB":  0x23,
+    "STH":  0x24,
+    "STW":  0x25,
 
     "BL":   0x30,
     "RET":  0x31,
 
     "SVC":  0x40,
     "HLT":  0xFF,
+}
+
+REG_ALIAS = {
+    "ZERO": 0,
+    "SP": 13,
+    "FP": 14,
+    "LR": 15,
 }
 
 
@@ -34,6 +45,9 @@ def reg(x: str) -> int:
     """Convert Rn to int."""
     if isinstance(x, int):
         return x
+    x = x.upper()
+    if x in REG_ALIAS:
+        return REG_ALIAS[x]
     if not x.startswith("R"):
         raise ValueError(f"Expected register, got {x}")
     n = int(x[1:])
@@ -48,6 +62,11 @@ def is_number(x: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def is_reg_token(x: str) -> bool:
+    x = x.upper()
+    return x in REG_ALIAS or (x.startswith("R") and x[1:].isdigit())
 
 
 # =========================================================
@@ -84,7 +103,7 @@ class Assembler:
                 self.labels[line[:-1]] = pc
             else:
                 self.lines.append(line)
-                pc += 1
+                pc += 4
 
     # -----------------------------------------------------
     # resolve operand
@@ -101,8 +120,18 @@ class Assembler:
     # -----------------------------------------------------
     def pass2(self):
         for line in self.lines:
-            p = line.replace(",", "").split()
-            op = p[0]
+            p = (
+                line.replace(",", " ")
+                .replace("[", " ")
+                .replace("]", " ")
+                .replace("+", " ")
+                .split()
+            )
+            op = p[0].upper()
+            if op == "LDR":
+                op = "LDW"
+            elif op == "STR":
+                op = "STW"
 
             # =================================================
             # MOV Rn IMM16
@@ -112,7 +141,7 @@ class Assembler:
                 rd = reg(p[1])
                 src = p[2]
 
-                if src.startswith("R"):
+                if is_reg_token(src):
                     self.out.append(self.encode(OP[op], 0x80 | rd, reg(src), 0))
                 else:
                     imm = self.resolve(src) & 0xFFFF
@@ -129,7 +158,7 @@ class Assembler:
                 rs1 = reg(p[2])
                 src2 = p[3]
 
-                if src2.startswith("R"):
+                if is_reg_token(src2):
                     self.out.append(self.encode(OP[op], rd, rs1, reg(src2)))
                 else:
                     imm = self.resolve(src2)
@@ -169,40 +198,39 @@ class Assembler:
                 self.out.append(self.encode(OP[op], reg(p[1])))
 
             # =================================================
-            # MEMORY
-            # LDR Rn Rbase offset
-            # STR Rn Rbase offset
+            # MEMORY (byte-addressed)
+            # LDB/LDH/LDW Rn Rbase offset
+            # STB/STH/STW Rn Rbase offset
+            # Also accepts bracket syntax: LDW Rn [Rbase + offset]
             # =================================================
-            # =================================================
-            # MEMORY (RISC addressing modes)
-            # LDR Rn Rbase IMM
-            # LDR Rn Rbase Roffset
-            # STR Rn Rbase IMM
-            # STR Rn Rbase Roffset
-            # =================================================
-
-            elif op == "LDR":
+            elif op in ("LDB", "LDH", "LDW"):
                 rd = reg(p[1])
                 base = reg(p[2])
-                off = p[3]
+                off = p[3] if len(p) > 3 else "0"
 
-                if off.startswith("R"):
+                if is_reg_token(off):
                     off_reg = reg(off)
                     self.out.append(self.encode(OP[op], rd, base, 0x80 | off_reg))
                 else:
-                    self.out.append(self.encode(OP[op], rd, base, int(off) & 0x7F))
+                    imm = self.resolve(off)
+                    if imm < 0 or imm > 0x7F:
+                        raise ValueError(f"{op} offset out of range (0..127): {imm}")
+                    self.out.append(self.encode(OP[op], rd, base, imm))
 
 
-            elif op == "STR":
+            elif op in ("STB", "STH", "STW"):
                 rs = reg(p[1])
                 base = reg(p[2])
-                off = p[3]
+                off = p[3] if len(p) > 3 else "0"
 
-                if off.startswith("R"):
+                if is_reg_token(off):
                     off_reg = reg(off)
                     self.out.append(self.encode(OP[op], rs, base, 0x80 | off_reg))
                 else:
-                    self.out.append(self.encode(OP[op], rs, base, int(off) & 0x7F))
+                    imm = self.resolve(off)
+                    if imm < 0 or imm > 0x7F:
+                        raise ValueError(f"{op} offset out of range (0..127): {imm}")
+                    self.out.append(self.encode(OP[op], rs, base, imm))
 
             # =================================================
             # SYSTEM

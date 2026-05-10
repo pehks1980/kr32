@@ -1,4 +1,3 @@
-import struct
 import argparse
 
 
@@ -6,8 +5,11 @@ import argparse
 # KR32-RISC CPU (FINAL STABLE VM)
 # =========================================================
 class CPU:
+    ZERO_REG = 0
     SP_REG = 13
     FP_REG = 14
+    LR_REG = 15
+    MEM_SIZE = 1024 * 1024
 
     def __init__(self):
 
@@ -25,20 +27,22 @@ class CPU:
 
         self.running = True
 
-        # memory
-        self.mem = [0] * 65536
-
-        # program image
-        self.program = {}
+        # byte-addressable memory
+        self.mem = bytearray(self.MEM_SIZE)
 
     # -----------------------------------------------------
     # SAFE REGISTER ACCESS
     # -----------------------------------------------------
     def r(self, i):
-        return self.reg[i & 0x1F]
+        idx = i & 0x1F
+        if idx == self.ZERO_REG:
+            return 0
+        return self.reg[idx]
 
     def setr(self, i, v):
         idx = i & 0x1F
+        if idx == self.ZERO_REG:
+            return
         self.reg[idx] = v & 0xFFFFFFFF
         if idx == self.SP_REG:
             self.sp = self.reg[idx]
@@ -60,6 +64,18 @@ class CPU:
             return c & 0x7F
         return self.r(c)
 
+    def reg_name(self, i):
+        idx = i & 0x1F
+        if idx == self.ZERO_REG:
+            return "ZERO"
+        if idx == self.SP_REG:
+            return "SP"
+        if idx == self.FP_REG:
+            return "FP"
+        if idx == self.LR_REG:
+            return "LR"
+        return f"R{idx}"
+
     def disasm(self, op, a, b, c):
         target = (a << 8) | b
         op_name = {
@@ -72,8 +88,12 @@ class CPU:
             0x07: "BNE",
             0x10: "PUSH",
             0x11: "POP",
-            0x20: "LDR",
-            0x21: "STR",
+            0x20: "LDB",
+            0x21: "LDH",
+            0x22: "LDW",
+            0x23: "STB",
+            0x24: "STH",
+            0x25: "STW",
             0x30: "BL",
             0x31: "RET",
             0x40: "SVC",
@@ -82,22 +102,22 @@ class CPU:
 
         if op == 0x01:
             if a & 0x80:
-                return f"MOV R{a & 0x1F}, R{b}"
-            return f"MOV R{a}, 0x{self.imm16(b, c):04X}"
+                return f"MOV {self.reg_name(a)}, {self.reg_name(b)}"
+            return f"MOV {self.reg_name(a)}, 0x{self.imm16(b, c):04X}"
         if op in (0x02, 0x03):
-            rhs = f"#{c & 0x7F}" if c & 0x80 else f"R{c}"
-            return f"{op_name} R{a}, R{b}, {rhs}"
+            rhs = f"#{c & 0x7F}" if c & 0x80 else self.reg_name(c)
+            return f"{op_name} {self.reg_name(a)}, {self.reg_name(b)}, {rhs}"
         if op == 0x04:
-            return f"CMP R{a}, R{b}"
+            return f"CMP {self.reg_name(a)}, {self.reg_name(b)}"
         if op in (0x05, 0x06, 0x07, 0x30):
             return f"{op_name} {target}"
         if op == 0x10:
-            return f"PUSH R{a}"
+            return f"PUSH {self.reg_name(a)}"
         if op == 0x11:
-            return f"POP R{a}"
-        if op in (0x20, 0x21):
-            offset = f"R{c & 0x1F}" if c & 0x80 else f"#{c}"
-            return f"{op_name} R{a}, [R{b} + {offset}]"
+            return f"POP {self.reg_name(a)}"
+        if op in (0x20, 0x21, 0x22, 0x23, 0x24, 0x25):
+            offset = self.reg_name(c) if c & 0x80 else f"#{c}"
+            return f"{op_name} {self.reg_name(a)}, [{self.reg_name(b)} + {offset}]"
         if op == 0x31:
             return "RET"
         if op == 0x40:
@@ -111,10 +131,10 @@ class CPU:
 
         for i, (old, new) in enumerate(zip(before_reg, self.reg)):
             if old != new:
-                changes.append(f"R{i}:0x{old:08X}->0x{new:08X}")
+                changes.append(f"{self.reg_name(i)}:0x{old:08X}->0x{new:08X}")
 
-        if before_sp != self.sp:
-            changes.append(f"SP:0x{before_sp:04X}->0x{self.sp:04X}")
+        if before_sp != self.sp and before_reg[self.SP_REG] == self.reg[self.SP_REG]:
+            changes.append(f"SP:0x{before_sp:08X}->0x{self.sp:08X}")
 
         if before_pc != self.pc:
             changes.append(f"PC:0x{before_pc:04X}->0x{self.pc:04X}")
@@ -129,8 +149,9 @@ class CPU:
             changes.append(f"RUN:{int(before_running)}->{int(self.running)}")
 
         if mem_write is not None:
-            addr, value = mem_write
-            changes.append(f"MEM[0x{addr:04X}]=0x{value:08X}")
+            addr, value, size = mem_write
+            width = size * 2
+            changes.append(f"MEM{size * 8}[0x{addr:08X}]=0x{value:0{width}X}")
 
         if not changes:
             return "no change"
@@ -139,26 +160,53 @@ class CPU:
     # -----------------------------------------------------
     # MEMORY SAFETY
     # -----------------------------------------------------
-    def mem_read(self, addr):
-        if addr < 0 or addr >= len(self.mem):
-            raise Exception(f"MEM READ OOB {addr}")
+    def check_mem(self, addr, size):
+        if addr < 0 or addr + size > len(self.mem):
+            raise Exception(f"MEM OOB addr=0x{addr:08X} size={size}")
+
+    def mem_read_u8(self, addr):
+        self.check_mem(addr, 1)
         return self.mem[addr]
 
-    def mem_write(self, addr, val):
-        if addr < 0 or addr >= len(self.mem):
-            raise Exception(f"MEM WRITE OOB {addr}")
-        self.mem[addr] = val
+    def mem_read_u16(self, addr):
+        self.check_mem(addr, 2)
+        return int.from_bytes(self.mem[addr:addr + 2], "little")
+
+    def mem_read_u32(self, addr):
+        self.check_mem(addr, 4)
+        return int.from_bytes(self.mem[addr:addr + 4], "little")
+
+    def mem_write_u8(self, addr, val):
+        self.check_mem(addr, 1)
+        self.mem[addr] = val & 0xFF
+
+    def mem_write_u16(self, addr, val):
+        self.check_mem(addr, 2)
+        self.mem[addr:addr + 2] = (val & 0xFFFF).to_bytes(2, "little")
+
+    def mem_write_u32(self, addr, val):
+        self.check_mem(addr, 4)
+        self.mem[addr:addr + 4] = (val & 0xFFFFFFFF).to_bytes(4, "little")
+
+    def hexdump(self, addr, size, width=16):
+        self.check_mem(addr, size)
+        for row in range(addr, addr + size, width):
+            chunk = self.mem[row:min(row + width, addr + size)]
+            hex_part = " ".join(f"{b:02X}" for b in chunk)
+            hex_part = hex_part.ljust(width * 3 - 1)
+            ascii_part = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
+            print(f"{row:08X}  {hex_part}  |{ascii_part}|")
 
     # -----------------------------------------------------
     # STACK
     # -----------------------------------------------------
     def push(self, v):
-        self.set_sp(self.get_sp() - 1)
-        self.mem_write(self.get_sp(), v)
+        self.set_sp(self.get_sp() - 4)
+        self.mem_write_u32(self.get_sp(), v)
 
     def pop(self):
-        v = self.mem_read(self.get_sp())
-        self.set_sp(self.get_sp() + 1)
+        v = self.mem_read_u32(self.get_sp())
+        self.set_sp(self.get_sp() + 4)
         return v
 
     # -----------------------------------------------------
@@ -168,17 +216,15 @@ class CPU:
         with open(file, "rb") as f:
             data = f.read()
 
-        for i, (w,) in enumerate(struct.iter_unpack("<I", data)):
-            self.program[i] = w
+        self.check_mem(0, len(data))
+        self.mem[0:len(data)] = data
 
     # -----------------------------------------------------
     # FETCH
     # -----------------------------------------------------
     def fetch(self):
-        instr = self.program.get(self.pc)
-        if instr is None:
-            raise Exception(f"PC out of range: {self.pc}")
-        self.pc += 1
+        instr = self.mem_read_u32(self.pc)
+        self.pc += 4
         return instr
 
     # -----------------------------------------------------
@@ -198,6 +244,7 @@ class CPU:
                 print("[CPU] MAX STEPS REACHED -> STOP")
                 break
 
+            instr_pc = self.pc
             instr = self.fetch()
 
             op = (instr >> 24) & 0xFF
@@ -265,24 +312,36 @@ class CPU:
             # =================================================
             # MEMORY
             # =================================================
-            elif op == 0x20:  # LDR
+            elif op in (0x20, 0x21, 0x22):  # LDB/LDH/LDW
                 rd = a
                 base = b
 
                 offset = self.r(c & 0x1F) if (c & 0x80) else c
                 addr = self.r(base) + offset
 
-                self.setr(rd, self.mem_read(addr))
+                if op == 0x20:
+                    self.setr(rd, self.mem_read_u8(addr))
+                elif op == 0x21:
+                    self.setr(rd, self.mem_read_u16(addr))
+                else:
+                    self.setr(rd, self.mem_read_u32(addr))
 
-            elif op == 0x21:  # STR
+            elif op in (0x23, 0x24, 0x25):  # STB/STH/STW
                 rs = a
                 base = b
 
                 offset = self.r(c & 0x1F) if (c & 0x80) else c
                 addr = self.r(base) + offset
 
-                self.mem_write(addr, self.r(rs))
-                mem_write = (addr, self.r(rs))
+                if op == 0x23:
+                    self.mem_write_u8(addr, self.r(rs))
+                    mem_write = (addr, self.r(rs) & 0xFF, 1)
+                elif op == 0x24:
+                    self.mem_write_u16(addr, self.r(rs))
+                    mem_write = (addr, self.r(rs) & 0xFFFF, 2)
+                else:
+                    self.mem_write_u32(addr, self.r(rs))
+                    mem_write = (addr, self.r(rs), 4)
 
             # =================================================
             # CALL / RET (FIXED STACK ABI)
@@ -290,11 +349,11 @@ class CPU:
             elif op == 0x30:
                 addr = (a << 8) | b
 
-                self.push(self.pc)
+                self.setr(self.LR_REG, self.pc)
                 self.pc = addr
 
             elif op == 0x31:
-                self.pc = self.pop()
+                self.pc = self.r(self.LR_REG)
 
             # =================================================
             # SYSCALL
@@ -315,7 +374,7 @@ class CPU:
 
             if trace:
                 print(
-                    f"PC={pc_before_exec - 1:04X}  {self.disasm(op, a, b, c):24} "
+                    f"PC={instr_pc:08X}  {self.disasm(op, a, b, c):24} "
                     f"; {self.trace_changes(before_reg, before_sp, pc_before_exec, before_z, before_n, before_running, mem_write)} "
                     f"; OP=0x{op:02X} RAW=0x{instr:08X}"
                 )
@@ -331,6 +390,7 @@ class CPU:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--trace", action="store_true", help="print each instruction")
+    parser.add_argument("--dump", nargs=2, metavar=("ADDR", "SIZE"), help="dump memory after execution")
     args = parser.parse_args()
 
     print("=== KR32 BOOT ===")
@@ -344,6 +404,12 @@ def main():
     print("[BOOT] Starting execution")
 
     cpu.run(0, trace=args.trace)
+
+    if args.dump:
+        addr = int(args.dump[0], 0)
+        size = int(args.dump[1], 0)
+        print(f"[MEM DUMP] addr=0x{addr:08X} size={size}")
+        cpu.hexdump(addr, size)
 
     print("[BOOT] Done")
 

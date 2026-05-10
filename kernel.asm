@@ -1,6 +1,7 @@
 KERNEL_START:
 
-    MOV R13 0xF000
-    MOV R14 0xF000
+    MOV SP 0xF000
+    MOV FP SP
 
     BL USER_START
+    HLT
