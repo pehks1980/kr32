@@ -24,6 +24,8 @@ class CPU:
 
         self.Z = 0
         self.N = 0
+        self.C = 0
+        self.V = 0
 
         self.running = True
 
@@ -64,6 +66,32 @@ class CPU:
             return c & 0x7F
         return self.r(c)
 
+    def signed32(self, v):
+        v &= 0xFFFFFFFF
+        return v - 0x100000000 if v & 0x80000000 else v
+
+    def sign_extend(self, v, bits):
+        sign = 1 << (bits - 1)
+        mask = (1 << bits) - 1
+        v &= mask
+        return (v ^ sign) - sign
+
+    def set_cmp_flags(self, lhs, rhs):
+        lhs &= 0xFFFFFFFF
+        rhs &= 0xFFFFFFFF
+        result = (lhs - rhs) & 0xFFFFFFFF
+        self.Z = (result == 0)
+        self.N = bool(result & 0x80000000)
+        self.C = (lhs >= rhs)
+        self.V = bool(((lhs ^ rhs) & (lhs ^ result) & 0x80000000) != 0)
+
+    def div_trunc(self, lhs, rhs):
+        if rhs == 0:
+            raise ZeroDivisionError("KR32 DIV by zero")
+        negative = (lhs < 0) != (rhs < 0)
+        quotient = abs(lhs) // abs(rhs)
+        return -quotient if negative else quotient
+
     def reg_name(self, i):
         idx = i & 0x1F
         if idx == self.ZERO_REG:
@@ -76,8 +104,8 @@ class CPU:
             return "LR"
         return f"R{idx}"
 
-    def disasm(self, op, a, b, c):
-        target = (a << 8) | b
+    def disasm(self, op, a, b, c, ext=None):
+        target = ext if ext is not None else (a << 8) | b
         op_name = {
             0x01: "MOV",
             0x02: "ADD",
@@ -86,14 +114,36 @@ class CPU:
             0x05: "B",
             0x06: "BEQ",
             0x07: "BNE",
+            0x08: "MUL",
+            0x09: "AND",
+            0x0A: "OR",
+            0x0B: "XOR",
+            0x0C: "SHL",
+            0x0D: "SHR",
+            0x0E: "SAR",
+            0x0F: "LI",
             0x10: "PUSH",
             0x11: "POP",
+            0x12: "BLT",
+            0x13: "BLE",
+            0x14: "BGT",
+            0x15: "BGE",
+            0x16: "DIV",
+            0x17: "MOD",
+            0x18: "DIVU",
+            0x19: "MODU",
+            0x1A: "BLTU",
+            0x1B: "BLEU",
+            0x1C: "BGTU",
+            0x1D: "BGEU",
             0x20: "LDB",
             0x21: "LDH",
             0x22: "LDW",
             0x23: "STB",
             0x24: "STH",
             0x25: "STW",
+            0x26: "LDBS",
+            0x27: "LDHS",
             0x30: "BL",
             0x31: "RET",
             0x40: "SVC",
@@ -104,18 +154,25 @@ class CPU:
             if a & 0x80:
                 return f"MOV {self.reg_name(a)}, {self.reg_name(b)}"
             return f"MOV {self.reg_name(a)}, 0x{self.imm16(b, c):04X}"
-        if op in (0x02, 0x03):
+        if op in (0x02, 0x03, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E):
             rhs = f"#{c & 0x7F}" if c & 0x80 else self.reg_name(c)
             return f"{op_name} {self.reg_name(a)}, {self.reg_name(b)}, {rhs}"
+        if op == 0x08:
+            return f"MUL {self.reg_name(a)}, {self.reg_name(b)}, {self.reg_name(c)}"
+        if op in (0x16, 0x17, 0x18, 0x19):
+            return f"{op_name} {self.reg_name(a)}, {self.reg_name(b)}, {self.reg_name(c)}"
+        if op == 0x0F:
+            return f"LI {self.reg_name(a)}, 0x{target:08X}"
         if op == 0x04:
-            return f"CMP {self.reg_name(a)}, {self.reg_name(b)}"
-        if op in (0x05, 0x06, 0x07, 0x30):
-            return f"{op_name} {target}"
+            rhs = f"#{c & 0x7F}" if c & 0x80 else self.reg_name(b)
+            return f"CMP {self.reg_name(a)}, {rhs}"
+        if op in (0x05, 0x06, 0x07, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
+            return f"{op_name} 0x{target:08X}"
         if op == 0x10:
             return f"PUSH {self.reg_name(a)}"
         if op == 0x11:
             return f"POP {self.reg_name(a)}"
-        if op in (0x20, 0x21, 0x22, 0x23, 0x24, 0x25):
+        if op in (0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27):
             offset = self.reg_name(c) if c & 0x80 else f"#{c}"
             return f"{op_name} {self.reg_name(a)}, [{self.reg_name(b)} + {offset}]"
         if op == 0x31:
@@ -126,7 +183,7 @@ class CPU:
             return "HLT"
         return f"UNKNOWN 0x{op:02X}"
 
-    def trace_changes(self, before_reg, before_sp, before_pc, before_z, before_n, before_running, mem_write):
+    def trace_changes(self, before_reg, before_sp, before_pc, before_z, before_n, before_c, before_v, before_running, mem_write):
         changes = []
 
         for i, (old, new) in enumerate(zip(before_reg, self.reg)):
@@ -144,6 +201,12 @@ class CPU:
 
         if before_n != self.N:
             changes.append(f"N:{int(before_n)}->{int(self.N)}")
+
+        if before_c != self.C:
+            changes.append(f"C:{int(before_c)}->{int(self.C)}")
+
+        if before_v != self.V:
+            changes.append(f"V:{int(before_v)}->{int(self.V)}")
 
         if before_running != self.running:
             changes.append(f"RUN:{int(before_running)}->{int(self.running)}")
@@ -251,17 +314,22 @@ class CPU:
             a  = (instr >> 16) & 0xFF
             b  = (instr >> 8) & 0xFF
             c  = instr & 0xFF
+            ext = None
+            if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
+                ext = self.fetch()
             pc_before_exec = self.pc
             before_reg = self.reg[:]
             before_sp = self.sp
             before_z = self.Z
             before_n = self.N
+            before_c = self.C
+            before_v = self.V
             before_running = self.running
             mem_write = None
             syscall_message = None
 
             # =================================================
-            # MOV
+            # MOV / LI
             # =================================================
             if op == 0x01:
                 if a & 0x80:
@@ -269,8 +337,11 @@ class CPU:
                 else:
                     self.setr(a, self.imm16(b, c))
 
+            elif op == 0x0F:
+                self.setr(a, ext)
+
             # =================================================
-            # ADD / SUB
+            # ALU
             # =================================================
             elif op == 0x02:
                 self.setr(a, self.r(b) + self.alu_rhs(c))
@@ -278,27 +349,98 @@ class CPU:
             elif op == 0x03:
                 self.setr(a, self.r(b) - self.alu_rhs(c))
 
+            elif op == 0x08:
+                self.setr(a, self.r(b) * self.r(c))
+
+            elif op == 0x16:
+                self.setr(a, self.div_trunc(self.signed32(self.r(b)), self.signed32(self.r(c))))
+
+            elif op == 0x17:
+                lhs = self.signed32(self.r(b))
+                rhs = self.signed32(self.r(c))
+                self.setr(a, lhs - self.div_trunc(lhs, rhs) * rhs)
+
+            elif op == 0x18:
+                rhs = self.r(c)
+                if rhs == 0:
+                    raise ZeroDivisionError("KR32 DIVU by zero")
+                self.setr(a, self.r(b) // rhs)
+
+            elif op == 0x19:
+                rhs = self.r(c)
+                if rhs == 0:
+                    raise ZeroDivisionError("KR32 MODU by zero")
+                self.setr(a, self.r(b) % rhs)
+
+            elif op == 0x09:
+                self.setr(a, self.r(b) & self.alu_rhs(c))
+
+            elif op == 0x0A:
+                self.setr(a, self.r(b) | self.alu_rhs(c))
+
+            elif op == 0x0B:
+                self.setr(a, self.r(b) ^ self.alu_rhs(c))
+
+            elif op == 0x0C:
+                self.setr(a, self.r(b) << (self.alu_rhs(c) & 0x1F))
+
+            elif op == 0x0D:
+                self.setr(a, self.r(b) >> (self.alu_rhs(c) & 0x1F))
+
+            elif op == 0x0E:
+                self.setr(a, self.signed32(self.r(b)) >> (self.alu_rhs(c) & 0x1F))
+
             # =================================================
             # CMP
             # =================================================
             elif op == 0x04:
-                r = self.r(a) - self.r(b)
-                self.Z = (r == 0)
-                self.N = (r < 0)
+                self.set_cmp_flags(self.r(a), self.alu_rhs(c) if c & 0x80 else self.r(b))
 
             # =================================================
             # BRANCH
             # =================================================
             elif op == 0x05:
-                self.pc = (a << 8) | b
+                self.pc = ext
 
             elif op == 0x06:
                 if self.Z:
-                    self.pc = (a << 8) | b
+                    self.pc = ext
 
             elif op == 0x07:
                 if not self.Z:
-                    self.pc = (a << 8) | b
+                    self.pc = ext
+
+            elif op == 0x12:
+                if self.N != self.V:
+                    self.pc = ext
+
+            elif op == 0x13:
+                if self.Z or self.N != self.V:
+                    self.pc = ext
+
+            elif op == 0x14:
+                if not self.Z and self.N == self.V:
+                    self.pc = ext
+
+            elif op == 0x15:
+                if self.N == self.V:
+                    self.pc = ext
+
+            elif op == 0x1A:
+                if not self.C:
+                    self.pc = ext
+
+            elif op == 0x1B:
+                if not self.C or self.Z:
+                    self.pc = ext
+
+            elif op == 0x1C:
+                if self.C and not self.Z:
+                    self.pc = ext
+
+            elif op == 0x1D:
+                if self.C:
+                    self.pc = ext
 
             # =================================================
             # STACK
@@ -312,7 +454,7 @@ class CPU:
             # =================================================
             # MEMORY
             # =================================================
-            elif op in (0x20, 0x21, 0x22):  # LDB/LDH/LDW
+            elif op in (0x20, 0x21, 0x22, 0x26, 0x27):  # LDB/LDH/LDW/LDBS/LDHS
                 rd = a
                 base = b
 
@@ -323,8 +465,12 @@ class CPU:
                     self.setr(rd, self.mem_read_u8(addr))
                 elif op == 0x21:
                     self.setr(rd, self.mem_read_u16(addr))
-                else:
+                elif op == 0x22:
                     self.setr(rd, self.mem_read_u32(addr))
+                elif op == 0x26:
+                    self.setr(rd, self.sign_extend(self.mem_read_u8(addr), 8))
+                else:
+                    self.setr(rd, self.sign_extend(self.mem_read_u16(addr), 16))
 
             elif op in (0x23, 0x24, 0x25):  # STB/STH/STW
                 rs = a
@@ -347,10 +493,8 @@ class CPU:
             # CALL / RET (FIXED STACK ABI)
             # =================================================
             elif op == 0x30:
-                addr = (a << 8) | b
-
                 self.setr(self.LR_REG, self.pc)
-                self.pc = addr
+                self.pc = ext
 
             elif op == 0x31:
                 self.pc = self.r(self.LR_REG)
@@ -374,8 +518,8 @@ class CPU:
 
             if trace:
                 print(
-                    f"PC={instr_pc:08X}  {self.disasm(op, a, b, c):24} "
-                    f"; {self.trace_changes(before_reg, before_sp, pc_before_exec, before_z, before_n, before_running, mem_write)} "
+                    f"PC={instr_pc:08X}  {self.disasm(op, a, b, c, ext):30} "
+                    f"; {self.trace_changes(before_reg, before_sp, pc_before_exec, before_z, before_n, before_c, before_v, before_running, mem_write)} "
                     f"; OP=0x{op:02X} RAW=0x{instr:08X}"
                 )
             if syscall_message:

@@ -12,9 +12,29 @@ OP = {
     "B":    0x05,
     "BEQ":  0x06,
     "BNE":  0x07,
+    "MUL":  0x08,
+    "AND":  0x09,
+    "OR":   0x0A,
+    "XOR":  0x0B,
+    "SHL":  0x0C,
+    "SHR":  0x0D,
+    "SAR":  0x0E,
+    "LI":   0x0F,
 
     "PUSH": 0x10,
     "POP":  0x11,
+    "BLT":  0x12,
+    "BLE":  0x13,
+    "BGT":  0x14,
+    "BGE":  0x15,
+    "DIV":  0x16,
+    "MOD":  0x17,
+    "DIVU": 0x18,
+    "MODU": 0x19,
+    "BLTU": 0x1A,
+    "BLEU": 0x1B,
+    "BGTU": 0x1C,
+    "BGEU": 0x1D,
 
     "LDB":  0x20,
     "LDH":  0x21,
@@ -22,6 +42,8 @@ OP = {
     "STB":  0x23,
     "STH":  0x24,
     "STW":  0x25,
+    "LDBS": 0x26,
+    "LDHS": 0x27,
 
     "BL":   0x30,
     "RET":  0x31,
@@ -69,6 +91,23 @@ def is_reg_token(x: str) -> bool:
     return x in REG_ALIAS or (x.startswith("R") and x[1:].isdigit())
 
 
+def normalize_op(op: str) -> str:
+    op = op.upper()
+    aliases = {
+        "LDR": "LDW",
+        "STR": "STW",
+        "ADDI": "ADD",
+        "SUBI": "SUB",
+        "ANDI": "AND",
+        "ORI": "OR",
+        "XORI": "XOR",
+        "SHLI": "SHL",
+        "SHRI": "SHR",
+        "SARI": "SAR",
+    }
+    return aliases.get(op, op)
+
+
 # =========================================================
 # ASSEMBLER
 # =========================================================
@@ -87,6 +126,26 @@ class Assembler:
     def strip_comment(self, line):
         return line.split(";", 1)[0].strip()
 
+    def tokenize(self, line):
+        return (
+            line.replace(",", " ")
+            .replace("[", " ")
+            .replace("]", " ")
+            .replace("+", " ")
+            .split()
+        )
+
+    def instr_size(self, line):
+        op = normalize_op(self.tokenize(line)[0])
+        if op == "LI" or op in (
+            "B", "BEQ", "BNE",
+            "BLT", "BLE", "BGT", "BGE",
+            "BLTU", "BLEU", "BGTU", "BGEU",
+            "BL",
+        ):
+            return 8
+        return 4
+
     # -----------------------------------------------------
     # PASS 1: labels
     # -----------------------------------------------------
@@ -103,7 +162,7 @@ class Assembler:
                 self.labels[line[:-1]] = pc
             else:
                 self.lines.append(line)
-                pc += 4
+                pc += self.instr_size(line)
 
     # -----------------------------------------------------
     # resolve operand
@@ -120,18 +179,8 @@ class Assembler:
     # -----------------------------------------------------
     def pass2(self):
         for line in self.lines:
-            p = (
-                line.replace(",", " ")
-                .replace("[", " ")
-                .replace("]", " ")
-                .replace("+", " ")
-                .split()
-            )
-            op = p[0].upper()
-            if op == "LDR":
-                op = "LDW"
-            elif op == "STR":
-                op = "STW"
+            p = self.tokenize(line)
+            op = normalize_op(p[0])
 
             # =================================================
             # MOV Rn IMM16
@@ -149,11 +198,17 @@ class Assembler:
                         self.encode(OP[op], rd, (imm >> 8) & 0xFF, imm & 0xFF)
                     )
 
+            elif op == "LI":
+                rd = reg(p[1])
+                imm = self.resolve(p[2]) & 0xFFFFFFFF
+                self.out.append(self.encode(OP[op], rd, 0, 0))
+                self.out.append(imm)
+
             # =================================================
-            # ADD/SUB Rn Ra Rb
-            # ADD/SUB Rn Ra IMM7
+            # ALU Rn Ra Rb
+            # ALU Rn Ra IMM7
             # =================================================
-            elif op in ("ADD", "SUB"):
+            elif op in ("ADD", "SUB", "AND", "OR", "XOR", "SHL", "SHR", "SAR"):
                 rd = reg(p[1])
                 rs1 = reg(p[2])
                 src2 = p[3]
@@ -166,27 +221,38 @@ class Assembler:
                         raise ValueError(f"{op} immediate out of range (0..127): {imm}")
                     self.out.append(self.encode(OP[op], rd, rs1, 0x80 | imm))
 
+            elif op in ("MUL", "DIV", "MOD", "DIVU", "MODU"):
+                rd = reg(p[1])
+                rs1 = reg(p[2])
+                rs2 = reg(p[3])
+                self.out.append(self.encode(OP[op], rd, rs1, rs2))
+
             # =================================================
             # CMP Ra Rb   (ONLY 2 operands)
             # =================================================
             elif op == "CMP":
                 rs1 = reg(p[1])
-                rs2 = reg(p[2])
-                self.out.append(self.encode(OP[op], rs1, rs2, 0))
+                rhs = p[2]
+                if is_reg_token(rhs):
+                    self.out.append(self.encode(OP[op], rs1, reg(rhs), 0))
+                else:
+                    imm = self.resolve(rhs)
+                    if imm < 0 or imm > 0x7F:
+                        raise ValueError(f"{op} immediate out of range (0..127): {imm}")
+                    self.out.append(self.encode(OP[op], rs1, 0, 0x80 | imm))
 
             # =================================================
             # BRANCHES (label)
             # =================================================
-            elif op in ("B", "BEQ", "BNE", "BL"):
-                target = self.resolve(p[1])
-                self.out.append(
-                    self.encode(
-                        OP[op],
-                        (target >> 8) & 0xFF,
-                        target & 0xFF,
-                        0
-                    )
-                )
+            elif op in (
+                "B", "BEQ", "BNE",
+                "BLT", "BLE", "BGT", "BGE",
+                "BLTU", "BLEU", "BGTU", "BGEU",
+                "BL",
+            ):
+                target = self.resolve(p[1]) & 0xFFFFFFFF
+                self.out.append(self.encode(OP[op]))
+                self.out.append(target)
 
             # =================================================
             # PUSH/POP Rn
@@ -203,7 +269,7 @@ class Assembler:
             # STB/STH/STW Rn Rbase offset
             # Also accepts bracket syntax: LDW Rn [Rbase + offset]
             # =================================================
-            elif op in ("LDB", "LDH", "LDW"):
+            elif op in ("LDB", "LDH", "LDW", "LDBS", "LDHS"):
                 rd = reg(p[1])
                 base = reg(p[2])
                 off = p[3] if len(p) > 3 else "0"
