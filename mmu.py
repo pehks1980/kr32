@@ -111,8 +111,10 @@ class MMU:
             self.tlb.insert(vpn, pte.ppn, pte.flags)
             ppn = pte.ppn
             flags = pte.flags
+            tlb = False
         else:
             ppn, flags = cached
+            tlb = True
 
         self.check_access(vaddr, access, mode, flags)
-        return ppn * self.page_size + page_offset
+        return ppn * self.page_size + page_offset, tlb

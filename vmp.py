@@ -19,7 +19,10 @@ class CPU:
     LR_REG = 15
     MEM_SIZE = 1024 * 1024
 
-    def __init__(self, mem_size=MEM_SIZE, page_size=4096, virtual_size=1024 * 1024 * 1024, tlb_size=64):
+    def __init__(self, mem_size=MEM_SIZE, page_size=4096, virtual_size=1024 * 1024 * 1024,
+                 tlb_size=64,
+        tracevirt = False,
+    ):
         self.MEM_SIZE = mem_size
 
         # 32 general-purpose registers
@@ -44,6 +47,8 @@ class CPU:
         self.mmu = MMU(page_size=page_size, virtual_size=virtual_size, tlb_size=tlb_size)
         self.mmu.identity_map(0, self.MEM_SIZE, PAGE_READ | PAGE_WRITE | PAGE_EXEC)
         self.mmu.enabled = True
+        #trace virtaadd transl
+        self.tracevirt = tracevirt
 
     # -----------------------------------------------------
     # SAFE REGISTER ACCESS
@@ -241,7 +246,7 @@ class CPU:
             raise Exception(f"PHYS MEM OOB paddr=0x{paddr:08X} size={size}")
 
     def translate(self, vaddr, access):
-        paddr = self.mmu.translate(vaddr, access, self.mode)
+        paddr, _ = self.mmu.translate(vaddr, access, self.mode)
         self.check_physical_mem(paddr, 1)
         return paddr
 
@@ -252,33 +257,63 @@ class CPU:
     def physical_write_u8(self, paddr, val):
         self.check_physical_mem(paddr, 1)
         self.physical_memory[paddr] = val & 0xFF
+    #trace virt to physical translation
+    def trace_virt(self, bl_type,addr,access):
+        if self.tracevirt:
+            access_name = {
+                "r": "READ",
+                "w": "WRITE",
+                "x": "EXEC",
+            }.get(access, access)
+
+            paddr, tlb = self.mmu.translate(addr, access, self.mode)
+            if tlb is False:
+                print(f"[VIRT] {access_name:<5} [TABLE] ", end="")
+            else:
+                print(f"[VIRT] {access_name:<5} [TLB] ", end="")
+            print(f"{bl_type*8} bits VA=0x{addr:08X}->PA=0x{paddr:08X} ")
+
+    #help read when not byte
+    def mem_read_u8_hlp(self, addr, access="r"):
+        value_u8 = self.physical_read_u8(self.translate(addr, access))
+        return value_u8
 
     def mem_read_u8(self, addr, access="r"):
-        return self.physical_read_u8(self.translate(addr, access))
+        self.trace_virt(1,addr,access)
+        value_u8 = self.physical_read_u8(self.translate(addr, access))
+        return value_u8
 
     def mem_read_u16(self, addr, access="r"):
-        return self.mem_read_u8(addr, access) | (self.mem_read_u8(addr + 1, access) << 8)
+        self.trace_virt(2, addr, access)
+        return self.mem_read_u8_hlp(addr, access) | (self.mem_read_u8_hlp(addr + 1, access) << 8)
 
     def mem_read_u32(self, addr, access="r"):
+        self.trace_virt(4, addr, access)
         return (
-            self.mem_read_u8(addr, access)
-            | (self.mem_read_u8(addr + 1, access) << 8)
-            | (self.mem_read_u8(addr + 2, access) << 16)
-            | (self.mem_read_u8(addr + 3, access) << 24)
+            self.mem_read_u8_hlp(addr, access)
+            | (self.mem_read_u8_hlp(addr + 1, access) << 8)
+            | (self.mem_read_u8_hlp(addr + 2, access) << 16)
+            | (self.mem_read_u8_hlp(addr + 3, access) << 24)
         )
 
+    def mem_write_u8_hlp(self, addr, val):
+        self.physical_write_u8(self.translate(addr, "w"), val)
+
     def mem_write_u8(self, addr, val):
+        self.trace_virt(1, addr, "w")
         self.physical_write_u8(self.translate(addr, "w"), val)
 
     def mem_write_u16(self, addr, val):
-        self.mem_write_u8(addr, val)
-        self.mem_write_u8(addr + 1, val >> 8)
+        self.trace_virt(2, addr, "w")
+        self.mem_write_u8_hlp(addr, val)
+        self.mem_write_u8_hlp(addr + 1, val >> 8)
 
     def mem_write_u32(self, addr, val):
-        self.mem_write_u8(addr, val)
-        self.mem_write_u8(addr + 1, val >> 8)
-        self.mem_write_u8(addr + 2, val >> 16)
-        self.mem_write_u8(addr + 3, val >> 24)
+        self.trace_virt(4, addr, "w")
+        self.mem_write_u8_hlp(addr, val)
+        self.mem_write_u8_hlp(addr + 1, val >> 8)
+        self.mem_write_u8_hlp(addr + 2, val >> 16)
+        self.mem_write_u8_hlp(addr + 3, val >> 24)
 
     def hexdump(self, addr, size, width=16):
         if size < 0:
@@ -580,6 +615,11 @@ def main():
     parser.add_argument("--virtual-size", default=str(1024 * 1024 * 1024), help="virtual address space size in bytes")
     parser.add_argument("--tlb-size", default="64", help="TLB entry count")
     parser.add_argument("--no-mmu", action="store_true", help="disable address translation")
+    parser.add_argument(
+        "--tracevirt",
+        action="store_true",
+        help="trace virtual->physical address translations"
+    )
     args = parser.parse_args()
 
     print("=== KR32 BOOT ===")
@@ -589,6 +629,7 @@ def main():
         page_size=int(args.page_size, 0),
         virtual_size=int(args.virtual_size, 0),
         tlb_size=int(args.tlb_size, 0),
+        tracevirt=args.tracevirt,
     )
     if args.no_mmu:
         cpu.mmu.enabled = False
