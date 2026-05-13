@@ -50,6 +50,9 @@ OP = {
 
     "SVC":  0x40,
     "HLT":  0xFF,
+
+    "SETPTBR": 0x50,
+    "ENABLEMMU": 0x51,
 }
 
 REG_ALIAS = {
@@ -297,6 +300,15 @@ class Assembler:
                     if imm < 0 or imm > 0x7F:
                         raise ValueError(f"{op} offset out of range (0..127): {imm}")
                     self.out.append(self.encode(OP[op], rs, base, imm))
+
+            # =================================================
+            # MMU CONTROL
+            # =================================================
+            elif op == "SETPTBR":
+                self.out.append(self.encode(OP[op], reg(p[1])))
+
+            elif op == "ENABLEMMU":
+                self.out.append(self.encode(OP[op]))
 
             # =================================================
             # SYSTEM

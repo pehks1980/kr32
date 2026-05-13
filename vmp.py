@@ -17,7 +17,7 @@ class CPU:
     SP_REG = 13
     FP_REG = 14
     LR_REG = 15
-    MEM_SIZE = 1024 * 1024
+    MEM_SIZE = 8 * 1024 * 1024
 
     def __init__(self, mem_size=MEM_SIZE, page_size=4096, virtual_size=1024 * 1024 * 1024,
                  tlb_size=64,
@@ -44,9 +44,9 @@ class CPU:
 
         # byte-addressable physical memory
         self.physical_memory = bytearray(self.MEM_SIZE)
-        self.mmu = MMU(page_size=page_size, virtual_size=virtual_size, tlb_size=tlb_size)
-        self.mmu.identity_map(0, self.MEM_SIZE, PAGE_READ | PAGE_WRITE | PAGE_EXEC)
-        self.mmu.enabled = True
+        self.mmu = MMU(page_size=page_size, virtual_size=virtual_size, tlb_size=tlb_size, physical_memory=self.physical_memory)
+        # self.mmu.identity_map(0, self.MEM_SIZE, PAGE_READ | PAGE_WRITE | PAGE_EXEC)  # remove, do in guest
+        self.mmu.enabled = False  # start disabled
         #trace virtaadd transl
         self.tracevirt = tracevirt
 
@@ -165,6 +165,8 @@ class CPU:
             0x30: "BL",
             0x31: "RET",
             0x40: "SVC",
+            0x50: "SETPTBR",
+            0x51: "ENABLEMMU",
             0xFF: "HLT",
         }.get(op)
 
@@ -197,6 +199,10 @@ class CPU:
             return "RET"
         if op == 0x40:
             return f"SVC {a}"
+        if op == 0x50:
+            return f"SETPTBR {self.reg_name(a)}"
+        if op == 0x51:
+            return "ENABLEMMU"
         if op == 0xFF:
             return "HLT"
         return f"UNKNOWN 0x{op:02X}"
@@ -265,6 +271,10 @@ class CPU:
                 "w": "WRITE",
                 "x": "EXEC",
             }.get(access, access)
+
+            if not self.mmu.enabled:
+                print(f"[VIRT] {access_name:<5} [MMU OFF] {bl_type*8} bits VA=0x{addr:08X}->PA=0x{addr:08X} ")
+                return
 
             paddr, tlb = self.mmu.translate(addr, access, self.mode)
             if tlb is False:
@@ -580,6 +590,15 @@ class CPU:
                 if a == 1:
                     syscall_message = "[SYSCALL] EXIT"
                     self.running = False
+
+            # =================================================
+            # MMU CONTROL
+            # =================================================
+            elif op == 0x50:  # SETPTBR
+                self.mmu.ptbr_pa = self.r(a)
+
+            elif op == 0x51:  # ENABLEMMU
+                self.mmu.enabled = True
 
             # =================================================
             # HALT

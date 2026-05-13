@@ -34,7 +34,7 @@ class PageTableEntry:
 
 
 class MMU:
-    def __init__(self, page_size=4096, virtual_size=1024 * 1024 * 1024, tlb_size=64):
+    def __init__(self, page_size=4096, virtual_size=1024 * 1024 * 1024, tlb_size=64, physical_memory=None):
         if page_size <= 0 or page_size & (page_size - 1):
             raise ValueError("page_size must be a power of two")
         if virtual_size <= 0:
@@ -43,9 +43,11 @@ class MMU:
         self.page_size = page_size
         self.virtual_size = virtual_size
         self.page_offset_mask = page_size - 1
-        self.page_table = {}
+        self.page_table = {}  # keep for now, but will remove
         self.tlb = TLB(capacity=tlb_size)
         self.enabled = False
+        self.ptbr_pa = 0  # page table base physical address
+        self.physical_memory = physical_memory
 
     def vpn(self, vaddr):
         return vaddr // self.page_size
@@ -98,19 +100,24 @@ class MMU:
             raise PageFault(vaddr, access, "virtual address out of range")
 
         if not self.enabled:
-            return vaddr
+            return vaddr, False
 
         vpn = self.vpn(vaddr)
         page_offset = self.offset(vaddr)
         cached = self.tlb.lookup(vpn)
 
         if cached is None:
-            pte = self.page_table.get(vpn)
-            if pte is None:
+            # walk 1-level page table in physical memory
+            pte_pa = self.ptbr_pa + vpn * 4
+            if pte_pa + 4 > len(self.physical_memory):
+                raise PageFault(vaddr, access, "page table out of bounds")
+            pte_bytes = self.physical_memory[pte_pa:pte_pa+4]
+            pte = int.from_bytes(pte_bytes, "little")
+            flags = pte & 0xFFF
+            ppn = pte >> 12
+            if not flags & PAGE_PRESENT:
                 raise PageFault(vaddr, access, "unmapped page")
-            self.tlb.insert(vpn, pte.ppn, pte.flags)
-            ppn = pte.ppn
-            flags = pte.flags
+            self.tlb.insert(vpn, ppn, flags)
             tlb = False
         else:
             ppn, flags = cached
