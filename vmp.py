@@ -6,7 +6,30 @@ from mmu import (
     PAGE_EXEC,
     PAGE_READ,
     PAGE_WRITE,
+    PageFault,
 )
+from debug import dump_all, dump_short
+
+
+# =========================================================
+# TRAP/INTERRUPT VECTOR DEFINITIONS
+# =========================================================
+# IDT vector numbers for synchronous exceptions
+TRAP_DIVIDE_BY_ZERO = 0
+TRAP_INVALID_INSTR = 1
+TRAP_PAGE_FAULT = 2
+TRAP_SYSCALL = 3
+TRAP_MISALIGNED = 4
+TRAP_ILLEGAL_MEM = 5
+TRAP_DEBUG = 6
+
+# Vector for async interrupts (future use)
+TRAP_IRQ = 16
+
+
+class TrapDelivery(Exception):
+    """Internal exception used to abort instruction execution when a trap is delivered."""
+    pass
 
 
 # =========================================================
@@ -22,6 +45,7 @@ class CPU:
     def __init__(self, mem_size=MEM_SIZE, page_size=4096, virtual_size=1024 * 1024 * 1024,
                  tlb_size=64,
         tracevirt = False,
+        debug_mode = None,
     ):
         self.MEM_SIZE = mem_size
 
@@ -49,6 +73,27 @@ class CPU:
         self.mmu.enabled = False  # start disabled
         #trace virtaadd transl
         self.tracevirt = tracevirt
+        self.debug_mode = debug_mode
+        self.traceint = False
+        self.current_instr_pc = None
+        self.trap_return_pc = 0
+
+        # =====================================================
+        # TRAP / INTERRUPT STATE
+        # =====================================================
+        # IDT (Interrupt Descriptor Table) base address in physical memory
+        self.idt_base_pa = 0
+
+        # Interrupt enable flag (controls trap delivery)
+        self.interrupt_enabled = False
+
+        # Trap context: saved state when a trap occurs
+        self.trap_epc = 0        # Exception PC (address of faulting instruction)
+        self.trap_cause = 0      # Vector number or cause code
+        self.trap_value = 0      # Additional info (e.g., fault address for page faults)
+
+        # Flag to mark we are currently in a trap handler
+        self.in_trap_handler = False
 
     # -----------------------------------------------------
     # SAFE REGISTER ACCESS
@@ -166,7 +211,12 @@ class CPU:
             0x31: "RET",
             0x40: "SVC",
             0x50: "SETPTBR",
-            0x51: "ENABLEMMU",
+            0x51: "SETIDTR",
+            0x52: "ENABLEMMU",
+            0x53: "ENABLEINT",
+            0x54: "DISABLEINT",
+            0x55: "IRET",
+            0x56: "DEBUG",
             0xFF: "HLT",
         }.get(op)
 
@@ -202,7 +252,17 @@ class CPU:
         if op == 0x50:
             return f"SETPTBR {self.reg_name(a)}"
         if op == 0x51:
+            return f"SETIDTR {self.reg_name(a)}"
+        if op == 0x52:
             return "ENABLEMMU"
+        if op == 0x53:
+            return "ENABLEINT"
+        if op == 0x54:
+            return "DISABLEINT"
+        if op == 0x55:
+            return "IRET"
+        if op == 0x56:
+            return "DEBUG"
         if op == 0xFF:
             return "HLT"
         return f"UNKNOWN 0x{op:02X}"
@@ -252,9 +312,60 @@ class CPU:
             raise Exception(f"PHYS MEM OOB paddr=0x{paddr:08X} size={size}")
 
     def translate(self, vaddr, access):
-        paddr, _ = self.mmu.translate(vaddr, access, self.mode)
+        try:
+            paddr, _ = self.mmu.translate(vaddr, access, self.mode)
+        except PageFault as exc:
+            self.raise_trap(TRAP_PAGE_FAULT, vaddr)
+            raise TrapDelivery()
         self.check_physical_mem(paddr, 1)
         return paddr
+
+    def raise_trap(self, vector, value=0):
+        """
+        Deliver a synchronous trap/exception to the guest kernel.
+
+        This is called when a fault occurs (divide-by-zero, page fault, etc).
+        The CPU saves context and vectors through the IDT to the handler.
+
+        Args:
+            vector: trap vector number (TRAP_DIVIDE_BY_ZERO, TRAP_PAGE_FAULT, etc)
+            value: optional extra info (e.g., faulting address for page faults)
+        """
+        fault_pc = self.current_instr_pc if self.current_instr_pc is not None else self.pc
+        self.trap_epc = fault_pc
+        self.trap_return_pc = fault_pc + 4
+        self.trap_cause = vector
+        self.trap_value = value
+
+        # Make trap arguments visible to the guest handler
+        self.setr(0, value)
+        self.setr(1, vector)
+
+        if self.traceint:
+            print(f"[TRAP] vector={vector} value=0x{value:08X} pc=0x{fault_pc:08X} handler_base=0x{self.idt_base_pa:08X}")
+
+        # Check if IDT base is set and interrupt delivery is enabled
+        if self.idt_base_pa == 0:
+            print(f"[TRAP FATAL] vector={vector} @ pc=0x{self.trap_epc:08X}, no IDT base set")
+            self.running = False
+            raise TrapDelivery()
+
+        if not self.interrupt_enabled:
+            print(f"[TRAP MASKED] vector={vector} @ pc=0x{self.trap_epc:08X}")
+            raise TrapDelivery()
+
+        handler_pa = self.idt_base_pa + vector * 4
+        if handler_pa + 4 > len(self.physical_memory):
+            print(f"[TRAP FATAL] IDT entry out of bounds: vector={vector}")
+            self.running = False
+            raise TrapDelivery()
+
+        handler_pc_bytes = self.physical_memory[handler_pa:handler_pa+4]
+        handler_pc = int.from_bytes(handler_pc_bytes, "little")
+
+        self.in_trap_handler = True
+        self.pc = handler_pc
+        raise TrapDelivery()
 
     def physical_read_u8(self, paddr):
         self.check_physical_mem(paddr, 1)
@@ -276,7 +387,13 @@ class CPU:
                 print(f"[VIRT] {access_name:<5} [MMU OFF] {bl_type*8} bits VA=0x{addr:08X}->PA=0x{addr:08X} ")
                 return
 
-            paddr, tlb = self.mmu.translate(addr, access, self.mode)
+            try:
+                paddr, tlb = self.mmu.translate(addr, access, self.mode)
+            except PageFault:
+                print(f"[VIRT] {access_name:<5} [PAGE FLT] {bl_type*8} bits VA=0x{addr:08X} ")
+                self.raise_trap(TRAP_PAGE_FAULT, addr)
+                raise TrapDelivery()
+
             if tlb is False:
                 print(f"[VIRT] {access_name:<5} [TABLE] ", end="")
             else:
@@ -392,231 +509,279 @@ class CPU:
                 break
 
             instr_pc = self.pc
-            instr = self.fetch()
+            self.current_instr_pc = instr_pc
 
-            op = (instr >> 24) & 0xFF
-            a  = (instr >> 16) & 0xFF
-            b  = (instr >> 8) & 0xFF
-            c  = instr & 0xFF
-            ext = None
-            if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
-                ext = self.fetch()
-            pc_before_exec = self.pc
-            before_reg = self.reg[:]
-            before_sp = self.sp
-            before_z = self.Z
-            before_n = self.N
-            before_c = self.C
-            before_v = self.V
-            before_running = self.running
-            mem_write = None
-            syscall_message = None
+            try:
+                instr = self.fetch()
 
-            # =================================================
-            # MOV / LI
-            # =================================================
-            if op == 0x01:
-                if a & 0x80:
-                    self.setr(a, self.r(b))
-                else:
-                    self.setr(a, self.imm16(b, c))
+                op = (instr >> 24) & 0xFF
+                a  = (instr >> 16) & 0xFF
+                b  = (instr >> 8) & 0xFF
+                c  = instr & 0xFF
+                ext = None
+                if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
+                    ext = self.fetch()
+                pc_before_exec = self.pc
+                before_reg = self.reg[:]
+                before_sp = self.sp
+                before_z = self.Z
+                before_n = self.N
+                before_c = self.C
+                before_v = self.V
+                before_running = self.running
+                mem_write = None
+                syscall_message = None
 
-            elif op == 0x0F:
-                self.setr(a, ext)
+                # =================================================
+                # MOV / LI
+                # =================================================
+                if op == 0x01:
+                    if a & 0x80:
+                        self.setr(a, self.r(b))
+                    else:
+                        self.setr(a, self.imm16(b, c))
 
-            # =================================================
-            # ALU
-            # =================================================
-            elif op == 0x02:
-                self.setr(a, self.r(b) + self.alu_rhs(c))
+                elif op == 0x0F:
+                    self.setr(a, ext)
 
-            elif op == 0x03:
-                self.setr(a, self.r(b) - self.alu_rhs(c))
+                # =================================================
+                # ALU
+                # =================================================
+                elif op == 0x02:
+                    self.setr(a, self.r(b) + self.alu_rhs(c))
 
-            elif op == 0x08:
-                self.setr(a, self.r(b) * self.r(c))
+                elif op == 0x03:
+                    self.setr(a, self.r(b) - self.alu_rhs(c))
 
-            elif op == 0x16:
-                self.setr(a, self.div_trunc(self.signed32(self.r(b)), self.signed32(self.r(c))))
+                elif op == 0x08:
+                    self.setr(a, self.r(b) * self.r(c))
 
-            elif op == 0x17:
-                lhs = self.signed32(self.r(b))
-                rhs = self.signed32(self.r(c))
-                self.setr(a, lhs - self.div_trunc(lhs, rhs) * rhs)
+                elif op == 0x16:  # DIV (signed)
+                    # Division by zero raises a trap
+                    rhs = self.signed32(self.r(c))
+                    if rhs == 0:
+                        self.raise_trap(TRAP_DIVIDE_BY_ZERO, 0x16)
+                    else:
+                        self.setr(a, self.div_trunc(self.signed32(self.r(b)), rhs))
 
-            elif op == 0x18:
-                rhs = self.r(c)
-                if rhs == 0:
-                    raise ZeroDivisionError("KR32 DIVU by zero")
-                self.setr(a, self.r(b) // rhs)
+                elif op == 0x17:  # MOD (signed modulo)
+                    lhs = self.signed32(self.r(b))
+                    rhs = self.signed32(self.r(c))
+                    if rhs == 0:
+                        self.raise_trap(TRAP_DIVIDE_BY_ZERO, 0x17)
+                    else:
+                        self.setr(a, lhs - self.div_trunc(lhs, rhs) * rhs)
 
-            elif op == 0x19:
-                rhs = self.r(c)
-                if rhs == 0:
-                    raise ZeroDivisionError("KR32 MODU by zero")
-                self.setr(a, self.r(b) % rhs)
+                elif op == 0x18:  # DIVU (unsigned)
+                    rhs = self.r(c)
+                    if rhs == 0:
+                        self.raise_trap(TRAP_DIVIDE_BY_ZERO, 0x18)
+                    else:
+                        self.setr(a, self.r(b) // rhs)
 
-            elif op == 0x09:
-                self.setr(a, self.r(b) & self.alu_rhs(c))
+                elif op == 0x19:  # MODU (unsigned modulo)
+                    rhs = self.r(c)
+                    if rhs == 0:
+                        self.raise_trap(TRAP_DIVIDE_BY_ZERO, 0x19)
+                    else:
+                        self.setr(a, self.r(b) % rhs)
 
-            elif op == 0x0A:
-                self.setr(a, self.r(b) | self.alu_rhs(c))
+                elif op == 0x09:
+                    self.setr(a, self.r(b) & self.alu_rhs(c))
 
-            elif op == 0x0B:
-                self.setr(a, self.r(b) ^ self.alu_rhs(c))
+                elif op == 0x0A:
+                    self.setr(a, self.r(b) | self.alu_rhs(c))
 
-            elif op == 0x0C:
-                self.setr(a, self.r(b) << (self.alu_rhs(c) & 0x1F))
+                elif op == 0x0B:
+                    self.setr(a, self.r(b) ^ self.alu_rhs(c))
 
-            elif op == 0x0D:
-                self.setr(a, self.r(b) >> (self.alu_rhs(c) & 0x1F))
+                elif op == 0x0C:
+                    self.setr(a, self.r(b) << (self.alu_rhs(c) & 0x1F))
 
-            elif op == 0x0E:
-                self.setr(a, self.signed32(self.r(b)) >> (self.alu_rhs(c) & 0x1F))
+                elif op == 0x0D:
+                    self.setr(a, self.r(b) >> (self.alu_rhs(c) & 0x1F))
 
-            # =================================================
-            # CMP
-            # =================================================
-            elif op == 0x04:
-                self.set_cmp_flags(self.r(a), self.alu_rhs(c) if c & 0x80 else self.r(b))
+                elif op == 0x0E:
+                    self.setr(a, self.signed32(self.r(b)) >> (self.alu_rhs(c) & 0x1F))
 
-            # =================================================
-            # BRANCH
-            # =================================================
-            elif op == 0x05:
-                self.pc = ext
+                # =================================================
+                # CMP
+                # =================================================
+                elif op == 0x04:
+                    self.set_cmp_flags(self.r(a), self.alu_rhs(c) if c & 0x80 else self.r(b))
 
-            elif op == 0x06:
-                if self.Z:
+                # =================================================
+                # BRANCH
+                # =================================================
+                elif op == 0x05:
                     self.pc = ext
 
-            elif op == 0x07:
-                if not self.Z:
+                elif op == 0x06:
+                    if self.Z:
+                        self.pc = ext
+
+                elif op == 0x07:
+                    if not self.Z:
+                        self.pc = ext
+
+                elif op == 0x12:
+                    if self.N != self.V:
+                        self.pc = ext
+
+                elif op == 0x13:
+                    if self.Z or self.N != self.V:
+                        self.pc = ext
+
+                elif op == 0x14:
+                    if not self.Z and self.N == self.V:
+                        self.pc = ext
+
+                elif op == 0x15:
+                    if self.N == self.V:
+                        self.pc = ext
+
+                elif op == 0x1A:
+                    if not self.C:
+                        self.pc = ext
+
+                elif op == 0x1B:
+                    if not self.C or self.Z:
+                        self.pc = ext
+
+                elif op == 0x1C:
+                    if self.C and not self.Z:
+                        self.pc = ext
+
+                elif op == 0x1D:
+                    if self.C:
+                        self.pc = ext
+
+                # =================================================
+                # STACK
+                # =================================================
+                elif op == 0x10:
+                    self.push(self.r(a))
+
+                elif op == 0x11:
+                    self.setr(a, self.pop())
+
+                # =================================================
+                # MEMORY
+                # =================================================
+                elif op in (0x20, 0x21, 0x22, 0x26, 0x27):  # LDB/LDH/LDW/LDBS/LDHS
+                    rd = a
+                    base = b
+
+                    offset = self.r(c & 0x1F) if (c & 0x80) else c
+                    addr = self.r(base) + offset
+
+                    if op == 0x20:
+                        self.setr(rd, self.mem_read_u8(addr))
+                    elif op == 0x21:
+                        self.setr(rd, self.mem_read_u16(addr))
+                    elif op == 0x22:
+                        self.setr(rd, self.mem_read_u32(addr))
+                    elif op == 0x26:
+                        self.setr(rd, self.sign_extend(self.mem_read_u8(addr), 8))
+                    else:
+                        self.setr(rd, self.sign_extend(self.mem_read_u16(addr), 16))
+
+                elif op in (0x23, 0x24, 0x25):  # STB/STH/STW
+                    rs = a
+                    base = b
+
+                    offset = self.r(c & 0x1F) if (c & 0x80) else c
+                    addr = self.r(base) + offset
+
+                    if op == 0x23:
+                        self.mem_write_u8(addr, self.r(rs))
+                        mem_write = (addr, self.r(rs) & 0xFF, 1)
+                    elif op == 0x24:
+                        self.mem_write_u16(addr, self.r(rs))
+                        mem_write = (addr, self.r(rs) & 0xFFFF, 2)
+                    else:
+                        self.mem_write_u32(addr, self.r(rs))
+                        mem_write = (addr, self.r(rs), 4)
+
+                # =================================================
+                # CALL / RET (FIXED STACK ABI)
+                # =================================================
+                elif op == 0x30:
+                    self.setr(self.LR_REG, self.pc)
                     self.pc = ext
 
-            elif op == 0x12:
-                if self.N != self.V:
-                    self.pc = ext
+                elif op == 0x31:
+                    self.pc = self.r(self.LR_REG)
 
-            elif op == 0x13:
-                if self.Z or self.N != self.V:
-                    self.pc = ext
+                # =================================================
+                # SYSCALL / SOFTWARE TRAP
+                # =================================================
+                elif op == 0x40:  # SVC (a = syscall number)
+                    # Deliver SYSCALL trap with syscall number in trap_value
+                    self.raise_trap(TRAP_SYSCALL, a)
 
-            elif op == 0x14:
-                if not self.Z and self.N == self.V:
-                    self.pc = ext
+                elif op == 0x56:  # DEBUG - user-visible debug trap
+                    if self.debug_mode is not None:
+                        if self.debug_mode == 0:
+                            dump_short(self)
+                        else:
+                            dump_all(self)
+                        self.raise_trap(TRAP_DEBUG, 0)
 
-            elif op == 0x15:
-                if self.N == self.V:
-                    self.pc = ext
+                # =================================================
+                # MMU CONTROL
+                # =================================================
+                elif op == 0x50:  # SETPTBR Rn - set page table base register
+                    self.mmu.ptbr_pa = self.r(a)
 
-            elif op == 0x1A:
-                if not self.C:
-                    self.pc = ext
+                elif op == 0x51:  # SETIDTR Rn - set IDT base register
+                    # Guest kernel sets the IDT base physical address
+                    self.idt_base_pa = self.r(a)
 
-            elif op == 0x1B:
-                if not self.C or self.Z:
-                    self.pc = ext
+                elif op == 0x52:  # ENABLEMMU
+                    self.mmu.enabled = True
 
-            elif op == 0x1C:
-                if self.C and not self.Z:
-                    self.pc = ext
+                # =================================================
+                # TRAP / INTERRUPT CONTROL
+                # =================================================
+                elif op == 0x53:  # ENABLEINT - enable interrupt delivery
+                    # After this, traps can be delivered via IDT
+                    self.interrupt_enabled = True
 
-            elif op == 0x1D:
-                if self.C:
-                    self.pc = ext
+                elif op == 0x54:  # DISABLEINT - disable interrupt delivery
+                    # Traps will be masked after this
+                    self.interrupt_enabled = False
 
-            # =================================================
-            # STACK
-            # =================================================
-            elif op == 0x10:
-                self.push(self.r(a))
+                elif op == 0x55:  # IRET - return from trap
+                    # Restore PC from trap context and clear trap handler flag
+                    # In a real CPU, this would restore flags and privilege mode too
+                    self.in_trap_handler = False
+                    self.pc = self.trap_return_pc
 
-            elif op == 0x11:
-                self.setr(a, self.pop())
-
-            # =================================================
-            # MEMORY
-            # =================================================
-            elif op in (0x20, 0x21, 0x22, 0x26, 0x27):  # LDB/LDH/LDW/LDBS/LDHS
-                rd = a
-                base = b
-
-                offset = self.r(c & 0x1F) if (c & 0x80) else c
-                addr = self.r(base) + offset
-
-                if op == 0x20:
-                    self.setr(rd, self.mem_read_u8(addr))
-                elif op == 0x21:
-                    self.setr(rd, self.mem_read_u16(addr))
-                elif op == 0x22:
-                    self.setr(rd, self.mem_read_u32(addr))
-                elif op == 0x26:
-                    self.setr(rd, self.sign_extend(self.mem_read_u8(addr), 8))
-                else:
-                    self.setr(rd, self.sign_extend(self.mem_read_u16(addr), 16))
-
-            elif op in (0x23, 0x24, 0x25):  # STB/STH/STW
-                rs = a
-                base = b
-
-                offset = self.r(c & 0x1F) if (c & 0x80) else c
-                addr = self.r(base) + offset
-
-                if op == 0x23:
-                    self.mem_write_u8(addr, self.r(rs))
-                    mem_write = (addr, self.r(rs) & 0xFF, 1)
-                elif op == 0x24:
-                    self.mem_write_u16(addr, self.r(rs))
-                    mem_write = (addr, self.r(rs) & 0xFFFF, 2)
-                else:
-                    self.mem_write_u32(addr, self.r(rs))
-                    mem_write = (addr, self.r(rs), 4)
-
-            # =================================================
-            # CALL / RET (FIXED STACK ABI)
-            # =================================================
-            elif op == 0x30:
-                self.setr(self.LR_REG, self.pc)
-                self.pc = ext
-
-            elif op == 0x31:
-                self.pc = self.r(self.LR_REG)
-
-            # =================================================
-            # SYSCALL
-            # =================================================
-            elif op == 0x40:
-                if a == 1:
-                    syscall_message = "[SYSCALL] EXIT"
+                # =================================================
+                # HALT
+                # =================================================
+                elif op == 0xFF:
                     self.running = False
 
-            # =================================================
-            # MMU CONTROL
-            # =================================================
-            elif op == 0x50:  # SETPTBR
-                self.mmu.ptbr_pa = self.r(a)
+                else:
+                    # Unknown instruction: deliver invalid instruction trap
+                    self.raise_trap(TRAP_INVALID_INSTR, op)
 
-            elif op == 0x51:  # ENABLEMMU
-                self.mmu.enabled = True
-
-            # =================================================
-            # HALT
-            # =================================================
-            elif op == 0xFF:
-                self.running = False
-
-            else:
-                raise Exception(f"Unknown opcode {op}")
-
-            if trace:
-                print(
-                    f"PC={instr_pc:08X}  {self.disasm(op, a, b, c, ext):30} "
-                    f"; {self.trace_changes(before_reg, before_sp, pc_before_exec, before_z, before_n, before_c, before_v, before_running, mem_write)} "
-                    f"; OP=0x{op:02X} RAW=0x{instr:08X}"
-                )
-            if syscall_message:
-                print(syscall_message)
+                if trace:
+                    print(
+                        f"PC={instr_pc:08X}  {self.disasm(op, a, b, c, ext):30} "
+                        f"; {self.trace_changes(before_reg, before_sp, pc_before_exec, before_z, before_n, before_c, before_v, before_running, mem_write)} "
+                        f"; OP=0x{op:02X} RAW=0x{instr:08X}"
+                    )
+                if syscall_message:
+                    print(syscall_message)
+            except TrapDelivery:
+                if trace:
+                    print(f"PC={instr_pc:08X}  [TRAP] vector={self.trap_cause} -> handler=0x{self.pc:08X}")
+                continue
+            finally:
+                self.current_instr_pc = None
 
         print("[CPU HALTED]")
 
@@ -639,6 +804,17 @@ def main():
         action="store_true",
         help="trace virtual->physical address translations"
     )
+    parser.add_argument(
+        "--traceint",
+        action="store_true",
+        help="trace trap/interrupt delivery"
+    )
+    parser.add_argument(
+        "--debug",
+        type=int,
+        choices=[0, 1],
+        help="enable debug dumps: 0=short (regs+flags), 1=full"
+    )
     args = parser.parse_args()
 
     print("=== KR32 BOOT ===")
@@ -649,7 +825,9 @@ def main():
         virtual_size=int(args.virtual_size, 0),
         tlb_size=int(args.tlb_size, 0),
         tracevirt=args.tracevirt,
+        debug_mode=args.debug,
     )
+    cpu.traceint = args.traceint
     if args.no_mmu:
         cpu.mmu.enabled = False
 

@@ -52,7 +52,12 @@ OP = {
     "HLT":  0xFF,
 
     "SETPTBR": 0x50,
-    "ENABLEMMU": 0x51,
+    "SETIDTR": 0x51,
+    "ENABLEMMU": 0x52,
+    "ENABLEINT": 0x53,
+    "DISABLEINT": 0x54,
+    "IRET": 0x55,
+    "DEBUG": 0x56,
 }
 
 REG_ALIAS = {
@@ -244,6 +249,9 @@ class Assembler:
                         raise ValueError(f"{op} immediate out of range (0..127): {imm}")
                     self.out.append(self.encode(OP[op], rs1, 0, 0x80 | imm))
 
+            elif op == "DEBUG":
+                self.out.append(self.encode(OP[op], 0, 0, 0))
+
             # =================================================
             # BRANCHES (label)
             # =================================================
@@ -318,6 +326,21 @@ class Assembler:
 
             elif op == "SVC":
                 self.out.append(self.encode(OP[op], int(p[1])))
+
+            # =================================================
+            # TRAP / INTERRUPT CONTROL
+            # =================================================
+            elif op == "SETIDTR":
+                self.out.append(self.encode(OP[op], reg(p[1])))
+
+            elif op == "ENABLEINT":
+                self.out.append(self.encode(OP[op]))
+
+            elif op == "DISABLEINT":
+                self.out.append(self.encode(OP[op]))
+
+            elif op == "IRET":
+                self.out.append(self.encode(OP[op]))
 
             elif op == "HLT":
                 self.out.append(self.encode(OP[op]))

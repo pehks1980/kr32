@@ -3,6 +3,7 @@ USER_START:
     LI R1 0x00008000  ; word array base pointer
     LI R2 5           ; word count
 
+    DEBUG
     BL fill_array
 
     ; exercise byte/halfword loads and stores
@@ -145,6 +146,9 @@ unsigned_greater_equal_ok:
     LI R9 0x0B1D0001
     STW R9 R11 72
 
+    DEBUG
+    LI R1 0x00300000
+    LDW R2 R1 0
     SVC 1
     HLT
 
