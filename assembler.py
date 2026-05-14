@@ -144,14 +144,21 @@ class Assembler:
         )
 
     def instr_size(self, line):
-        op = normalize_op(self.tokenize(line)[0])
+        tokens = self.tokenize(line)
+        op = normalize_op(tokens[0])
         if op == "LI" or op in (
             "B", "BEQ", "BNE",
             "BLT", "BLE", "BGT", "BGE",
             "BLTU", "BLEU", "BGTU", "BGEU",
-            "BL",
+            "BL", "CALL", "CALLEX",
         ):
             return 8
+        if op in ("ARG1", "ARG2", "ARG3", "ARG4"):
+            return 4
+        if op in ("FUNC_ENTER", "FUNC_LEAVE"):
+            return 12
+        if op == "RETURN":
+            return 16 if len(tokens) > 1 else 12
         return 4
 
     # -----------------------------------------------------
@@ -273,6 +280,36 @@ class Assembler:
 
             elif op == "POP":
                 self.out.append(self.encode(OP[op], reg(p[1])))
+
+            elif op == "FUNC_ENTER":
+                self.out.append(self.encode(OP["PUSH"], reg("FP")))
+                self.out.append(self.encode(OP["MOV"], 0x80 | reg("FP"), reg("SP"), 0))
+                self.out.append(self.encode(OP["PUSH"], reg("LR")))
+
+            elif op == "FUNC_LEAVE":
+                self.out.append(self.encode(OP["POP"], reg("LR")))
+                self.out.append(self.encode(OP["POP"], reg("FP")))
+                self.out.append(self.encode(OP["RET"]))
+
+            elif op == "RETURN":
+                if len(p) == 1:
+                    self.out.append(self.encode(OP["POP"], reg("LR")))
+                    self.out.append(self.encode(OP["POP"], reg("FP")))
+                    self.out.append(self.encode(OP["RET"]))
+                else:
+                    self.out.append(self.encode(OP["MOV"], 0x80 | reg("R1"), reg(p[1]), 0))
+                    self.out.append(self.encode(OP["POP"], reg("LR")))
+                    self.out.append(self.encode(OP["POP"], reg("FP")))
+                    self.out.append(self.encode(OP["RET"]))
+
+            elif op in ("CALL", "CALLEX"):
+                target = self.resolve(p[1]) & 0xFFFFFFFF
+                self.out.append(self.encode(OP["BL"]))
+                self.out.append(target)
+
+            elif op in ("ARG1", "ARG2", "ARG3", "ARG4"):
+                dest = {"ARG1": "R1", "ARG2": "R2", "ARG3": "R3", "ARG4": "R4"}[op]
+                self.out.append(self.encode(OP["MOV"], 0x80 | reg(dest), reg(p[1]), 0))
 
             # =================================================
             # MEMORY (byte-addressed)

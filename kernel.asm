@@ -4,6 +4,17 @@
 ; This kernel initializes the virtual memory system (MMU + page tables)
 ; and sets up exception handling via an Interrupt Descriptor Table (IDT).
 ; All traps and exceptions are delivered through the IDT.
+;
+; KR32 CALLING CONVENTION:
+;   R0        = hardwired ZERO
+;   R1-R4     = argument registers (arg0..arg3)
+;   R1        = return value register
+;   R5-R11    = caller-saved temporaries
+;   R12       = callee-saved temporary (optional)
+;   R13       = SP (stack pointer)
+;   R14       = FP (frame pointer)
+;   R15       = LR (return link)
+;   Callees must preserve FP/LR/SP and may use R1-R11 freely.
 ; ================================================================
 
 KERNEL_START:
@@ -79,7 +90,7 @@ init_idt:
 init_page_tables:
     ; Page table located at 0x100000 (1MB)
     LI R1 0x00100000  ; PT base (physical address)
-    LI R2 10          ; num entries (test: just map first 10 pages)
+    LI R2 16          ; num entries (map 64KB: VPN 0-15)
     LI R3 0           ; vpn counter
 
 init_loop:

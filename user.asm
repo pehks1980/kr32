@@ -1,10 +1,10 @@
 USER_START:
 
-    LI R1 0x00008000  ; word array base pointer
+    ; Calling convention: R1=arg0, R2=arg1, R3=arg2, R4=arg3
+    ; Return value is delivered in R1. R5-R11 are caller-saved.
     LI R2 5           ; word count
-
-    DEBUG
-    BL fill_array
+    ARG1 R2
+    CALLEX fill_array
 
     ; exercise byte/halfword loads and stores
     LI R6 0x00008100
@@ -91,8 +91,11 @@ greater_ok:
 
     ; divide/modulo and unsigned branch checks
     LI R7 0xFFFFFFF3  ; -13
-    LI R8 5
+    LI R8 0           ; 0 make trap div by 0
     DIV R9 R7 R8
+
+    DEBUG
+
     STW R9 R11 44
 
     MOD R9 R7 R8
@@ -154,29 +157,50 @@ unsigned_greater_equal_ok:
 
 
 fill_array:
+    ; Input: R1 = word count
+    ; Return: R1 = word count
+    ; Creates local array on stack, fills it, then returns.
+    ; Uses caller-saved registers R3-R6; preserves FP/LR/SP.
 
-    ; R2 = counter
-    ; R1 = base
-    ; R0 = hardwired zero
+    FUNC_ENTER
 
-    LI R12 400        ; 100 words
-    SUB SP SP R12
+    ; Preserve the incoming argument for return
+    MOV R2 R1
 
-    MOV R3 R2         ; counter
-    MOV R4 0          ; byte offset
+    ; Allocate space for local array (R1 words = R1*4 bytes)
+    MOV R3 R1
+    SHL R3 R3 2         ; convert words to bytes
+    SUB SP SP R3        ; allocate on stack
+
+    ; Stack frame now:
+    ; [FP]     = saved FP
+    ; [FP-4]   = saved LR
+    ; [FP-8..] = local array starts here
+
+    MOV R3 R2           ; R3 = loop counter (word count)
+    MOV R4 0            ; R4 = byte offset into local array
 
 loop:
+    MOV R5 R3           ; value = counter (count down from R2)
 
-    ; value = counter
-    MOV R5 R3
-
-    STW R5 R1 R4
+    ; Calculate address: FP - 8 - offset
+    MOV R6 FP
+    SUB R6 R6 8         ; point to local array start
+    SUB R6 R6 R4        ; adjust by offset
+    STW R5 R6 0         ; store counter value
 
     ADD R4 R4 4
     SUB R3 R3 1
-
-    CMP R3 R0
+    CMP R3 ZERO
     BNE loop
 
-    ADD SP SP R12
-    RET
+    DEBUG               ; inspect stack frame with filled locals
+
+    ; Set return value before restoring caller state
+    MOV R1 R2
+
+    ; Epilogue: deallocate and restore
+    MOV R3 R2
+    SHL R3 R3 2         ; recalculate bytes to deallocate
+    ADD SP SP R3        ; deallocate local array
+    RETURN R2
