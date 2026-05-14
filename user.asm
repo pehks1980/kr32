@@ -149,11 +149,15 @@ unsigned_greater_equal_ok:
     LI R9 0x0B1D0001
     STW R9 R11 72
 
-    DEBUG
+    DEBUG 3
     LI R1 0x00300000
     LDW R2 R1 0
     SVC 1
-    HLT
+    ; HLT  ; Remove HLT to loop
+
+loop_forever:
+    ;DEBUG 2
+    B loop_forever
 
 
 fill_array:
@@ -194,7 +198,7 @@ loop:
     CMP R3 ZERO
     BNE loop
 
-    DEBUG               ; inspect stack frame with filled locals
+    DEBUG 3              ; inspect stack frame with filled locals
 
     ; Set return value before restoring caller state
     MOV R1 R2

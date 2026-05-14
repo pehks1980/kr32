@@ -1,4 +1,5 @@
 import argparse
+import time
 
 from mmu import (
     MMU,
@@ -9,6 +10,8 @@ from mmu import (
     PageFault,
 )
 from debug import dump_all, dump_short
+from device.timer import PIT
+from device.pic import PIC
 
 
 # =========================================================
@@ -75,8 +78,13 @@ class CPU:
         self.tracevirt = tracevirt
         self.debug_mode = debug_mode
         self.traceint = False
+        self.trace_handler = False
+        self.trace_fault = False
         self.current_instr_pc = None
+        self.current_instr = None
         self.trap_return_pc = 0
+        self.trap_saved_r1 = 0
+        self.trap_saved_r2 = 0
 
         # =====================================================
         # TRAP / INTERRUPT STATE
@@ -94,6 +102,13 @@ class CPU:
 
         # Flag to mark we are currently in a trap handler
         self.in_trap_handler = False
+
+        # =====================================================
+        # DEVICES
+        # =====================================================
+        self.timer = PIT(period_ms=100)  # tick every 1 second
+        self.pic = PIC()
+        self.pic.enable_irq(0)  # enable timer IRQ
 
     # -----------------------------------------------------
     # SAFE REGISTER ACCESS
@@ -262,7 +277,8 @@ class CPU:
         if op == 0x55:
             return "IRET"
         if op == 0x56:
-            return "DEBUG"
+            delay = (a << 16) | (b << 8) | c
+            return f"DEBUG {delay}"
         if op == 0xFF:
             return "HLT"
         return f"UNKNOWN 0x{op:02X}"
@@ -333,16 +349,32 @@ class CPU:
         """
         fault_pc = self.current_instr_pc if self.current_instr_pc is not None else self.pc
         self.trap_epc = fault_pc
-        self.trap_return_pc = fault_pc + 4
+        self.trap_return_pc = self.pc
         self.trap_cause = vector
         self.trap_value = value
 
-        # Make trap arguments visible to the guest handler
-        self.setr(0, value)
-        self.setr(1, vector)
+        # Preserve original register values that are used for trap arguments.
+        # Guest trap handlers can save/restore R1/R2 themselves, but the VM
+        # must restore the interrupted thread's original values on IRET.
+        self.trap_saved_r1 = self.r(1)
+        self.trap_saved_r2 = self.r(2)
 
-        if self.traceint:
+        # Make trap arguments visible to the guest handler
+        self.setr(1, value)
+        self.setr(2, vector)
+
+        if self.traceint or self.trace_fault:
             print(f"[TRAP] vector={vector} value=0x{value:08X} pc=0x{fault_pc:08X} handler_base=0x{self.idt_base_pa:08X}")
+            if self.current_instr is not None:
+                op = (self.current_instr >> 24) & 0xFF
+                a  = (self.current_instr >> 16) & 0xFF
+                b  = (self.current_instr >> 8) & 0xFF
+                c  = self.current_instr & 0xFF
+                if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
+                    target = self.mem_read_u32(fault_pc + 4)
+                    print(f"[TRAP INST] {self.disasm(op, a, b, c, target)}")
+                else:
+                    print(f"[TRAP INST] {self.disasm(op, a, b, c)}")
 
         # Check if IDT base is set and interrupt delivery is enabled
         if self.idt_base_pa == 0:
@@ -510,9 +542,26 @@ class CPU:
 
             instr_pc = self.pc
             self.current_instr_pc = instr_pc
+            self.current_instr = None
 
             try:
+                # =================================================
+                # DEVICE TICKING
+                # =================================================
+                if self.timer.tick():
+                    print("[TIMER] tick")
+                    self.pic.raise_irq(0)
+
+                # Check for pending IRQs
+                if self.interrupt_enabled and not self.in_trap_handler:
+                    irq = self.pic.next_irq()
+                    if irq is not None:
+                        print(f"[IRQ] pending={irq}")
+                        self.pic.ack(irq)  # Auto-ack for now
+                        self.raise_trap(TRAP_IRQ, irq)
+
                 instr = self.fetch()
+                self.current_instr = instr
 
                 op = (instr >> 24) & 0xFF
                 a  = (instr >> 16) & 0xFF
@@ -721,12 +770,17 @@ class CPU:
                     self.raise_trap(TRAP_SYSCALL, a)
 
                 elif op == 0x56:  # DEBUG - user-visible debug trap
+                    debug_delay = (a << 16) | (b << 8) | c
                     if self.debug_mode is not None:
                         if self.debug_mode == 0:
                             dump_short(self)
                         else:
                             dump_all(self)
-                        self.raise_trap(TRAP_DEBUG, 0)
+                        if debug_delay:
+                            time.sleep(debug_delay)
+                        self.raise_trap(TRAP_DEBUG, debug_delay)
+                    elif debug_delay:
+                        time.sleep(debug_delay)
 
                 # =================================================
                 # MMU CONTROL
@@ -753,8 +807,11 @@ class CPU:
                     self.interrupt_enabled = False
 
                 elif op == 0x55:  # IRET - return from trap
-                    # Restore PC from trap context and clear trap handler flag
-                    # In a real CPU, this would restore flags and privilege mode too
+                    # Restore PC and original trap-scratch registers. The guest
+                    # handler may use R1/R2 for trap arguments, but the interrupted
+                    # context must resume with the original register state.
+                    self.setr(1, self.trap_saved_r1)
+                    self.setr(2, self.trap_saved_r2)
                     self.in_trap_handler = False
                     self.pc = self.trap_return_pc
 
@@ -768,7 +825,7 @@ class CPU:
                     # Unknown instruction: deliver invalid instruction trap
                     self.raise_trap(TRAP_INVALID_INSTR, op)
 
-                if trace:
+                if trace or (self.trace_handler and self.in_trap_handler):
                     print(
                         f"PC={instr_pc:08X}  {self.disasm(op, a, b, c, ext):30} "
                         f"; {self.trace_changes(before_reg, before_sp, pc_before_exec, before_z, before_n, before_c, before_v, before_running, mem_write)} "
@@ -810,6 +867,16 @@ def main():
         help="trace trap/interrupt delivery"
     )
     parser.add_argument(
+        "--tracefault",
+        action="store_true",
+        help="also print the trap-faulting instruction when a trap is delivered"
+    )
+    parser.add_argument(
+        "--tracehandler",
+        action="store_true",
+        help="trace instructions only while inside trap/interrupt handlers"
+    )
+    parser.add_argument(
         "--debug",
         type=int,
         choices=[0, 1],
@@ -828,6 +895,8 @@ def main():
         debug_mode=args.debug,
     )
     cpu.traceint = args.traceint
+    cpu.trace_fault = args.tracefault
+    cpu.trace_handler = args.tracehandler
     if args.no_mmu:
         cpu.mmu.enabled = False
 

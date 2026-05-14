@@ -257,7 +257,14 @@ class Assembler:
                     self.out.append(self.encode(OP[op], rs1, 0, 0x80 | imm))
 
             elif op == "DEBUG":
-                self.out.append(self.encode(OP[op], 0, 0, 0))
+                delay = 0
+                if len(p) > 1:
+                    delay = self.resolve(p[1]) & 0xFFFFFF
+                    if delay > 0xFFFFFF:
+                        raise ValueError("DEBUG delay out of range (0..0xFFFFFF)")
+                self.out.append(
+                    self.encode(OP[op], (delay >> 16) & 0xFF, (delay >> 8) & 0xFF, delay & 0xFF)
+                )
 
             # =================================================
             # BRANCHES (label)

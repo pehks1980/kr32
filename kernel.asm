@@ -75,6 +75,10 @@ init_idt:
     LI R2 debug_handler
     STW R2 R1 24
 
+    ; IDT[16] = TRAP_IRQ handler
+    LI R2 irq_handler
+    STW R2 R1 64
+
     ; Set IDT base register
     SETIDTR R1
     
@@ -172,6 +176,7 @@ invalid_instr_handler:
 page_fault_handler:
     ; Page fault handling - could implement demand paging here
     ; For now, just return to the next instruction
+    HLT
     IRET
 
 
@@ -189,8 +194,8 @@ syscall_handler:
     ; - return result in R0
     ; - IRET to resume caller
 
-    ; In this simplified kernel, the syscall number is delivered in R0.
-    CMP R0 1
+    ; In this simplified kernel, the syscall number is delivered in R1.
+    CMP R1 1
     BEQ syscall_exit
     IRET
 
@@ -202,5 +207,53 @@ syscall_exit:
 ; Handler: debug_handler
 
 debug_handler:
-    ; Debug trap: enter debugger mode or inspect CPU state.
+    ; Debug trap handler returns immediately to the faulting instruction.
+    IRET
+
+
+; Handler: irq_handler
+; Trap vector 16 - TRAP_IRQ
+; Hardware interrupt handler.
+; Trap_value in CPU contains the IRQ number.
+
+irq_handler:
+    ; IRQ shell: preserve interrupt context before doing any work.
+    ; Trap entry does not automatically save general-purpose registers,
+    ; so the handler must preserve anything it modifies.
+    PUSH R1
+    PUSH R2
+    PUSH R3
+    PUSH R4
+    PUSH R5
+    PUSH R6
+    PUSH R7
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+    PUSH R14
+    PUSH R15
+
+    ; Handler body can now use R1-R12 and calls safely.
+    LI R2 5           ; word count
+   ; ARG1 R2
+   ; CALLEX fill_array
+
+    ; Restore preserved context in reverse order.
+    POP R15
+    POP R14
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP R5
+    POP R4
+    POP R3
+    POP R2
+    POP R1
+
     IRET
