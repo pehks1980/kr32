@@ -621,7 +621,7 @@ class CPU:
                 # =================================================
                 # MOV / LI
                 # =================================================
-                if op == 0x01:
+                elif op == 0x01:
                     if a & 0x80:
                         self.setr(a, self.r(b))
                     else:
@@ -803,10 +803,10 @@ class CPU:
                 # JR / JALR (FIXED STACK ABI)
                 # =================================================
                 
-                elif op == OP["JR"]:
+                elif op == 0x32:
                     self.pc = self.reg[a]
 
-                elif op == OP["JALR"]:
+                elif op == 0x33:
                     self.reg[15] = self.pc
                     self.pc = self.reg[a]
 

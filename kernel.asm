@@ -21,6 +21,10 @@
 ; ================================================================
 ; KR32 KERNEL - UNIFIED TRAP HANDLER (Linux style)
 ; ================================================================
+.org 0x0000
+B KERNEL_START
+
+.org 0x2000
 
 KERNEL_START:
     LI SP 0x0000F000
@@ -36,7 +40,7 @@ KERNEL_START:
     BL enable_vm
 
     ; Jump to user-mode code
-    BL USER_START
+    B USER_START
     HLT
 
 
@@ -153,6 +157,7 @@ trap_entry:
 .handle_page_fault:
     ; R2 contains fault address
     ; TODO: handle page fault
+    HLT
     BL trap_epilogue
 
 .handle_syscall:

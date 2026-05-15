@@ -130,8 +130,8 @@ class Assembler:
         #self.out = []
         self.pc = 0
         #self.memory = {}
-        self.pc = 0
         self.memory = bytearray(16 * 1024 * 1024)  # 16MB
+
 
     def emit8(self, v):
         self.memory[self.pc] = v & 0xFF
@@ -158,7 +158,7 @@ class Assembler:
 
     
     def tokenize(self, line):
-        line = line.replace(",", " ")
+        line = line.replace(",", " ").upper()
         return line.split()
 
     def instr_size(self, line):
@@ -186,7 +186,7 @@ class Assembler:
         self.pc = 0
 
         for line in src:
-            line = self.strip_comment(line)
+            line = self.strip_comment(line).upper()
 
             if not line:
                 continue
@@ -199,16 +199,19 @@ class Assembler:
                 continue
 
             # directives
-            if tokens[0] == ".org":
+            if tokens[0] == ".ORG":
+                self.lines.append(line)
                 self.pc = int(tokens[1], 0)
                 continue
 
-            elif tokens[0] == ".word":
+            elif tokens[0] == ".WORD":
+                self.lines.append(line)
                 count = len(tokens) - 1
                 self.pc += count * 4
                 continue
 
-            elif tokens[0] == ".space":
+            elif tokens[0] == ".SPACE":
+                self.lines.append(line)
                 self.pc += int(tokens[1], 0)
                 continue
 
@@ -248,21 +251,26 @@ class Assembler:
     # PASS 2: encode
     # -----------------------------------------------------
     def pass2(self):
+        self.pc = 0
+
         for line in self.lines:
             p = self.tokenize(line)
             op = normalize_op(p[0])
 
             if op == ".ORG":
                 self.pc = int(p[1], 0)
+                continue
 
             elif op == ".WORD":
                 for item in p[1:]:
                     self.emit32(self.resolve(item))
+                continue
 
             elif op == ".SPACE":
                 size = int(p[1], 0)
                 for _ in range(size):
                     self.emit8(0)
+                continue
 
             # =================================================
             # MOV Rn IMM16
@@ -273,18 +281,18 @@ class Assembler:
                 src = p[2]
 
                 if is_reg_token(src):
-                    self.out.append(self.encode(OP[op], 0x80 | rd, reg(src), 0))
+                    self.emit32(self.encode(OP[op], 0x80 | rd, reg(src), 0))
                 else:
                     imm = self.resolve(src) & 0xFFFF
-                    self.out.append(
+                    self.emit32(
                         self.encode(OP[op], rd, (imm >> 8) & 0xFF, imm & 0xFF)
                     )
 
             elif op == "LI":
                 rd = reg(p[1])
                 imm = self.resolve(p[2]) & 0xFFFFFFFF
-                self.out.append(self.encode(OP[op], rd, 0, 0))
-                self.out.append(imm)
+                self.emit32(self.encode(OP[op], rd, 0, 0))
+                self.emit32(imm)
 
             # =================================================
             # ALU Rn Ra Rb
@@ -296,18 +304,18 @@ class Assembler:
                 src2 = p[3]
 
                 if is_reg_token(src2):
-                    self.out.append(self.encode(OP[op], rd, rs1, reg(src2)))
+                    self.emit32(self.encode(OP[op], rd, rs1, reg(src2)))
                 else:
                     imm = self.resolve(src2)
                     if imm < 0 or imm > 0x7F:
                         raise ValueError(f"{op} immediate out of range (0..127): {imm}")
-                    self.out.append(self.encode(OP[op], rd, rs1, 0x80 | imm))
+                    self.emit32(self.encode(OP[op], rd, rs1, 0x80 | imm))
 
             elif op in ("MUL", "DIV", "MOD", "DIVU", "MODU"):
                 rd = reg(p[1])
                 rs1 = reg(p[2])
                 rs2 = reg(p[3])
-                self.out.append(self.encode(OP[op], rd, rs1, rs2))
+                self.emit32(self.encode(OP[op], rd, rs1, rs2))
 
             # =================================================
             # CMP Ra Rb   (ONLY 2 operands)
@@ -316,12 +324,12 @@ class Assembler:
                 rs1 = reg(p[1])
                 rhs = p[2]
                 if is_reg_token(rhs):
-                    self.out.append(self.encode(OP[op], rs1, reg(rhs), 0))
+                    self.emit32(self.encode(OP[op], rs1, reg(rhs), 0))
                 else:
                     imm = self.resolve(rhs)
                     if imm < 0 or imm > 0x7F:
                         raise ValueError(f"{op} immediate out of range (0..127): {imm}")
-                    self.out.append(self.encode(OP[op], rs1, 0, 0x80 | imm))
+                    self.emit32(self.encode(OP[op], rs1, 0, 0x80 | imm))
 
             elif op == "DEBUG":
                 delay = 0
@@ -329,7 +337,7 @@ class Assembler:
                     delay = self.resolve(p[1]) & 0xFFFFFF
                     if delay > 0xFFFFFF:
                         raise ValueError("DEBUG delay out of range (0..0xFFFFFF)")
-                self.out.append(
+                self.emit32(
                     self.encode(OP[op], (delay >> 16) & 0xFF, (delay >> 8) & 0xFF, delay & 0xFF)
                 )
 
@@ -343,47 +351,47 @@ class Assembler:
                 "BL",
             ):
                 target = self.resolve(p[1]) & 0xFFFFFFFF
-                self.out.append(self.encode(OP[op]))
-                self.out.append(target)
+                self.emit32(self.encode(OP[op]))
+                self.emit32(target)
 
             # =================================================
             # PUSH/POP Rn
             # =================================================
             elif op == "PUSH":
-                self.out.append(self.encode(OP[op], reg(p[1])))
+                self.emit32(self.encode(OP[op], reg(p[1])))
 
             elif op == "POP":
-                self.out.append(self.encode(OP[op], reg(p[1])))
+                self.emit32(self.encode(OP[op], reg(p[1])))
 
             elif op == "FUNC_ENTER":
-                self.out.append(self.encode(OP["PUSH"], reg("FP")))
-                self.out.append(self.encode(OP["MOV"], 0x80 | reg("FP"), reg("SP"), 0))
-                self.out.append(self.encode(OP["PUSH"], reg("LR")))
+                self.emit32(self.encode(OP["PUSH"], reg("FP")))
+                self.emit32(self.encode(OP["MOV"], 0x80 | reg("FP"), reg("SP"), 0))
+                self.emit32(self.encode(OP["PUSH"], reg("LR")))
 
             elif op == "FUNC_LEAVE":
-                self.out.append(self.encode(OP["POP"], reg("LR")))
-                self.out.append(self.encode(OP["POP"], reg("FP")))
-                self.out.append(self.encode(OP["RET"]))
+                self.emit32(self.encode(OP["POP"], reg("LR")))
+                self.emit32(self.encode(OP["POP"], reg("FP")))
+                self.emit32(self.encode(OP["RET"]))
 
             elif op == "RETURN":
                 if len(p) == 1:
-                    self.out.append(self.encode(OP["POP"], reg("LR")))
-                    self.out.append(self.encode(OP["POP"], reg("FP")))
-                    self.out.append(self.encode(OP["RET"]))
+                    self.emit32(self.encode(OP["POP"], reg("LR")))
+                    self.emit32(self.encode(OP["POP"], reg("FP")))
+                    self.emit32(self.encode(OP["RET"]))
                 else:
-                    self.out.append(self.encode(OP["MOV"], 0x80 | reg("R1"), reg(p[1]), 0))
-                    self.out.append(self.encode(OP["POP"], reg("LR")))
-                    self.out.append(self.encode(OP["POP"], reg("FP")))
-                    self.out.append(self.encode(OP["RET"]))
+                    self.emit32(self.encode(OP["MOV"], 0x80 | reg("R1"), reg(p[1]), 0))
+                    self.emit32(self.encode(OP["POP"], reg("LR")))
+                    self.emit32(self.encode(OP["POP"], reg("FP")))
+                    self.emit32(self.encode(OP["RET"]))
 
             elif op in ("CALL", "CALLEX"):
                 target = self.resolve(p[1]) & 0xFFFFFFFF
-                self.out.append(self.encode(OP["BL"]))
-                self.out.append(target)
+                self.emit32(self.encode(OP["BL"]))
+                self.emit32(target)
 
             elif op in ("ARG1", "ARG2", "ARG3", "ARG4"):
                 dest = {"ARG1": "R1", "ARG2": "R2", "ARG3": "R3", "ARG4": "R4"}[op]
-                self.out.append(self.encode(OP["MOV"], 0x80 | reg(dest), reg(p[1]), 0))
+                self.emit32(self.encode(OP["MOV"], 0x80 | reg(dest), reg(p[1]), 0))
 
             # =================================================
             # MEMORY (byte-addressed)
@@ -398,12 +406,12 @@ class Assembler:
 
                 if is_reg_token(off):
                     off_reg = reg(off)
-                    self.out.append(self.encode(OP[op], rd, base, 0x80 | off_reg))
+                    self.emit32(self.encode(OP[op], rd, base, 0x80 | off_reg))
                 else:
                     imm = self.resolve(off)
                     if imm < 0 or imm > 0x7F:
                         raise ValueError(f"{op} offset out of range (0..127): {imm}")
-                    self.out.append(self.encode(OP[op], rd, base, imm))
+                    self.emit32(self.encode(OP[op], rd, base, imm))
 
 
             elif op in ("STB", "STH", "STW"):
@@ -413,51 +421,51 @@ class Assembler:
 
                 if is_reg_token(off):
                     off_reg = reg(off)
-                    self.out.append(self.encode(OP[op], rs, base, 0x80 | off_reg))
+                    self.emit32(self.encode(OP[op], rs, base, 0x80 | off_reg))
                 else:
                     imm = self.resolve(off)
                     if imm < 0 or imm > 0x7F:
                         raise ValueError(f"{op} offset out of range (0..127): {imm}")
-                    self.out.append(self.encode(OP[op], rs, base, imm))
+                    self.emit32(self.encode(OP[op], rs, base, imm))
 
             # =================================================
             # MMU CONTROL
             # =================================================
             elif op == "SETPTBR":
-                self.out.append(self.encode(OP[op], reg(p[1])))
+                self.emit32(self.encode(OP[op], reg(p[1])))
 
             elif op == "ENABLEMMU":
-                self.out.append(self.encode(OP[op]))
+                self.emit32(self.encode(OP[op]))
 
             # =================================================
             # SYSTEM
             # =================================================
             elif op == "RET":
-                self.out.append(self.encode(OP[op]))
+                self.emit32(self.encode(OP[op]))
 
             elif op == "SVC":
-                self.out.append(self.encode(OP[op], int(p[1])))
+                self.emit32(self.encode(OP[op], int(p[1])))
 
             # =================================================
             # TRAP / INTERRUPT CONTROL
             # =================================================
             elif op == "SETIDTR":
-                self.out.append(self.encode(OP[op], reg(p[1])))
+                self.emit32(self.encode(OP[op], reg(p[1])))
 
             elif op == "ENABLEINT":
-                self.out.append(self.encode(OP[op]))
+                self.emit32(self.encode(OP[op]))
 
             elif op == "DISABLEINT":
-                self.out.append(self.encode(OP[op]))
+                self.emit32(self.encode(OP[op]))
 
             elif op == "IRET":
-                self.out.append(self.encode(OP[op]))
+                self.emit32(self.encode(OP[op]))
 
             elif op == "HLT":
-                self.out.append(self.encode(OP[op]))
+                self.emit32(self.encode(OP[op]))
 
             elif op == "GETCAUSE":
-                self.out.append(self.encode(OP[op], reg(p[1])))
+                self.emit32(self.encode(OP[op], reg(p[1])))
 
             else:
                 raise Exception(f"[ASM] Unknown instruction: {line}")

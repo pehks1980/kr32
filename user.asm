@@ -1,3 +1,5 @@
+.org 0x3000
+
 USER_START:
 
     ; Calling convention: R1=arg0, R2=arg1, R3=arg2, R4=arg3
