@@ -86,6 +86,10 @@ class CPU:
         self.trap_saved_r1 = 0
         self.trap_saved_r2 = 0
 
+        self.scause = 0      # Cause of current trap
+        self.sepc = 0        # Exception PC (you already have trap_epc)
+        self.stval = 0       # Fault address (you already have trap_value)
+
         # =====================================================
         # TRAP / INTERRUPT STATE
         # =====================================================
@@ -232,6 +236,7 @@ class CPU:
             0x54: "DISABLEINT",
             0x55: "IRET",
             0x56: "DEBUG",
+            0x57: "GETCAUSE",
             0xFF: "HLT",
         }.get(op)
 
@@ -279,6 +284,9 @@ class CPU:
         if op == 0x56:
             delay = (a << 16) | (b << 8) | c
             return f"DEBUG {delay}"
+        if op == 0x57:
+            return f"GETCAUSE {self.reg_name(a)}"
+        
         if op == 0xFF:
             return "HLT"
         return f"UNKNOWN 0x{op:02X}"
@@ -353,6 +361,11 @@ class CPU:
         self.trap_cause = vector
         self.trap_value = value
 
+        # Save state
+        self.sepc = self.current_instr_pc if self.current_instr_pc is not None else self.pc
+        self.scause = vector    # ← Set cause register
+        self.stval = value
+
         # Preserve original register values that are used for trap arguments.
         # Guest trap handlers can save/restore R1/R2 themselves, but the VM
         # must restore the interrupted thread's original values on IRET.
@@ -360,8 +373,11 @@ class CPU:
         self.trap_saved_r2 = self.r(2)
 
         # Make trap arguments visible to the guest handler
-        self.setr(1, value)
-        self.setr(2, vector)
+        # for SVC n call handler r1=n
+        # wee need to work it out conventin how to use it in a linux style 
+        #  in handler R1 vector cause R2 -value for page fault address or syscall number
+        self.setr(1, vector)
+        self.setr(2, value)
 
         if self.traceint or self.trace_fault:
             print(f"[TRAP] vector={vector} value=0x{value:08X} pc=0x{fault_pc:08X} handler_base=0x{self.idt_base_pa:08X}")
@@ -810,10 +826,15 @@ class CPU:
                     # Restore PC and original trap-scratch registers. The guest
                     # handler may use R1/R2 for trap arguments, but the interrupted
                     # context must resume with the original register state.
+                    # r1 is used for syscall call number in trap handler, so restoring it is important
+
                     self.setr(1, self.trap_saved_r1)
                     self.setr(2, self.trap_saved_r2)
                     self.in_trap_handler = False
                     self.pc = self.trap_return_pc
+
+                elif op == 0x57:  # GETCAUSE Rd - read scause into register
+                    self.setr(a, self.scause)
 
                 # =================================================
                 # HALT

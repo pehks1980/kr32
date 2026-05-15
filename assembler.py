@@ -388,6 +388,9 @@ class Assembler:
 
             elif op == "HLT":
                 self.out.append(self.encode(OP[op]))
+                
+            elif op == "GETCAUSE":
+                self.out.append(self.encode(OP[op], reg(p[1])))
 
             else:
                 raise Exception(f"[ASM] Unknown instruction: {line}")

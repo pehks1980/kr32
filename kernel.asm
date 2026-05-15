@@ -1,39 +1,18 @@
 ; ================================================================
-; KR32 KERNEL - BOOTSTRAP AND TRAP HANDLERS
-; ================================================================
-; This kernel initializes the virtual memory system (MMU + page tables)
-; and sets up exception handling via an Interrupt Descriptor Table (IDT).
-; All traps and exceptions are delivered through the IDT.
-;
-; KR32 CALLING CONVENTION:
-;   R0        = hardwired ZERO
-;   R1-R4     = argument registers (arg0..arg3)
-;   R1        = return value register
-;   R5-R11    = caller-saved temporaries
-;   R12       = callee-saved temporary (optional)
-;   R13       = SP (stack pointer)
-;   R14       = FP (frame pointer)
-;   R15       = LR (return link)
-;   Callees must preserve FP/LR/SP and may use R1-R11 freely.
+; KR32 KERNEL - UNIFIED TRAP HANDLER (Linux style)
 ; ================================================================
 
 KERNEL_START:
     LI SP 0x0000F000
     MOV FP SP
 
-    ; ================================================================
-    ; PHASE 1: Initialize Interrupt Descriptor Table
-    ; ================================================================
+    ; Initialize unified IDT (all traps go to trap_entry)
     BL init_idt
 
-    ; ================================================================
-    ; PHASE 2: Initialize Page Tables
-    ; ================================================================
+    ; Initialize Page Tables
     BL init_page_tables
 
-    ; ================================================================
-    ; PHASE 3: Enable Interrupts and Virtual Memory
-    ; ================================================================
+    ; Enable MMU and interrupts
     BL enable_vm
 
     ; Jump to user-mode code
@@ -42,184 +21,67 @@ KERNEL_START:
 
 
 ; ================================================================
-; PROCEDURE: init_idt
-; 
-; Set up the Interrupt Descriptor Table with exception handlers.
-; The IDT is a simple array: each entry at offset N*4 contains
-; the handler PC for trap vector N.
+; Initialize IDT - ALL TRAPS GO TO ONE ENTRY
 ; ================================================================
 init_idt:
-    ; IDT located at 0x200000 (2MB boundary, easily identified)
-    LI R1 0x00200000  ; R1 = IDT base
-
-    ; Populate IDT entries with handler addresses
-    ; Each entry is 32-bit handler PC, stored at IDT_BASE + vector*4
-
-    ; IDT[0] = TRAP_DIVIDE_BY_ZERO handler
-    LI R2 divide_by_zero_handler
-    STW R2 R1 0
-
-    ; IDT[1] = TRAP_INVALID_INSTR handler
-    LI R2 invalid_instr_handler
-    STW R2 R1 4
-
-    ; IDT[2] = TRAP_PAGE_FAULT handler
-    LI R2 page_fault_handler
-    STW R2 R1 8
-
-    ; IDT[3] = TRAP_SYSCALL handler
-    LI R2 syscall_handler
-    STW R2 R1 12
-
-    ; IDT[6] = TRAP_DEBUG handler
-    LI R2 debug_handler
-    STW R2 R1 24
-
-    ; IDT[16] = TRAP_IRQ handler
-    LI R2 irq_handler
-    STW R2 R1 64
-
-    ; Set IDT base register
-    SETIDTR R1
+    LI R1 0x00200000           ; IDT base physical address
     
+    ; Only entry 0 matters - all traps go here
+    LI R2 trap_entry
+    STW R2 R1 0                ; IDT[0] = trap_entry
+    
+    ; Optional: fill other entries with same handler for safety
+    LI R2 trap_entry
+    STW R2 R1 4                ; IDT[1]
+    STW R2 R1 8                ; IDT[2]
+    STW R2 R1 12               ; IDT[3]
+    STW R2 R1 24               ; IDT[6]
+    STW R2 R1 64               ; IDT[16]
+    
+    SETIDTR R1
     RET
 
 
 ; ================================================================
-; PROCEDURE: init_page_tables
-; 
-; Build 1-level page table in physical memory.
-; Kernel will use identity mapping for now.
+; Initialize Page Tables (identity map first 64KB)
 ; ================================================================
 init_page_tables:
-    ; Page table located at 0x100000 (1MB)
-    LI R1 0x00100000  ; PT base (physical address)
-    LI R2 16          ; num entries (map 64KB: VPN 0-15)
-    LI R3 0           ; vpn counter
+    LI R1 0x00100000           ; PT base
+    LI R2 16                   ; 16 entries (64KB)
+    LI R3 0                    ; VPN counter
 
 init_loop:
-    ; Build PTE: PPN in high bits, flags in low bits
-    MOV R4 R3         ; PPN = vpn
-    SHL R4 R4 12      ; shift PPN to bits[31:12]
-    LI R6 0x001F      ; flags: PRESENT|READ|WRITE|EXEC|USER
-    OR R4 R4 R6       ; combine PPN + flags
-    SHL R5 R3 2       ; offset = vpn * 4
-    STW R4 R1 R5      ; store PTE at PT_BASE + vpn*4
-
+    MOV R4 R3                  ; PPN = VPN
+    SHL R4 R4 12               ; Shift to bits[31:12]
+    LI R6 0x001F               ; Flags: PRESENT|READ|WRITE|EXEC|USER
+    OR R4 R4 R6
+    SHL R5 R3 2                ; offset = VPN * 4
+    STW R4 R1 R5
+    
     ADD R3 R3 1
     CMP R3 R2
     BNE init_loop
 
-    ; Set page table base register
     LI R1 0x00100000
     SETPTBR R1
-
     RET
 
 
 ; ================================================================
-; PROCEDURE: enable_vm
-; 
-; Activate MMU and enable interrupt delivery.
+; Enable MMU and Interrupts
 ; ================================================================
 enable_vm:
-    ; Enable virtual memory translation
     ENABLEMMU
-
-    ; Enable trap delivery via IDT
     ENABLEINT
-
-    ; Trigger debug dump if VM debug mode is enabled
     DEBUG
-
     RET
 
 
 ; ================================================================
-; TRAP HANDLERS - synchronous exception handlers
+; UNIFIED TRAP ENTRY POINT (all traps go here)
 ; ================================================================
-
-; ================================================================
-; Handler: divide_by_zero_handler
-; 
-; Trap vector 0 - TRAP_DIVIDE_BY_ZERO
-; Triggered by DIV/MOD/DIVU/MODU by zero.
-; ================================================================
-divide_by_zero_handler:
-    ; In a real kernel, we would:
-    ; - save registers
-    ; - log the error
-    ; - signal the faulting process
-    ; - recover or panic
-
-    ; For now, just return to the next instruction
-    IRET
-
-
-; ================================================================
-; Handler: invalid_instr_handler
-; 
-; Trap vector 1 - TRAP_INVALID_INSTR
-; Triggered by unknown/invalid opcode.
-; ================================================================
-invalid_instr_handler:
-    ; Invalid instruction encountered
-    IRET
-
-
-; ================================================================
-; Handler: page_fault_handler
-; 
-; Trap vector 2 - TRAP_PAGE_FAULT
-; Triggered by missing or protected page.
-; ================================================================
-page_fault_handler:
-    ; Page fault handling - could implement demand paging here
-    ; For now, just return to the next instruction
-    HLT
-    IRET
-
-
-; ================================================================
-; Handler: syscall_handler
-; 
-; Trap vector 3 - TRAP_SYSCALL
-; Software trap for system calls (SVC instruction).
-; Trap_value in CPU contains the syscall number.
-; ================================================================
-syscall_handler:
-    ; In a real kernel:
-    ; - read trap_value (syscall number)
-    ; - dispatch to appropriate handler (read, write, exit, etc)
-    ; - return result in R0
-    ; - IRET to resume caller
-
-    ; In this simplified kernel, the syscall number is delivered in R1.
-    CMP R1 1
-    BEQ syscall_exit
-    IRET
-
-syscall_exit:
-    HLT
-
-
-; ================================================================
-; Handler: debug_handler
-
-debug_handler:
-    ; Debug trap handler returns immediately to the faulting instruction.
-    IRET
-
-
-; Handler: irq_handler
-; Trap vector 16 - TRAP_IRQ
-; Hardware interrupt handler.
-; Trap_value in CPU contains the IRQ number.
-
-irq_handler:
-    ; IRQ shell: preserve interrupt context before doing any work.
-    ; Trap entry does not automatically save general-purpose registers,
-    ; so the handler must preserve anything it modifies.
+trap_entry:
+    ; Save all registers (epilogue saves in reverse order)
     PUSH R1
     PUSH R2
     PUSH R3
@@ -234,13 +96,65 @@ irq_handler:
     PUSH R12
     PUSH R14
     PUSH R15
+    
+    ; R1 already contains cause (scause) set by CPU
+    ; R2 already contains stval (fault address or syscall number)
+    
+    ; Dispatch based on cause value in R1
+    CMP R1 0
+    BEQ .handle_divide_zero
+    
+    CMP R1 1
+    BEQ .handle_invalid_instr
+    
+    CMP R1 2
+    BEQ .handle_page_fault
+    
+    CMP R1 3
+    BEQ .handle_syscall
+    
+    CMP R1 6
+    BEQ .handle_debug
+    
+    CMP R1 16
+    BEQ .handle_irq
+    
+    ; Unknown cause - halt
+    HLT
 
-    ; Handler body can now use R1-R12 and calls safely.
-    LI R2 5           ; word count
-   ; ARG1 R2
-   ; CALLEX fill_array
+.handle_divide_zero:
+    ; TODO: handle divide by zero
+    BL trap_epilogue
 
-    ; Restore preserved context in reverse order.
+.handle_invalid_instr:
+    ; TODO: handle invalid instruction
+    BL trap_epilogue
+
+.handle_page_fault:
+    ; R2 contains fault address
+    ; TODO: handle page fault
+    BL trap_epilogue
+
+.handle_syscall:
+    ; R2 contains syscall number
+    CMP R2 1
+    BEQ .syscall_exit
+    BL trap_epilogue
+
+.syscall_exit:
+    HLT
+
+.handle_debug:
+    ; Debug trap - just return
+    BL trap_epilogue
+
+.handle_irq:
+    ; Interrupt handler
+    ; TODO: actual IRQ handling
+    BL trap_epilogue
+
+trap_epilogue:
+    ; Restore all registers in reverse order
     POP R15
     POP R14
     POP R12
@@ -255,5 +169,5 @@ irq_handler:
     POP R3
     POP R2
     POP R1
-
+    
     IRET
