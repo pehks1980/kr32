@@ -1,4 +1,24 @@
 ; ================================================================
+; KR32 KERNEL - BOOTSTRAP AND TRAP HANDLERS
+; ================================================================
+; This kernel initializes the virtual memory system (MMU + page tables)
+; and sets up exception handling via an Interrupt Descriptor Table (IDT).
+; All traps and exceptions are delivered through the IDT.
+;
+; KR32 CALLING CONVENTION:
+;   R0        = hardwired ZERO
+;   R1-R4     = argument registers (arg0..arg3)
+;   R1        = return value register
+;   R5-R11    = caller-saved temporaries
+;   R12       = callee-saved temporary (optional)
+;   R13       = SP (stack pointer)
+;   R14       = FP (frame pointer)
+;   R15       = LR (return link)
+;   Callees must preserve FP/LR/SP and may use R1-R11 freely.
+; KR32 KERNEL - UNIFIED TRAP HANDLER (Linux style)
+; ================================================================
+
+; ================================================================
 ; KR32 KERNEL - UNIFIED TRAP HANDLER (Linux style)
 ; ================================================================
 

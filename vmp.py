@@ -1,5 +1,6 @@
 import argparse
 import time
+from token import OP
 
 from mmu import (
     MMU,
@@ -13,6 +14,16 @@ from debug import dump_all, dump_short
 from device.timer import PIT
 from device.pic import PIC
 
+# KR32 REGS CONVENTION:
+#   R0        = hardwired ZERO
+#   R1-R4     = argument registers (arg0..arg3)
+#   R1        = return value register
+#   R5-R11    = caller-saved temporaries
+#   R12       = callee-saved temporary (optional)
+#   R13       = SP (stack pointer)
+#   R14       = FP (frame pointer)
+#   R15       = LR (return link)
+#   Callees must preserve FP/LR/SP and may use R1-R11 freely.
 
 # =========================================================
 # TRAP/INTERRUPT VECTOR DEFINITIONS
@@ -189,6 +200,7 @@ class CPU:
     def disasm(self, op, a, b, c, ext=None):
         target = ext if ext is not None else (a << 8) | b
         op_name = {
+            0x00: "NOP",
             0x01: "MOV",
             0x02: "ADD",
             0x03: "SUB",
@@ -240,6 +252,8 @@ class CPU:
             0xFF: "HLT",
         }.get(op)
 
+        if op == 0x00:
+            return "NOP"
         if op == 0x01:
             if a & 0x80:
                 return f"MOV {self.reg_name(a)}, {self.reg_name(b)}"
@@ -598,6 +612,13 @@ class CPU:
                 syscall_message = None
 
                 # =================================================
+                # NOP
+                # =================================================
+
+                if op == 0x00:
+                    pass  # NOP
+
+                # =================================================
                 # MOV / LI
                 # =================================================
                 if op == 0x01:
@@ -777,6 +798,17 @@ class CPU:
 
                 elif op == 0x31:
                     self.pc = self.r(self.LR_REG)
+
+                # =================================================
+                # JR / JALR (FIXED STACK ABI)
+                # =================================================
+                
+                elif op == OP["JR"]:
+                    self.pc = self.reg[a]
+
+                elif op == OP["JALR"]:
+                    self.reg[15] = self.pc
+                    self.pc = self.reg[a]
 
                 # =================================================
                 # SYSCALL / SOFTWARE TRAP

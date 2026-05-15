@@ -4,12 +4,13 @@ import struct
 # KR32-RISC OPCODES
 # =========================================================
 OP = {
+    "NOP":  0x00,
     "MOV":  0x01,
     "ADD":  0x02,
     "SUB":  0x03,
     "CMP":  0x04,
 
-    "B":    0x05,
+    "B":    0x05, #Branch (unconditional)
     "BEQ":  0x06,
     "BNE":  0x07,
     "MUL":  0x08,
@@ -23,7 +24,7 @@ OP = {
 
     "PUSH": 0x10,
     "POP":  0x11,
-    "BLT":  0x12,
+    "BLT":  0x12, #branch if less than (signed)
     "BLE":  0x13,
     "BGT":  0x14,
     "BGE":  0x15,
@@ -31,33 +32,36 @@ OP = {
     "MOD":  0x17,
     "DIVU": 0x18,
     "MODU": 0x19,
-    "BLTU": 0x1A,
+    "BLTU": 0x1A, #branch if less than (unsigned)
     "BLEU": 0x1B,
     "BGTU": 0x1C,
     "BGEU": 0x1D,
 
-    "LDB":  0x20,
-    "LDH":  0x21,
-    "LDW":  0x22,
-    "STB":  0x23,
+    "LDB":  0x20, #load byte
+    "LDH":  0x21, #load halfword 16-bit unsigned
+    "LDW":  0x22, 
+    "STB":  0x23, #
     "STH":  0x24,
     "STW":  0x25,
-    "LDBS": 0x26,
+    "LDBS": 0x26, #load byte signed
     "LDHS": 0x27,
 
-    "BL":   0x30,
-    "RET":  0x31,
+    "BL":   0x30,   # branch link lr
+    "RET":  0x31,   # return from subroutine pc from lr 
+    
+    "JR":   0x32,   # jump register
+    "JALR": 0x33,   # jump and link register
 
-    "SVC":  0x40,
+    "SVC":  0x40,   # supervisor call (system call)
     "HLT":  0xFF,
 
-    "SETPTBR": 0x50,
-    "SETIDTR": 0x51,
-    "ENABLEMMU": 0x52,
-    "ENABLEINT": 0x53,
-    "DISABLEINT": 0x54,
-    "IRET": 0x55,
-    "DEBUG": 0x56,
+    "SETPTBR": 0x50, # set page table base register for MMU
+    "SETIDTR": 0x51, # set interrupt descriptor table base register for interrupt handling
+    "ENABLEMMU": 0x52, # enable MMU with current page table
+    "ENABLEINT": 0x53, # enable interrupts
+    "DISABLEINT": 0x54, #  disable interrupts   
+    "IRET": 0x55,   # return from interrupt (restore PC and flags)
+    "DEBUG": 0x56,  
 }
 
 REG_ALIAS = {
@@ -123,7 +127,25 @@ class Assembler:
     def __init__(self):
         self.labels = {}
         self.lines = []
-        self.out = []
+        #self.out = []
+        self.pc = 0
+        #self.memory = {}
+        self.pc = 0
+        self.memory = bytearray(16 * 1024 * 1024)  # 16MB
+
+    def emit8(self, v):
+        self.memory[self.pc] = v & 0xFF
+        self.pc += 1
+
+    def emit16(self, v):
+        self.emit8(v)
+        self.emit8(v >> 8)
+
+    def emit32(self, v):
+        self.emit8(v)
+        self.emit8(v >> 8)
+        self.emit8(v >> 16)
+        self.emit8(v >> 24)
 
     # -----------------------------------------------------
     # encode helper (32-bit instruction)
@@ -134,14 +156,10 @@ class Assembler:
     def strip_comment(self, line):
         return line.split(";", 1)[0].strip()
 
+    
     def tokenize(self, line):
-        return (
-            line.replace(",", " ")
-            .replace("[", " ")
-            .replace("]", " ")
-            .replace("+", " ")
-            .split()
-        )
+        line = line.replace(",", " ")
+        return line.split()
 
     def instr_size(self, line):
         tokens = self.tokenize(line)
@@ -165,19 +183,56 @@ class Assembler:
     # PASS 1: labels
     # -----------------------------------------------------
     def pass1(self, src):
-        pc = 0
+        self.pc = 0
 
         for line in src:
             line = self.strip_comment(line)
 
-            if not line or line.startswith(";"):
+            if not line:
                 continue
 
+            tokens = self.tokenize(line)
+
+            # label
             if line.endswith(":"):
-                self.labels[line[:-1]] = pc
-            else:
-                self.lines.append(line)
-                pc += self.instr_size(line)
+                self.labels[line[:-1]] = self.pc
+                continue
+
+            # directives
+            if tokens[0] == ".org":
+                self.pc = int(tokens[1], 0)
+                continue
+
+            elif tokens[0] == ".word":
+                count = len(tokens) - 1
+                self.pc += count * 4
+                continue
+
+            elif tokens[0] == ".space":
+                self.pc += int(tokens[1], 0)
+                continue
+
+            # instruction
+            self.lines.append(line)
+            self.pc += self.instr_size(line)
+    
+    # -----------------------------------------------------
+    # parse memory operand like [Rbase + offset] or [Rbase]
+    # -----------------------------------------------------
+
+    def parse_mem_operand(self, s):
+        s = s.strip() # remove whitespace
+
+        if not (s.startswith("[") and s.endswith("]")):
+            raise ValueError(f"Invalid memory operand: {s}")
+
+        s = s[1:-1] # remove brackets
+
+        if "+" in s:
+            a, b = s.split("+", 1) # split into base and offset
+            return a.strip(), b.strip()
+
+        return s.strip(), "0" # +0 if no offset
 
     # -----------------------------------------------------
     # resolve operand
@@ -196,6 +251,18 @@ class Assembler:
         for line in self.lines:
             p = self.tokenize(line)
             op = normalize_op(p[0])
+
+            if op == ".ORG":
+                self.pc = int(p[1], 0)
+
+            elif op == ".WORD":
+                for item in p[1:]:
+                    self.emit32(self.resolve(item))
+
+            elif op == ".SPACE":
+                size = int(p[1], 0)
+                for _ in range(size):
+                    self.emit8(0)
 
             # =================================================
             # MOV Rn IMM16
@@ -388,7 +455,7 @@ class Assembler:
 
             elif op == "HLT":
                 self.out.append(self.encode(OP[op]))
-                
+
             elif op == "GETCAUSE":
                 self.out.append(self.encode(OP[op], reg(p[1])))
 
@@ -401,13 +468,11 @@ class Assembler:
     def build(self, src, out="memory.img"):
         self.labels = {}
         self.lines = []
-        self.out = []
 
         self.pass1(src)
         self.pass2()
 
         with open(out, "wb") as f:
-            for w in self.out:
-                f.write(struct.pack("<I", w))
+            f.write(self.memory[:self.pc])
 
-        print(f"[ASM] Built {out} ({len(self.out)} instructions)")
+        print(f"[ASM] Built {out} ({self.pc} bytes)")
