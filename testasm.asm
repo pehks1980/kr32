@@ -1,0 +1,27 @@
+.equ TASK_SP, 0
+.equ TASK_PC, 4
+.equ TASK_ACTIVE, 8
+.equ TASK_PID, 12
+.equ TASK_SIZE, 16
+
+.org 0x0000
+tasks:
+.space TASK_SIZE*3
+
+; tasks + TASK_SIZE*R3 + TASK_ACTIVE
+
+; R3 = task index
+.org 0x0100
+
+LDW R1 [R2]
+LDW R1 [R2+4]
+LDW R1 [R6+TASK_ACTIVE]
+
+LI R3 1
+LI R5 TASK_SIZE
+MUL R6 R3 R5
+
+LI R5 tasks
+ADD R6 R6 R5
+
+LDW R4 [R6 + TASK_ACTIVE]

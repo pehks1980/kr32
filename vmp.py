@@ -121,7 +121,7 @@ class CPU:
         # =====================================================
         # DEVICES
         # =====================================================
-        self.timer = PIT(period_ms=100)  # tick every 1 second
+        self.timer = PIT(period_ms=1000)  # tick every 1 second
         self.pic = PIC()
         self.pic.enable_irq(0)  # enable timer IRQ
 
@@ -240,6 +240,8 @@ class CPU:
             0x27: "LDHS",
             0x30: "BL",
             0x31: "RET",
+            0x32: "JR",
+            0x33: "JALR",
             0x40: "SVC",
             0x50: "SETPTBR",
             0x51: "SETIDTR",
@@ -281,6 +283,12 @@ class CPU:
             return f"{op_name} {self.reg_name(a)}, [{self.reg_name(b)} + {offset}]"
         if op == 0x31:
             return "RET"
+
+        if op == 0x32:
+            return f"{op_name} {self.reg_name(a)}"
+        if op == 0x33:
+            return f"{op_name} {self.reg_name(a)}"
+
         if op == 0x40:
             return f"SVC {a}"
         if op == 0x50:

@@ -52,15 +52,15 @@ init_idt:
     
     ; Only entry 0 matters - all traps go here
     LI R2 trap_entry
-    STW R2 R1 0                ; IDT[0] = trap_entry
+    STW R2 [R1]                ; IDT[0] = trap_entry
     
     ; Optional: fill other entries with same handler for safety
     LI R2 trap_entry
-    STW R2 R1 4                ; IDT[1]
-    STW R2 R1 8                ; IDT[2]
-    STW R2 R1 12               ; IDT[3]
-    STW R2 R1 24               ; IDT[6]
-    STW R2 R1 64               ; IDT[16]
+    STW R2 [R1+4]                ; IDT[1]
+    STW R2 [R1+8]                ; IDT[2]
+    STW R2 [R1+12]               ; IDT[3]
+    STW R2 [R1+24]               ; IDT[6]
+    STW R2 [R1+64]               ; IDT[16]
     
     SETIDTR R1
     RET
@@ -80,7 +80,7 @@ init_loop:
     LI R6 0x001F               ; Flags: PRESENT|READ|WRITE|EXEC|USER
     OR R4 R4 R6
     SHL R5 R3 2                ; offset = VPN * 4
-    STW R4 R1 R5
+    STW R4 [R1+R5]
     
     ADD R3 R3 1
     CMP R3 R2
@@ -126,54 +126,54 @@ trap_entry:
     
     ; Dispatch based on cause value in R1
     CMP R1 0
-    BEQ .handle_divide_zero
+    BEQ handle_divide_zero
     
     CMP R1 1
-    BEQ .handle_invalid_instr
+    BEQ handle_invalid_instr
     
     CMP R1 2
-    BEQ .handle_page_fault
+    BEQ handle_page_fault
     
     CMP R1 3
-    BEQ .handle_syscall
+    BEQ handle_syscall
     
     CMP R1 6
-    BEQ .handle_debug
+    BEQ handle_debug
     
     CMP R1 16
-    BEQ .handle_irq
+    BEQ handle_irq
     
     ; Unknown cause - halt
     HLT
 
-.handle_divide_zero:
+handle_divide_zero:
     ; TODO: handle divide by zero
     BL trap_epilogue
 
-.handle_invalid_instr:
+handle_invalid_instr:
     ; TODO: handle invalid instruction
     BL trap_epilogue
 
-.handle_page_fault:
+handle_page_fault:
     ; R2 contains fault address
     ; TODO: handle page fault
     HLT
     BL trap_epilogue
 
-.handle_syscall:
+handle_syscall:
     ; R2 contains syscall number
     CMP R2 1
-    BEQ .syscall_exit
+    BEQ syscall_exit:
     BL trap_epilogue
 
-.syscall_exit:
+syscall_exit:
     HLT
 
-.handle_debug:
+handle_debug:
     ; Debug trap - just return
     BL trap_epilogue
 
-.handle_irq:
+handle_irq:
     ; Interrupt handler
     ; TODO: actual IRQ handling
     BL trap_epilogue

@@ -5,4 +5,4 @@ def load(f):
         return x.readlines()
 
 asm = Assembler()
-asm.build(load("kernel.asm") + load("user.asm"), "memory.img")
+asm.build(load("kernelshed.asm"), "memory.img")

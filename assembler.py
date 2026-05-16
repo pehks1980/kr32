@@ -162,7 +162,32 @@ class Assembler:
     
     def tokenize(self, line):
         line = line.replace(",", " ").upper()
-        return line.split()
+
+        out = []
+        cur = ""
+        bracket = 0
+
+        for ch in line:
+            if ch == "[":
+                bracket += 1
+
+            if ch == "]":
+                bracket -= 1
+
+            if ch.isspace() and bracket == 0:
+                if cur:
+                    out.append(cur.upper())
+                    cur = ""
+            else:
+                cur += ch
+
+        if cur:
+            out.append(cur.upper())
+
+        return out
+
+        #line = line.replace(",", " ").upper()
+        #return line.split()
 
     def instr_size(self, line):
         tokens = self.tokenize(line)
@@ -222,13 +247,14 @@ class Assembler:
 
             elif tokens[0] == ".SPACE":
                 self.lines.append(line)
-                self.pc += int(tokens[1], 0)
+                self.pc += self.resolve_expr(" ".join(tokens[1:]))
                 continue
 
             elif tokens[0] == ".EQU":
                 name = tokens[1]
                 value = self.resolve_expr(" ".join(tokens[2:]))
                 self.consts[name] = value
+                self.lines.append(line)
                 continue
 
             # instruction
@@ -260,14 +286,15 @@ class Assembler:
     def resolve(self, x):
         x = x.strip().upper()
 
-        if is_number(x):
-            return int(x, 0)
 
         if x in self.consts:
             return self.consts[x]
 
         if x in self.labels:
             return self.labels[x]
+        
+        if is_number(x):
+            return int(x, 0)
 
         raise KeyError(f"Unknown symbol: {x}")
     
@@ -315,34 +342,37 @@ class Assembler:
 
             elif op == ".WORD":
                 for item in p[1:]:
-                    self.emit32(self.resolve(item))
+                    self.emit32(self.resolve_expr(item))
                 continue
 
             elif op == ".SPACE":
-                size = int(p[1], 0)
+                size = self.resolve_expr(" ".join(p[1:]))
                 for _ in range(size):
                     self.emit8(0)
+                continue
+
+            elif op == ".EQU":
                 continue
 
             # =================================================
             # MOV Rn IMM16
             # MOV Rn Rm
             # =================================================
-            if op == "MOV":
+            elif op == "MOV":
                 rd = reg(p[1])
                 src = p[2]
 
                 if is_reg_token(src):
                     self.emit32(self.encode(OP[op], 0x80 | rd, reg(src), 0))
                 else:
-                    imm = self.resolve(src) & 0xFFFF
+                    imm = self.resolve_expr(src) & 0xFFFF
                     self.emit32(
                         self.encode(OP[op], rd, (imm >> 8) & 0xFF, imm & 0xFF)
                     )
 
             elif op == "LI":
                 rd = reg(p[1])
-                imm = self.resolve(p[2]) & 0xFFFFFFFF
+                imm = self.resolve_expr(p[2]) & 0xFFFFFFFF
                 self.emit32(self.encode(OP[op], rd, 0, 0))
                 self.emit32(imm)
 
@@ -358,7 +388,7 @@ class Assembler:
                 if is_reg_token(src2):
                     self.emit32(self.encode(OP[op], rd, rs1, reg(src2)))
                 else:
-                    imm = self.resolve(src2)
+                    imm = self.resolve_expr(src2)
                     if imm < 0 or imm > 0x7F:
                         raise ValueError(f"{op} immediate out of range (0..127): {imm}")
                     self.emit32(self.encode(OP[op], rd, rs1, 0x80 | imm))
@@ -378,7 +408,7 @@ class Assembler:
                 if is_reg_token(rhs):
                     self.emit32(self.encode(OP[op], rs1, reg(rhs), 0))
                 else:
-                    imm = self.resolve(rhs)
+                    imm = self.resolve_expr(rhs)
                     if imm < 0 or imm > 0x7F:
                         raise ValueError(f"{op} immediate out of range (0..127): {imm}")
                     self.emit32(self.encode(OP[op], rs1, 0, 0x80 | imm))
@@ -386,7 +416,7 @@ class Assembler:
             elif op == "DEBUG":
                 delay = 0
                 if len(p) > 1:
-                    delay = self.resolve(p[1]) & 0xFFFFFF
+                    delay = self.resolve_expr(p[1]) & 0xFFFFFF
                     if delay > 0xFFFFFF:
                         raise ValueError("DEBUG delay out of range (0..0xFFFFFF)")
                 self.emit32(
@@ -402,7 +432,7 @@ class Assembler:
                 "BLTU", "BLEU", "BGTU", "BGEU",
                 "BL",
             ):
-                target = self.resolve(p[1]) & 0xFFFFFFFF
+                target = self.resolve_expr(p[1]) & 0xFFFFFFFF
                 self.emit32(self.encode(OP[op]))
                 self.emit32(target)
 
@@ -453,32 +483,58 @@ class Assembler:
             # =================================================
             elif op in ("LDB", "LDH", "LDW", "LDBS", "LDHS"):
                 rd = reg(p[1])
-                base = reg(p[2])
-                off = p[3] if len(p) > 3 else "0"
+
+                mem = p[2]
+                base, off = self.parse_mem_operand(mem)
+
+                base = reg(base)
 
                 if is_reg_token(off):
                     off_reg = reg(off)
-                    self.emit32(self.encode(OP[op], rd, base, 0x80 | off_reg))
+
+                    self.emit32(
+                        self.encode(OP[op], rd, base, 0x80 | off_reg)
+                    )
+
                 else:
-                    imm = self.resolve(off)
+                    imm = self.resolve_expr(off)
+
                     if imm < 0 or imm > 0x7F:
-                        raise ValueError(f"{op} offset out of range (0..127): {imm}")
-                    self.emit32(self.encode(OP[op], rd, base, imm))
+                        raise ValueError(
+                            f"{op} offset out of range (0..127): {imm}"
+                        )
+
+                    self.emit32(
+                        self.encode(OP[op], rd, base, imm)
+                    )
 
 
             elif op in ("STB", "STH", "STW"):
                 rs = reg(p[1])
-                base = reg(p[2])
-                off = p[3] if len(p) > 3 else "0"
+
+                mem = p[2]
+                base, off = self.parse_mem_operand(mem)
+
+                base = reg(base)
 
                 if is_reg_token(off):
                     off_reg = reg(off)
-                    self.emit32(self.encode(OP[op], rs, base, 0x80 | off_reg))
+
+                    self.emit32(
+                        self.encode(OP[op], rs, base, 0x80 | off_reg)
+                    )
+
                 else:
-                    imm = self.resolve(off)
+                    imm = self.resolve_expr(off)
+
                     if imm < 0 or imm > 0x7F:
-                        raise ValueError(f"{op} offset out of range (0..127): {imm}")
-                    self.emit32(self.encode(OP[op], rs, base, imm))
+                        raise ValueError(
+                            f"{op} offset out of range (0..127): {imm}"
+                        )
+
+                    self.emit32(
+                        self.encode(OP[op], rs, base, imm)
+                    )
 
             # =================================================
             # MMU CONTROL
@@ -497,6 +553,12 @@ class Assembler:
 
             elif op == "SVC":
                 self.emit32(self.encode(OP[op], int(p[1])))
+
+            elif op == "JR":
+                self.emit32(self.encode(OP[op], reg(p[1])))
+
+            elif op == "JALR":
+                self.emit32(self.encode(OP[op], reg(p[1])))
 
             # =================================================
             # TRAP / INTERRUPT CONTROL
