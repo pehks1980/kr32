@@ -131,7 +131,10 @@ class Assembler:
         self.pc = 0
         #self.memory = {}
         self.memory = bytearray(16 * 1024 * 1024)  # 16MB
-
+        
+        # constants for assembler (e.g. string literals)
+        self.consts = {} 
+        self.current_global = ""
 
     def emit8(self, v):
         self.memory[self.pc] = v & 0xFF
@@ -195,7 +198,14 @@ class Assembler:
 
             # label
             if line.endswith(":"):
-                self.labels[line[:-1]] = self.pc
+                label = line[:-1]
+
+                if label.startswith("."):
+                    label = self.current_global + label
+                else:
+                    self.current_global = label
+
+                self.labels[label] = self.pc
                 continue
 
             # directives
@@ -213,6 +223,12 @@ class Assembler:
             elif tokens[0] == ".SPACE":
                 self.lines.append(line)
                 self.pc += int(tokens[1], 0)
+                continue
+
+            elif tokens[0] == ".EQU":
+                name = tokens[1]
+                value = self.resolve_expr(" ".join(tokens[2:]))
+                self.consts[name] = value
                 continue
 
             # instruction
@@ -240,12 +256,48 @@ class Assembler:
     # -----------------------------------------------------
     # resolve operand
     # -----------------------------------------------------
+    
     def resolve(self, x):
+        x = x.strip().upper()
+
         if is_number(x):
             return int(x, 0)
-        if x not in self.labels:
-            raise KeyError(f"Unknown label: {x}")
-        return self.labels[x]
+
+        if x in self.consts:
+            return self.consts[x]
+
+        if x in self.labels:
+            return self.labels[x]
+
+        raise KeyError(f"Unknown symbol: {x}")
+    
+    # -----------------------------------------------------
+    # resolve expression (supports +, -, *, parentheses)
+    # -----------------------------------------------------
+    
+    def resolve_expr(self, expr):
+        expr = expr.strip().upper()
+
+        # parentheses later
+
+        if "*" in expr:
+            a, b = expr.split("*", 1)
+            return self.resolve_expr(a) * self.resolve_expr(b)
+
+        if "+" in expr:
+            parts = expr.split("+")
+            total = 0
+
+            for p in parts:
+                total += self.resolve_expr(p)
+
+            return total
+
+        if "-" in expr:
+            a, b = expr.split("-", 1)
+            return self.resolve_expr(a) - self.resolve_expr(b)
+
+        return self.resolve(expr)
 
     # -----------------------------------------------------
     # PASS 2: encode
