@@ -42,9 +42,11 @@ KERNEL_START:
     ; Enable MMU and interrupts
     BL enable_vm
 
-    ; Start first task
-    LI R1 idle_task
-    JR R1
+    ; Start first task through the same trapframe restore path used
+    ; by preemptive switches.
+    LI R1 tasks
+    LDW SP [R1 + TASK_SP]
+    B trap_restore
 
 
 ; ================================================================
@@ -108,7 +110,8 @@ enable_vm:
 ; UNIFIED TRAP ENTRY POINT (all traps go here)
 ; ================================================================
 trap_entry:
-    ; Save all registers (epilogue saves in reverse order)
+    ; Save interrupted GPR state. SP is represented by the final
+    ; trapframe pointer saved in the task table.
     PUSH R1
     PUSH R2
     PUSH R3
@@ -123,11 +126,21 @@ trap_entry:
     PUSH R12
     PUSH R14
     PUSH R15
-    
-    ; R1 already contains cause (scause) set by CPU
-    ; R2 already contains stval (fault address or syscall number)
-    
-    ; Dispatch based on cause value in R1
+
+    ; Save privileged trap state.
+    CSRR R1 SEPC
+    PUSH R1
+    CSRR R1 SFLAGS
+    PUSH R1
+    CSRR R1 SSTATUS
+    PUSH R1
+    CSRR R1 SCAUSE
+    PUSH R1
+    CSRR R1 STVAL
+    PUSH R1
+
+    ; Dispatch based on scause.
+    CSRR R1 SCAUSE
     CMP R1 0
     BEQ handle_divide_zero
     
@@ -152,34 +165,35 @@ trap_entry:
 handle_divide_zero:
     ; TODO: handle divide by zero
     
-    B trap_epilogue
+    B trap_restore
 
 handle_invalid_instr:
     ; TODO: handle invalid instruction
     
-    B trap_epilogue
+    B trap_restore
 
 handle_page_fault:
     ; R2 contains fault address
     ; TODO: handle page fault
     HLT
     
-    B trap_epilogue
+    B trap_restore
 
 handle_syscall:
-    ; R2 contains syscall number
+    ; STVAL contains syscall number
+    CSRR R2 STVAL
     
     CMP R2 1
     BEQ syscall_exit:
     
-    B trap_epilogue
+    B trap_restore
 
 syscall_exit:
     HLT
 
 handle_debug:
     ; Debug trap - just return
-    B trap_epilogue
+    B trap_restore
 
 handle_irq:
     ; Interrupt handler
@@ -187,10 +201,20 @@ handle_irq:
 
     BL schedule_and_switch
 
-    ;B trap_epilogue
+    B trap_restore
 
-trap_epilogue:
-    ; Restore all registers in reverse order
+trap_restore:
+    ; Restore privileged state saved after the GPRs.
+    POP R1                  ; stval, informational only
+    POP R1                  ; scause, informational only
+    POP R1
+    CSRW SSTATUS R1
+    POP R1
+    CSRW SFLAGS R1
+    POP R1
+    CSRW SEPC R1
+
+    ; Restore interrupted GPR state in reverse order.
     POP R15
     POP R14
     POP R12
@@ -205,8 +229,8 @@ trap_epilogue:
     POP R3
     POP R2
     POP R1
-    
-    IRET
+
+    SRET
 
 
 
@@ -245,12 +269,39 @@ CURRENT_TASK:
 ; INIT SCHEDULER
 ; ================================================================
 init_scheduler:
+    MOV R12 SP
 
     ; ------------------------------------------------
     ; Task 0
     ; ------------------------------------------------
-    LI R1 TASK0_STACK_TOP
+    LI SP TASK0_STACK_TOP
+    LI R1 0
+    PUSH R1                  ; R1
+    PUSH R1                  ; R2
+    PUSH R1                  ; R3
+    PUSH R1                  ; R4
+    PUSH R1                  ; R5
+    PUSH R1                  ; R6
+    PUSH R1                  ; R7
+    PUSH R1                  ; R8
+    PUSH R1                  ; R9
+    PUSH R1                  ; R10
+    PUSH R1                  ; R11
+    PUSH R1                  ; R12
+    PUSH R1                  ; R14
+    PUSH R1                  ; R15
+    LI R1 idle_task
+    PUSH R1                  ; sepc
+    LI R1 0
+    PUSH R1                  ; sflags
+    LI R1 0x20
+    PUSH R1                  ; sstatus.SPIE
+    LI R1 0
+    PUSH R1                  ; scause
+    PUSH R1                  ; stval
+
     LI R2 tasks
+    MOV R1 SP
     STW R1 [R2 + TASK_SP]
 
     LI R1 idle_task
@@ -265,10 +316,36 @@ init_scheduler:
     ; ------------------------------------------------
     ; Task 1
     ; ------------------------------------------------
+    LI SP TASK1_STACK_TOP
+    LI R1 0
+    PUSH R1                  ; R1
+    PUSH R1                  ; R2
+    PUSH R1                  ; R3
+    PUSH R1                  ; R4
+    PUSH R1                  ; R5
+    PUSH R1                  ; R6
+    PUSH R1                  ; R7
+    PUSH R1                  ; R8
+    PUSH R1                  ; R9
+    PUSH R1                  ; R10
+    PUSH R1                  ; R11
+    PUSH R1                  ; R12
+    PUSH R1                  ; R14
+    PUSH R1                  ; R15
+    LI R1 TASK_A_START
+    PUSH R1                  ; sepc
+    LI R1 0
+    PUSH R1                  ; sflags
+    LI R1 0x20
+    PUSH R1                  ; sstatus.SPIE
+    LI R1 0
+    PUSH R1                  ; scause
+    PUSH R1                  ; stval
+
     LI R2 tasks
     ADD R2 R2 16           ; TASK_SIZE
 
-    LI R1 TASK1_STACK_TOP
+    MOV R1 SP
     STW R1 [R2 + TASK_SP]
 
     LI R1 TASK_A_START
@@ -283,10 +360,36 @@ init_scheduler:
     ; ------------------------------------------------
     ; Task 2
     ; ------------------------------------------------
+    LI SP TASK2_STACK_TOP
+    LI R1 0
+    PUSH R1                  ; R1
+    PUSH R1                  ; R2
+    PUSH R1                  ; R3
+    PUSH R1                  ; R4
+    PUSH R1                  ; R5
+    PUSH R1                  ; R6
+    PUSH R1                  ; R7
+    PUSH R1                  ; R8
+    PUSH R1                  ; R9
+    PUSH R1                  ; R10
+    PUSH R1                  ; R11
+    PUSH R1                  ; R12
+    PUSH R1                  ; R14
+    PUSH R1                  ; R15
+    LI R1 TASK_B_START
+    PUSH R1                  ; sepc
+    LI R1 0
+    PUSH R1                  ; sflags
+    LI R1 0x20
+    PUSH R1                  ; sstatus.SPIE
+    LI R1 0
+    PUSH R1                  ; scause
+    PUSH R1                  ; stval
+
     LI R2 tasks
     ADD R2 R2 32           ; TASK_SIZE * 2
 
-    LI R1 TASK2_STACK_TOP
+    MOV R1 SP
     STW R1 [R2 + TASK_SP]
 
     LI R1 TASK_B_START
@@ -305,6 +408,7 @@ init_scheduler:
     LI R2 0
     STW R2 [R1]
 
+    MOV SP R12
     RET
 
 ; ================================================================
@@ -384,19 +488,11 @@ do_switch:
     ADD R5 R5 R6               ; R5 = &tasks[old]
 
     ; ------------------------------------------------
-    ; Save old SP
+    ; Save old trapframe SP
     ; ------------------------------------------------
-    ; save current task sp to its place in mem
+    ; save current task trapframe pointer to its place in mem
     MOV R7 SP
     STW R7 [R5 + TASK_SP]
-
-    ; ------------------------------------------------
-    ; Save resume PC
-    ; ------------------------------------------------
-    ; dont understand right now but it literally gets
-    ; address of RET and puts it to current task PC field
-    LI R7 resume_point
-    STW R7 [R5 + TASK_PC]
 
     ; ------------------------------------------------
     ; Compute new task address
@@ -409,20 +505,10 @@ do_switch:
     ADD R5 R5 R6               ; R5 = &tasks[new]
 
     ; ------------------------------------------------
-    ; Restore SP
+    ; Restore new task trapframe SP
     ; ------------------------------------------------
-    ; set SP to what is int next task field struc
     LDW SP [R5 + TASK_SP]
 
-    ; ------------------------------------------------
-    ; Restore PC
-    ; ------------------------------------------------
-    ; get PC and jump to new task
-    LDW R7 [R5 + TASK_PC]
-
-    JR R7
-
-resume_point:
     RET
 
 
@@ -437,30 +523,30 @@ resume_point:
 
 idle_task:
     ENABLEINT
-
+    LI R1 0
 idle_loop:
-    ;DEBUG 1
+    ADD R1 R1 1
+    DEBUG 2
     B idle_loop
 
 ; --TASK 1----------------------------------------------
 
 TASK_A_START:
 
-    LI R1 0
+    LI R2 0
 
 task_a_loop:
-    ADD R1 R1 1
-    ;DEBUG 1
+    ADD R2 R2 1
+    DEBUG 2
     B task_a_loop
 
 ; ---TASK 2---------------------------------------------
 
 TASK_B_START:
 
-    LI R2 0
+    LI R3 0
 
 task_b_loop:
-    ADD R2 R2 1
-    ;DEBUG 1
+    ADD R3 R3 1
+    DEBUG 2
     B task_b_loop
-

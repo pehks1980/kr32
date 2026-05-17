@@ -62,6 +62,12 @@ OP = {
     "DISABLEINT": 0x54, #  disable interrupts   
     "IRET": 0x55,   # return from interrupt (restore PC and flags)
     "DEBUG": 0x56,  
+    "GETCAUSE": 0x57,
+    "CSRR": 0x58,
+    "CSRW": 0x59,
+    "CSRS": 0x5A,
+    "CSRC": 0x5B,
+    "SRET": 0x5C,
 }
 
 REG_ALIAS = {
@@ -69,6 +75,16 @@ REG_ALIAS = {
     "SP": 13,
     "FP": 14,
     "LR": 15,
+}
+
+CSR_ALIAS = {
+    "SSTATUS": 0x00,
+    "STVEC": 0x01,
+    "SEPC": 0x02,
+    "SCAUSE": 0x03,
+    "STVAL": 0x04,
+    "SSCRATCH": 0x05,
+    "SFLAGS": 0x06,
 }
 
 
@@ -118,6 +134,19 @@ def normalize_op(op: str) -> str:
         "SARI": "SAR",
     }
     return aliases.get(op, op)
+
+
+def csr(x: str) -> int:
+    x = x.upper()
+    if x in CSR_ALIAS:
+        return CSR_ALIAS[x]
+    if x.startswith("CSR") and x[3:].isdigit():
+        n = int(x[3:])
+    else:
+        n = int(x, 0)
+    if n < 0 or n > 0xFF:
+        raise ValueError(f"CSR out of range: {x}")
+    return n
 
 
 # =========================================================
@@ -580,6 +609,15 @@ class Assembler:
 
             elif op == "GETCAUSE":
                 self.emit32(self.encode(OP[op], reg(p[1])))
+
+            elif op == "CSRR":
+                self.emit32(self.encode(OP[op], reg(p[1]), csr(p[2]), 0))
+
+            elif op in ("CSRW", "CSRS", "CSRC"):
+                self.emit32(self.encode(OP[op], reg(p[2]), csr(p[1]), 0))
+
+            elif op == "SRET":
+                self.emit32(self.encode(OP[op]))
 
             else:
                 raise Exception(f"[ASM] Unknown instruction: {line}")

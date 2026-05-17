@@ -40,6 +40,33 @@ TRAP_DEBUG = 6
 # Vector for async interrupts (future use)
 TRAP_IRQ = 16
 
+CSR_SSTATUS = 0x00
+CSR_STVEC = 0x01
+CSR_SEPC = 0x02
+CSR_SCAUSE = 0x03
+CSR_STVAL = 0x04
+CSR_SSCRATCH = 0x05
+CSR_SFLAGS = 0x06
+
+CSR_NAMES = {
+    CSR_SSTATUS: "sstatus",
+    CSR_STVEC: "stvec",
+    CSR_SEPC: "sepc",
+    CSR_SCAUSE: "scause",
+    CSR_STVAL: "stval",
+    CSR_SSCRATCH: "sscratch",
+    CSR_SFLAGS: "sflags",
+}
+
+SSTATUS_SIE = 1 << 1
+SSTATUS_SPIE = 1 << 5
+SSTATUS_SPP = 1 << 8
+
+SFLAGS_Z = 1 << 0
+SFLAGS_N = 1 << 1
+SFLAGS_C = 1 << 2
+SFLAGS_V = 1 << 3
+
 
 class TrapDelivery(Exception):
     """Internal exception used to abort instruction execution when a trap is delivered."""
@@ -100,6 +127,10 @@ class CPU:
         self.scause = 0      # Cause of current trap
         self.sepc = 0        # Exception PC (you already have trap_epc)
         self.stval = 0       # Fault address (you already have trap_value)
+        self.sstatus = 0
+        self.stvec = 0
+        self.sscratch = 0
+        self.sflags = 0
 
         # =====================================================
         # TRAP / INTERRUPT STATE
@@ -121,7 +152,7 @@ class CPU:
         # =====================================================
         # DEVICES
         # =====================================================
-        self.timer = PIT(period_ms=1000)  # tick every 1 second
+        self.timer = PIT(period_ms=2000)  # tick every 1 second
         self.pic = PIC()
         self.pic.enable_irq(0)  # enable timer IRQ
 
@@ -177,6 +208,69 @@ class CPU:
         self.N = bool(result & 0x80000000)
         self.C = (lhs >= rhs)
         self.V = bool(((lhs ^ rhs) & (lhs ^ result) & 0x80000000) != 0)
+
+    def pack_flags(self):
+        flags = 0
+        if self.Z:
+            flags |= SFLAGS_Z
+        if self.N:
+            flags |= SFLAGS_N
+        if self.C:
+            flags |= SFLAGS_C
+        if self.V:
+            flags |= SFLAGS_V
+        return flags
+
+    def unpack_flags(self, flags):
+        self.sflags = flags & 0xFFFFFFFF
+        self.Z = bool(flags & SFLAGS_Z)
+        self.N = bool(flags & SFLAGS_N)
+        self.C = bool(flags & SFLAGS_C)
+        self.V = bool(flags & SFLAGS_V)
+
+    def csr_name(self, csr):
+        return CSR_NAMES.get(csr, f"csr{csr}")
+
+    def csr_read(self, csr):
+        if csr == CSR_SSTATUS:
+            return self.sstatus
+        if csr == CSR_STVEC:
+            return self.stvec
+        if csr == CSR_SEPC:
+            return self.sepc
+        if csr == CSR_SCAUSE:
+            return self.scause
+        if csr == CSR_STVAL:
+            return self.stval
+        if csr == CSR_SSCRATCH:
+            return self.sscratch
+        if csr == CSR_SFLAGS:
+            return self.pack_flags()
+        raise ValueError(f"unknown CSR: {csr}")
+
+    def csr_write(self, csr, value):
+        value &= 0xFFFFFFFF
+        if csr == CSR_SSTATUS:
+            self.sstatus = value
+            self.interrupt_enabled = bool(value & SSTATUS_SIE)
+        elif csr == CSR_STVEC:
+            self.stvec = value
+            self.idt_base_pa = value
+        elif csr == CSR_SEPC:
+            self.sepc = value
+            self.trap_return_pc = value
+        elif csr == CSR_SCAUSE:
+            self.scause = value
+            self.trap_cause = value
+        elif csr == CSR_STVAL:
+            self.stval = value
+            self.trap_value = value
+        elif csr == CSR_SSCRATCH:
+            self.sscratch = value
+        elif csr == CSR_SFLAGS:
+            self.unpack_flags(value)
+        else:
+            raise ValueError(f"unknown CSR: {csr}")
 
     def div_trunc(self, lhs, rhs):
         if rhs == 0:
@@ -251,6 +345,11 @@ class CPU:
             0x55: "IRET",
             0x56: "DEBUG",
             0x57: "GETCAUSE",
+            0x58: "CSRR",
+            0x59: "CSRW",
+            0x5A: "CSRS",
+            0x5B: "CSRC",
+            0x5C: "SRET",
             0xFF: "HLT",
         }.get(op)
 
@@ -308,6 +407,16 @@ class CPU:
             return f"DEBUG {delay}"
         if op == 0x57:
             return f"GETCAUSE {self.reg_name(a)}"
+        if op == 0x58:
+            return f"CSRR {self.reg_name(a)}, {self.csr_name(b)}"
+        if op == 0x59:
+            return f"CSRW {self.csr_name(b)}, {self.reg_name(a)}"
+        if op == 0x5A:
+            return f"CSRS {self.csr_name(b)}, {self.reg_name(a)}"
+        if op == 0x5B:
+            return f"CSRC {self.csr_name(b)}, {self.reg_name(a)}"
+        if op == 0x5C:
+            return "SRET"
         
         if op == 0xFF:
             return "HLT"
@@ -366,7 +475,7 @@ class CPU:
         self.check_physical_mem(paddr, 1)
         return paddr
 
-    def raise_trap(self, vector, value=0):
+    def raise_trap(self, vector, value=0, resume_pc=None):
         """
         Deliver a synchronous trap/exception to the guest kernel.
 
@@ -378,28 +487,30 @@ class CPU:
             value: optional extra info (e.g., faulting address for page faults)
         """
         fault_pc = self.current_instr_pc if self.current_instr_pc is not None else self.pc
+        was_interrupt_enabled = self.interrupt_enabled
         self.trap_epc = fault_pc
-        self.trap_return_pc = self.pc
+        return_pc = self.pc if resume_pc is None else resume_pc
+        self.trap_return_pc = return_pc
         self.trap_cause = vector
         self.trap_value = value
 
-        # Save state
-        self.sepc = self.current_instr_pc if self.current_instr_pc is not None else self.pc
-        self.scause = vector    # ← Set cause register
+        # Save RISC-V-like supervisor trap state.
+        self.sepc = fault_pc if resume_pc is None else resume_pc
+        self.scause = vector
         self.stval = value
+        self.sflags = self.pack_flags()
+        if was_interrupt_enabled:
+            self.sstatus |= SSTATUS_SPIE
+        else:
+            self.sstatus &= ~SSTATUS_SPIE
+        self.sstatus &= ~SSTATUS_SIE
+        self.interrupt_enabled = False
 
         # Preserve original register values that are used for trap arguments.
         # Guest trap handlers can save/restore R1/R2 themselves, but the VM
         # must restore the interrupted thread's original values on IRET.
         self.trap_saved_r1 = self.r(1)
         self.trap_saved_r2 = self.r(2)
-
-        # Make trap arguments visible to the guest handler
-        # for SVC n call handler r1=n
-        # wee need to work it out conventin how to use it in a linux style 
-        #  in handler R1 vector cause R2 -value for page fault address or syscall number
-        self.setr(1, vector)
-        self.setr(2, value)
 
         if self.traceint or self.trace_fault:
             print(f"[TRAP] vector={vector} value=0x{value:08X} pc=0x{fault_pc:08X} handler_base=0x{self.idt_base_pa:08X}")
@@ -420,7 +531,7 @@ class CPU:
             self.running = False
             raise TrapDelivery()
 
-        if not self.interrupt_enabled:
+        if not was_interrupt_enabled:
             print(f"[TRAP MASKED] vector={vector} @ pc=0x{self.trap_epc:08X}")
             raise TrapDelivery()
 
@@ -823,7 +934,7 @@ class CPU:
                 # =================================================
                 elif op == 0x40:  # SVC (a = syscall number)
                     # Deliver SYSCALL trap with syscall number in trap_value
-                    self.raise_trap(TRAP_SYSCALL, a)
+                    self.raise_trap(TRAP_SYSCALL, a, resume_pc=self.pc)
 
                 elif op == 0x56:  # DEBUG - user-visible debug trap
                     debug_delay = (a << 16) | (b << 8) | c
@@ -834,7 +945,7 @@ class CPU:
                             dump_all(self)
                         if debug_delay:
                             time.sleep(debug_delay)
-                        self.raise_trap(TRAP_DEBUG, debug_delay)
+                        self.raise_trap(TRAP_DEBUG, debug_delay, resume_pc=self.pc)
                     elif debug_delay:
                         time.sleep(debug_delay)
 
@@ -847,6 +958,7 @@ class CPU:
                 elif op == 0x51:  # SETIDTR Rn - set IDT base register
                     # Guest kernel sets the IDT base physical address
                     self.idt_base_pa = self.r(a)
+                    self.stvec = self.r(a)
 
                 elif op == 0x52:  # ENABLEMMU
                     self.mmu.enabled = True
@@ -857,10 +969,12 @@ class CPU:
                 elif op == 0x53:  # ENABLEINT - enable interrupt delivery
                     # After this, traps can be delivered via IDT
                     self.interrupt_enabled = True
+                    self.sstatus |= SSTATUS_SIE
 
                 elif op == 0x54:  # DISABLEINT - disable interrupt delivery
                     # Traps will be masked after this
                     self.interrupt_enabled = False
+                    self.sstatus &= ~SSTATUS_SIE
 
                 elif op == 0x55:  # IRET - return from trap
                     # Restore PC and original trap-scratch registers. The guest
@@ -875,6 +989,30 @@ class CPU:
 
                 elif op == 0x57:  # GETCAUSE Rd - read scause into register
                     self.setr(a, self.scause)
+
+                elif op == 0x58:  # CSRR Rd, csr
+                    self.setr(a, self.csr_read(b))
+
+                elif op == 0x59:  # CSRW csr, Rs
+                    self.csr_write(b, self.r(a))
+
+                elif op == 0x5A:  # CSRS csr, Rs
+                    self.csr_write(b, self.csr_read(b) | self.r(a))
+
+                elif op == 0x5B:  # CSRC csr, Rs
+                    self.csr_write(b, self.csr_read(b) & ~self.r(a))
+
+                elif op == 0x5C:  # SRET - return from supervisor trap
+                    self.unpack_flags(self.sflags)
+                    if self.sstatus & SSTATUS_SPIE:
+                        self.sstatus |= SSTATUS_SIE
+                        self.interrupt_enabled = True
+                    else:
+                        self.sstatus &= ~SSTATUS_SIE
+                        self.interrupt_enabled = False
+                    self.sstatus |= SSTATUS_SPIE
+                    self.in_trap_handler = False
+                    self.pc = self.sepc
 
                 # =================================================
                 # HALT
