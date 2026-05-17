@@ -45,7 +45,7 @@ KERNEL_START:
     ; Start first task through the same trapframe restore path used
     ; by preemptive switches.
     LI R1 tasks
-    LDW SP [R1 + TASK_SP]
+    LDW SP [R1 + TASK_KSP]
     B trap_restore
 
 
@@ -101,8 +101,11 @@ init_loop:
 ; ================================================================
 enable_vm:
     ENABLEMMU
-    ENABLEINT
-    DEBUG
+    ; Interrupts are enabled by SRET from the first task trapframe.
+    ; Keeping them disabled during boot avoids taking an IRQ before
+    ; SSCRATCH contains a valid per-task kernel stack pointer.
+    ;ENABLEINT
+    ;DEBUG
     RET
 
 
@@ -110,8 +113,16 @@ enable_vm:
 ; UNIFIED TRAP ENTRY POINT (all traps go here)
 ; ================================================================
 trap_entry:
-    ; Save interrupted GPR state. SP is represented by the final
-    ; trapframe pointer saved in the task table.
+    ; Switch from interrupted task stack to this task's kernel stack.
+    ; Before: SP=user/task stack, SSCRATCH=kernel stack top.
+    ; After:  SP=kernel stack, SSCRATCH=interrupted task SP.
+    ; so sp = u-sp, sscratch=k-sp => sp=k-sp, scratch=u-sp
+    ;
+    CSRRW SP SSCRATCH SP
+
+    ; Save interrupted GPR state on the kernel stack. SP itself is
+    ; saved explicitly below from SSCRATCH, because SP now points to
+    ; the kernel trapframe rather than the interrupted task stack.
     PUSH R1
     PUSH R2
     PUSH R3
@@ -127,7 +138,9 @@ trap_entry:
     PUSH R14
     PUSH R15
 
-    ; Save privileged trap state.
+    ; Save interrupted task SP plus privileged trap state.
+    CSRR R1 SSCRATCH
+    PUSH R1
     CSRR R1 SEPC
     PUSH R1
     CSRR R1 SFLAGS
@@ -196,8 +209,11 @@ handle_debug:
     B trap_restore
 
 handle_irq:
-    ; Interrupt handler
-    ; schedule_and_switch here
+    ; The CPU delivered IRQ number in STVAL. Acknowledge the PIC from
+    ; the kernel, after identifying the interrupt source, instead of
+    ; letting VMP auto-ack before the handler runs.
+    CSRR R1 STVAL
+    EOI R1
 
     BL schedule_and_switch
 
@@ -205,7 +221,7 @@ handle_irq:
 
 trap_restore:               ; this does a resume of task restores state frame
                             ; and makes SRET - machine runs the task
-                            ; note SP should point to task's stack!
+                            ; note SP should point to task's kernel trapframe!
     ; Restore privileged state saved after the GPRs.
     POP R1                  ; stval, informational only
     POP R1                  ; scause, informational only
@@ -215,6 +231,8 @@ trap_restore:               ; this does a resume of task restores state frame
     CSRW SFLAGS R1
     POP R1
     CSRW SEPC R1
+    POP R1                  ; interrupted task SP
+    CSRW SSCRATCH R1        ; task SP goes to SSCRATCH
 
     ; Restore interrupted GPR state in reverse order.
     POP R15
@@ -232,6 +250,10 @@ trap_restore:               ; this does a resume of task restores state frame
     POP R2
     POP R1
 
+    ; Switch back from kernel stack to interrupted task stack.
+    ; Before: SP=kernel stack top, SSCRATCH=task SP.
+    ; After:  SP=task SP, SSCRATCH=kernel stack top for next trap.
+    CSRRW SP SSCRATCH SP
     SRET
 
 
@@ -243,11 +265,14 @@ trap_restore:               ; this does a resume of task restores state frame
 ; ------------------------------------------------
 ; Task structure offsets
 ; ------------------------------------------------
-.EQU TASK_SP,      0
-.EQU TASK_PC,      4
-.EQU TASK_ACTIVE,  8
-.EQU TASK_PID,    12
-.EQU TASK_SIZE,   16
+.EQU TASK_KSP,     0          ; saved kernel trapframe stack pointer
+.EQU TASK_USP,     4          ; last saved interrupted task stack pointer
+.EQU TASK_PC,      8          ; debug/metadata: entry or last known PC
+.EQU TASK_ACTIVE, 12
+.EQU TASK_PID,    16
+.EQU TASK_SIZE,   20
+
+.EQU TF_USP,      20          ; trapframe offset from SP to saved task SP
 
 ; ------------------------------------------------
 ; Task table
@@ -255,7 +280,7 @@ trap_restore:               ; this does a resume of task restores state frame
 .ORG 0x3000
 
 tasks:
-    .SPACE 48              ; 3 tasks * 16 bytes
+    .SPACE 60              ; 3 tasks * 20 bytes
 
 CURRENT_TASK:
     .WORD 0
@@ -263,9 +288,13 @@ CURRENT_TASK:
 ; ------------------------------------------------
 ; Stack tops
 ; ------------------------------------------------
-.EQU TASK0_STACK_TOP, 0x4000
-.EQU TASK1_STACK_TOP, 0x4200
-.EQU TASK2_STACK_TOP, 0x4400
+.EQU TASK0_KSTACK_TOP, 0x4000
+.EQU TASK1_KSTACK_TOP, 0x4200
+.EQU TASK2_KSTACK_TOP, 0x4400
+
+.EQU TASK0_USTACK_TOP, 0x5000
+.EQU TASK1_USTACK_TOP, 0x5200
+.EQU TASK2_USTACK_TOP, 0x5400
 
 ; ================================================================
 ; INIT SCHEDULER
@@ -276,8 +305,10 @@ init_scheduler:
     ; ------------------------------------------------
     ; Task 0
     ; ------------------------------------------------
-    LI SP TASK0_STACK_TOP
-    ;inint trap frame for a task (push 0s)
+    LI SP TASK0_KSTACK_TOP
+    ; Build the initial trapframe on the task's kernel stack. It has
+    ; the same shape as an IRQ-created trapframe, so first dispatch and
+    ; later preemptive resumes use the exact same restore path.
     LI R1 0
     PUSH R1                  ; R1
     PUSH R1                  ; R2
@@ -293,6 +324,8 @@ init_scheduler:
     PUSH R1                  ; R12
     PUSH R1                  ; R14
     PUSH R1                  ; R15
+    LI R1 TASK0_USTACK_TOP
+    PUSH R1                  ; interrupted task SP restored by CSRRW before SRET
     LI R1 idle_task
     PUSH R1                  ; sepc - this is new place of PC in trap frame
     LI R1 0
@@ -305,7 +338,10 @@ init_scheduler:
 
     LI R2 tasks
     MOV R1 SP
-    STW R1 [R2 + TASK_SP]   ;save SP
+    STW R1 [R2 + TASK_KSP]  ; save kernel trapframe SP
+
+    LI R1 TASK0_USTACK_TOP
+    STW R1 [R2 + TASK_USP]  ; save initial task stack SP for debug/metadata
 
     LI R1 idle_task
     STW R1 [R2 + TASK_PC]   ;start PC of the task
@@ -319,7 +355,7 @@ init_scheduler:
     ; ------------------------------------------------
     ; Task 1 - do the same
     ; ------------------------------------------------
-    LI SP TASK1_STACK_TOP
+    LI SP TASK1_KSTACK_TOP
     LI R1 0
     PUSH R1                  ; R1
     PUSH R1                  ; R2
@@ -335,6 +371,8 @@ init_scheduler:
     PUSH R1                  ; R12
     PUSH R1                  ; R14
     PUSH R1                  ; R15
+    LI R1 TASK1_USTACK_TOP
+    PUSH R1                  ; interrupted task SP
     LI R1 TASK_A_START
     PUSH R1                  ; sepc
     LI R1 0
@@ -346,10 +384,13 @@ init_scheduler:
     PUSH R1                  ; stval
 
     LI R2 tasks
-    ADD R2 R2 16           ; TASK_SIZE
+    ADD R2 R2 TASK_SIZE
 
     MOV R1 SP
-    STW R1 [R2 + TASK_SP]
+    STW R1 [R2 + TASK_KSP]
+
+    LI R1 TASK1_USTACK_TOP
+    STW R1 [R2 + TASK_USP]
 
     LI R1 TASK_A_START
     STW R1 [R2 + TASK_PC]
@@ -363,7 +404,7 @@ init_scheduler:
     ; ------------------------------------------------
     ; Task 2 - same
     ; ------------------------------------------------
-    LI SP TASK2_STACK_TOP
+    LI SP TASK2_KSTACK_TOP
     LI R1 0
     PUSH R1                  ; R1
     PUSH R1                  ; R2
@@ -379,6 +420,8 @@ init_scheduler:
     PUSH R1                  ; R12
     PUSH R1                  ; R14
     PUSH R1                  ; R15
+    LI R1 TASK2_USTACK_TOP
+    PUSH R1                  ; interrupted task SP
     LI R1 TASK_B_START
     PUSH R1                  ; sepc
     LI R1 0
@@ -390,10 +433,15 @@ init_scheduler:
     PUSH R1                  ; stval
 
     LI R2 tasks
-    ADD R2 R2 32           ; TASK_SIZE * 2
+    LI R3 TASK_SIZE
+    ADD R2 R2 R3
+    ADD R2 R2 R3
 
     MOV R1 SP
-    STW R1 [R2 + TASK_SP]
+    STW R1 [R2 + TASK_KSP]
+
+    LI R1 TASK2_USTACK_TOP
+    STW R1 [R2 + TASK_USP]
 
     LI R1 TASK_B_START
     STW R1 [R2 + TASK_PC]
@@ -491,11 +539,16 @@ do_switch:
     ADD R5 R5 R6               ; R5 = &tasks[old]
 
     ; ------------------------------------------------
-    ; Save old trap frame SP
+    ; Save old task context pointers
     ; ------------------------------------------------
-    ; save current task trap frame pointer to its place in mem
-    MOV R7 SP                   ; important here is SP of old task (which was interrupted)brought to you by IRQ!
-    STW R7 [R5 + TASK_SP]
+    ; SP points to the old task's kernel trapframe. The original
+    ; interrupted task SP is an explicit trapframe slot, so keep a copy
+    ; in the task table for debugging and future user/kernel separation.
+    LDW R7 [SP + TF_USP]
+    STW R7 [R5 + TASK_USP]
+
+    MOV R7 SP
+    STW R7 [R5 + TASK_KSP]
 
     ; ------------------------------------------------
     ; Compute new task address
@@ -510,8 +563,9 @@ do_switch:
     ; ------------------------------------------------
     ; Restore new task trap frame SP
     ; ------------------------------------------------
-    LDW SP [R5 + TASK_SP] ; by using trap frame thats all we need!
-    ; it goes to trap frame restore and sret which gives a kick to task!
+    LDW SP [R5 + TASK_KSP] ; load next task's kernel trapframe
+    ; trap_restore will restore SSCRATCH with the saved task SP, then
+    ; CSRRW swaps back to that task stack immediately before SRET.
 
     RET
 

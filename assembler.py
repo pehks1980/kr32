@@ -68,6 +68,8 @@ OP = {
     "CSRS": 0x5A,
     "CSRC": 0x5B,
     "SRET": 0x5C,
+    "CSRRW": 0x5D,
+    "EOI": 0x5E,
 }
 
 REG_ALIAS = {
@@ -618,6 +620,12 @@ class Assembler:
 
             elif op == "SRET":
                 self.emit32(self.encode(OP[op]))
+
+            elif op == "CSRRW":
+                self.emit32(self.encode(OP[op], reg(p[1]), csr(p[2]), reg(p[3])))
+
+            elif op == "EOI":
+                self.emit32(self.encode(OP[op], reg(p[1])))
 
             else:
                 raise Exception(f"[ASM] Unknown instruction: {line}")

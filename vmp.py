@@ -152,7 +152,7 @@ class CPU:
         # =====================================================
         # DEVICES
         # =====================================================
-        self.timer = PIT(period_ms=2000)  # tick every 1 second
+        self.timer = PIT(period_ms=2000)  # tick every 2 seconds
         self.pic = PIC()
         self.pic.enable_irq(0)  # enable timer IRQ
 
@@ -350,6 +350,8 @@ class CPU:
             0x5A: "CSRS",
             0x5B: "CSRC",
             0x5C: "SRET",
+            0x5D: "CSRRW",
+            0x5E: "EOI",
             0xFF: "HLT",
         }.get(op)
 
@@ -417,6 +419,10 @@ class CPU:
             return f"CSRC {self.csr_name(b)}, {self.reg_name(a)}"
         if op == 0x5C:
             return "SRET"
+        if op == 0x5D:
+            return f"CSRRW {self.reg_name(a)}, {self.csr_name(b)}, {self.reg_name(c)}"
+        if op == 0x5E:
+            return f"EOI {self.reg_name(a)}"
         
         if op == 0xFF:
             return "HLT"
@@ -502,7 +508,7 @@ class CPU:
             skip_mem = True
         elif op == 0x11:
             skip_regs.add(a & 0x1F)
-        elif op in (0x57, 0x58):
+        elif op in (0x57, 0x58, 0x5D):
             skip_regs.add(a & 0x1F)
 
         return skip_regs, skip_mem
@@ -588,6 +594,12 @@ class CPU:
 
         if op in (0x59, 0x5A, 0x5B):
             return f"csr={self.csr_name(b)}; src {regfmt(a)}"
+
+        if op == 0x5D:
+            return f"{dstfmt(a)}; csr={self.csr_name(b)}, src {regfmt(c)}"
+
+        if op == 0x5E:
+            return f"irq={regv(a) & 0xFF}; src {regfmt(a)}"
 
         return "-"
 
@@ -838,7 +850,9 @@ class CPU:
                     irq = self.pic.next_irq()
                     if irq is not None:
                         print(f"[IRQ] pending={irq}")
-                        self.pic.ack(irq)  # Auto-ack for now
+                        # Do not acknowledge here. Real hardware leaves EOI
+                        # under kernel control, so the guest handler must run
+                        # EOI after it has identified/handled the IRQ source.
                         self.raise_trap(TRAP_IRQ, irq)
 
                 instr = self.fetch()
@@ -1145,6 +1159,21 @@ class CPU:
                     self.sstatus |= SSTATUS_SPIE
                     self.in_trap_handler = False
                     self.pc = self.sepc
+
+                elif op == 0x5D:  # CSRRW Rd, csr, Rs - atomic CSR/register swap primitive
+                    # This is intentionally RISC-V-like. Trap entry uses
+                    # CSRRW SP, SSCRATCH, SP to swap from the interrupted
+                    # task stack to that task's kernel stack.
+                    old_csr = self.csr_read(b)
+                    new_csr = self.r(c)
+                    self.csr_write(b, new_csr)
+                    self.setr(a, old_csr)
+
+                elif op == 0x5E:  # EOI Rn - end-of-interrupt for the PIC
+                    # IRQ acknowledgement is guest-kernel controlled. The
+                    # interrupt number is delivered in STVAL and the handler
+                    # writes it back via EOI once the IRQ is handled.
+                    self.pic.ack(self.r(a) & 0xFF)
 
                 # =================================================
                 # HALT
