@@ -203,7 +203,9 @@ handle_irq:
 
     B trap_restore
 
-trap_restore:
+trap_restore:               ; this does a resume of task restores state frame
+                            ; and makes SRET - machine runs the task
+                            ; note SP should point to task's stack!
     ; Restore privileged state saved after the GPRs.
     POP R1                  ; stval, informational only
     POP R1                  ; scause, informational only
@@ -269,12 +271,13 @@ CURRENT_TASK:
 ; INIT SCHEDULER
 ; ================================================================
 init_scheduler:
-    MOV R12 SP
+    MOV R12 SP ;important we save kernel sp becuse we form stack frame at tasks SPs
 
     ; ------------------------------------------------
     ; Task 0
     ; ------------------------------------------------
     LI SP TASK0_STACK_TOP
+    ;inint trap frame for a task (push 0s)
     LI R1 0
     PUSH R1                  ; R1
     PUSH R1                  ; R2
@@ -291,30 +294,30 @@ init_scheduler:
     PUSH R1                  ; R14
     PUSH R1                  ; R15
     LI R1 idle_task
-    PUSH R1                  ; sepc
+    PUSH R1                  ; sepc - this is new place of PC in trap frame
     LI R1 0
     PUSH R1                  ; sflags
     LI R1 0x20
     PUSH R1                  ; sstatus.SPIE
     LI R1 0
     PUSH R1                  ; scause
-    PUSH R1                  ; stval
+    PUSH R1                  ; stval - other valuable s-data on top (or bottom-)
 
     LI R2 tasks
     MOV R1 SP
-    STW R1 [R2 + TASK_SP]
+    STW R1 [R2 + TASK_SP]   ;save SP
 
     LI R1 idle_task
-    STW R1 [R2 + TASK_PC]
+    STW R1 [R2 + TASK_PC]   ;start PC of the task
 
     LI R1 1
-    STW R1 [R2 + TASK_ACTIVE]
+    STW R1 [R2 + TASK_ACTIVE] ;set this task as as active
 
     LI R1 0
-    STW R1 [R2 + TASK_PID]
+    STW R1 [R2 + TASK_PID]   ;set PID=0 for this task
 
     ; ------------------------------------------------
-    ; Task 1
+    ; Task 1 - do the same
     ; ------------------------------------------------
     LI SP TASK1_STACK_TOP
     LI R1 0
@@ -358,7 +361,7 @@ init_scheduler:
     STW R1 [R2 + TASK_PID]
 
     ; ------------------------------------------------
-    ; Task 2
+    ; Task 2 - same
     ; ------------------------------------------------
     LI SP TASK2_STACK_TOP
     LI R1 0
@@ -402,13 +405,13 @@ init_scheduler:
     STW R1 [R2 + TASK_PID]
 
     ; ------------------------------------------------
-    ; CURRENT_TASK = 0
+    ; CURRENT_TASK = 0 - init 0 task to shedule first
     ; ------------------------------------------------
     LI R1 CURRENT_TASK
     LI R2 0
     STW R2 [R1]
 
-    MOV SP R12
+    MOV SP R12 ;restore kernel SP after finsh dealing with tasks SPs
     RET
 
 ; ================================================================
@@ -463,8 +466,8 @@ check_task:
     B wrap_check
 ; R3 next task is active - switch to it
 ; R2 current task
-; R3 next (+1) typically)
-; R1 - pounts to CURRENT_TASK variable (mem)
+; R3 next (+1) typically
+; R1 - points to CURRENT_TASK variable (mem)
 ; ================================================================
 ; CONTEXT SWITCH
 ; ================================================================
@@ -488,10 +491,10 @@ do_switch:
     ADD R5 R5 R6               ; R5 = &tasks[old]
 
     ; ------------------------------------------------
-    ; Save old trapframe SP
+    ; Save old trap frame SP
     ; ------------------------------------------------
-    ; save current task trapframe pointer to its place in mem
-    MOV R7 SP
+    ; save current task trap frame pointer to its place in mem
+    MOV R7 SP                   ; important here is SP of old task (which was interrupted)brought to you by IRQ!
     STW R7 [R5 + TASK_SP]
 
     ; ------------------------------------------------
@@ -505,9 +508,10 @@ do_switch:
     ADD R5 R5 R6               ; R5 = &tasks[new]
 
     ; ------------------------------------------------
-    ; Restore new task trapframe SP
+    ; Restore new task trap frame SP
     ; ------------------------------------------------
-    LDW SP [R5 + TASK_SP]
+    LDW SP [R5 + TASK_SP] ; by using trap frame thats all we need!
+    ; it goes to trap frame restore and sret which gives a kick to task!
 
     RET
 

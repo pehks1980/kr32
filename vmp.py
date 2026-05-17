@@ -422,35 +422,53 @@ class CPU:
             return "HLT"
         return f"UNKNOWN 0x{op:02X}"
 
-    def trace_changes(self, before_reg, before_sp, before_pc, before_z, before_n, before_c, before_v, before_running, mem_write):
+    def trace_changes(
+        self,
+        before_reg,
+        before_sp,
+        before_pc,
+        before_z,
+        before_n,
+        before_c,
+        before_v,
+        before_running,
+        mem_write,
+        skip_regs=None,
+        skip_sp=False,
+        skip_mem=False,
+        skip_flags=False,
+    ):
+        skip_regs = set() if skip_regs is None else {r & 0x1F for r in skip_regs}
         changes = []
 
         for i, (old, new) in enumerate(zip(before_reg, self.reg)):
+            if i in skip_regs:
+                continue
             if old != new:
                 changes.append(f"{self.reg_name(i)}:0x{old:08X}->0x{new:08X}")
 
-        if before_sp != self.sp and before_reg[self.SP_REG] == self.reg[self.SP_REG]:
+        if not skip_sp and before_sp != self.sp and before_reg[self.SP_REG] == self.reg[self.SP_REG]:
             changes.append(f"SP:0x{before_sp:08X}->0x{self.sp:08X}")
 
         if before_pc != self.pc:
             changes.append(f"PC:0x{before_pc:04X}->0x{self.pc:04X}")
 
-        if before_z != self.Z:
+        if not skip_flags and before_z != self.Z:
             changes.append(f"Z:{int(before_z)}->{int(self.Z)}")
 
-        if before_n != self.N:
+        if not skip_flags and before_n != self.N:
             changes.append(f"N:{int(before_n)}->{int(self.N)}")
 
-        if before_c != self.C:
+        if not skip_flags and before_c != self.C:
             changes.append(f"C:{int(before_c)}->{int(self.C)}")
 
-        if before_v != self.V:
+        if not skip_flags and before_v != self.V:
             changes.append(f"V:{int(before_v)}->{int(self.V)}")
 
         if before_running != self.running:
             changes.append(f"RUN:{int(before_running)}->{int(self.running)}")
 
-        if mem_write is not None:
+        if mem_write is not None and not skip_mem:
             addr, value, size = mem_write
             width = size * 2
             changes.append(f"MEM{size * 8}[0x{addr:08X}]=0x{value:0{width}X}")
@@ -458,6 +476,120 @@ class CPU:
         if not changes:
             return "no change"
         return " | ".join(changes)
+
+    def trace_flags_full(self, before_z, before_n, before_c, before_v):
+        return (
+            f"FLAGS Z:{int(before_z)}->{int(self.Z)} "
+            f"C:{int(before_c)}->{int(self.C)} "
+            f"N:{int(before_n)}->{int(self.N)} "
+            f"V:{int(before_v)}->{int(self.V)}"
+        )
+
+    def trace_shows_flags(self, op, b):
+        return op == 0x04 or op == 0x5C or (op == 0x59 and b == CSR_SFLAGS)
+
+    def trace_redundant_changes(self, op, a, b, c):
+        skip_regs = set()
+        skip_mem = False
+
+        if op == 0x01:
+            skip_regs.add(a & 0x1F)
+        elif op in (0x02, 0x03, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x16, 0x17, 0x18, 0x19):
+            skip_regs.add(a & 0x1F)
+        elif op in (0x20, 0x21, 0x22, 0x26, 0x27):
+            skip_regs.add(a & 0x1F)
+        elif op in (0x23, 0x24, 0x25):
+            skip_mem = True
+        elif op == 0x11:
+            skip_regs.add(a & 0x1F)
+        elif op in (0x57, 0x58):
+            skip_regs.add(a & 0x1F)
+
+        return skip_regs, skip_mem
+
+    def trace_reg_value(self, before_reg, idx):
+        idx &= 0x1F
+        if idx == self.ZERO_REG:
+            return 0
+        return before_reg[idx] & 0xFFFFFFFF
+
+    def trace_operands(self, op, a, b, c, ext, before_reg, mem_write):
+        def regv(idx):
+            return self.trace_reg_value(before_reg, idx)
+
+        def regfmt(idx):
+            return f"{self.reg_name(idx)}=0x{regv(idx):08X}"
+
+        def dstfmt(idx):
+            old = regv(idx)
+            new = self.r(idx)
+            if old == new:
+                return f"{self.reg_name(idx)}:0x{old:08X} unchanged"
+            return f"{self.reg_name(idx)}:0x{old:08X}->0x{new:08X}"
+
+        if op == 0x01:
+            if a & 0x80:
+                rd = a & 0x1F
+                return f"{dstfmt(rd)}; src {regfmt(b)}"
+            return f"{dstfmt(a)}; imm=0x{self.imm16(b, c):08X}"
+
+        if op == 0x0F:
+            return "-"
+
+        if op in (0x02, 0x03, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E):
+            rhs = c & 0x7F if c & 0x80 else regv(c)
+            rhs_name = f"#{rhs}" if c & 0x80 else f"{self.reg_name(c)}=0x{rhs:08X}"
+            return f"{dstfmt(a)}; {regfmt(b)}, {rhs_name}"
+
+        if op in (0x08, 0x16, 0x17, 0x18, 0x19):
+            return f"{dstfmt(a)}; {regfmt(b)}, {regfmt(c)}"
+
+        if op == 0x04:
+            rhs = c & 0x7F if c & 0x80 else regv(b)
+            rhs_name = f"#{rhs}" if c & 0x80 else f"{self.reg_name(b)}=0x{rhs:08X}"
+            return f"{regfmt(a)}, {rhs_name}"
+
+        if op in (0x05, 0x06, 0x07, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
+            return f"target=0x{ext:08X}"
+
+        if op == 0x10:
+            return f"push {regfmt(a)}"
+
+        if op == 0x11:
+            return f"pop -> {dstfmt(a)}"
+
+        if op in (0x20, 0x21, 0x22, 0x26, 0x27):
+            off = regv(c & 0x1F) if c & 0x80 else c
+            off_name = f"{self.reg_name(c & 0x1F)}=0x{off:08X}" if c & 0x80 else f"#{off}"
+            addr = (regv(b) + off) & 0xFFFFFFFF
+            return f"{dstfmt(a)}; addr=0x{addr:08X} ({regfmt(b)} + {off_name})"
+
+        if op in (0x23, 0x24, 0x25):
+            off = regv(c & 0x1F) if c & 0x80 else c
+            off_name = f"{self.reg_name(c & 0x1F)}=0x{off:08X}" if c & 0x80 else f"#{off}"
+            addr = (regv(b) + off) & 0xFFFFFFFF
+            stored = ""
+            if mem_write is not None:
+                _, value, size = mem_write
+                stored = f"; stored{size * 8}=0x{value:0{size * 2}X}"
+            return f"src {regfmt(a)}; addr=0x{addr:08X} ({regfmt(b)} + {off_name}){stored}"
+
+        if op in (0x32, 0x33):
+            return regfmt(a)
+
+        if op in (0x50, 0x51):
+            return regfmt(a)
+
+        if op == 0x57:
+            return dstfmt(a)
+
+        if op == 0x58:
+            return f"{dstfmt(a)}; csr={self.csr_name(b)}"
+
+        if op in (0x59, 0x5A, 0x5B):
+            return f"csr={self.csr_name(b)}; src {regfmt(a)}"
+
+        return "-"
 
     # -----------------------------------------------------
     # MEMORY SAFETY
@@ -1025,10 +1157,37 @@ class CPU:
                     self.raise_trap(TRAP_INVALID_INSTR, op)
 
                 if trace or (self.trace_handler and self.in_trap_handler):
+                    operands = self.trace_operands(op, a, b, c, ext, before_reg, mem_write)
+                    skip_regs, skip_mem = self.trace_redundant_changes(op, a, b, c)
+                    show_flags = self.trace_shows_flags(op, b)
+                    changes = self.trace_changes(
+                        before_reg,
+                        before_sp,
+                        pc_before_exec,
+                        before_z,
+                        before_n,
+                        before_c,
+                        before_v,
+                        before_running,
+                        mem_write,
+                        skip_regs=skip_regs,
+                        skip_mem=skip_mem,
+                        skip_flags=show_flags,
+                    )
+                    detail_parts = []
+                    if operands != "-":
+                        detail_parts.append(operands)
+                    if show_flags:
+                        detail_parts.append(self.trace_flags_full(before_z, before_n, before_c, before_v))
+                    if changes != "no change":
+                        detail_parts.append(changes)
+                    if not detail_parts:
+                        detail_parts.append("no change")
+                    details = " ; ".join(detail_parts)
                     print(
-                        f"PC={instr_pc:08X}  {self.disasm(op, a, b, c, ext):30} "
-                        f"; {self.trace_changes(before_reg, before_sp, pc_before_exec, before_z, before_n, before_c, before_v, before_running, mem_write)} "
-                        f"; OP=0x{op:02X} RAW=0x{instr:08X}"
+                        f"PC:{instr_pc:08X}   {self.disasm(op, a, b, c, ext):19} "
+                        f"; {details} "
+                        f"; OP=0x{op:02X} (0x{instr:08X})"
                     )
                 if syscall_message:
                     print(syscall_message)
