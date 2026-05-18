@@ -1,9 +1,22 @@
-"""
-KR32 VM Debug Module
+"""Debug dump helpers used by the KR32 DEBUG instruction."""
 
-Provides debugging utilities for dumping VM state during execution.
-Called when DEBUG instruction is executed.
-"""
+from mmu import PAGE_EXEC, PAGE_GLOBAL, PAGE_PRESENT, PAGE_READ, PAGE_USER, PAGE_WRITE
+
+
+def format_page_flags(flags):
+    """Return compact PTE/TLB flags in KR32 order."""
+    out = []
+    for bit, name in (
+        (PAGE_PRESENT, "P"),
+        (PAGE_READ, "R"),
+        (PAGE_WRITE, "W"),
+        (PAGE_EXEC, "X"),
+        (PAGE_USER, "U"),
+        (PAGE_GLOBAL, "G"),
+    ):
+        if flags & bit:
+            out.append(name)
+    return "".join(out) or "-"
 
 def dump_registers(vm):
     """Dump all 32 registers."""
@@ -23,9 +36,16 @@ def dump_flags(vm):
     print(f"  Z:{int(vm.Z)} N:{int(vm.N)} C:{int(vm.C)} V:{int(vm.V)}")
     print(f"  MMU enabled: {vm.mmu.enabled}")
     print(f"  Interrupts enabled: {vm.interrupt_enabled}")
-    print(f"  Mode: {'KERNEL' if vm.mode == 0 else 'USER'}")
+    print(f"  Mode: {str(vm.mode).upper()}")
     print(f"  PC: 0x{vm.pc:08x}")
     print(f"  SP: 0x{vm.get_sp():08x}")
+    print(f"  PTBR: 0x{vm.mmu.ptbr_pa:08x}")
+    print(f"  STVEC: 0x{vm.stvec:08x}")
+    print(f"  SEPC: 0x{vm.sepc:08x}")
+    print(f"  SCAUSE: 0x{vm.scause:08x}")
+    print(f"  STVAL: 0x{vm.stval:08x}")
+    print(f"  SSCRATCH: 0x{vm.sscratch:08x}")
+    print(f"  SSTATUS: 0x{vm.sstatus:08x}")
     print()
 
 def dump_stack(vm, size=64):
@@ -51,7 +71,7 @@ def dump_stack(vm, size=64):
     print()
 
 def dump_page_table(vm):
-    """Dump the current page table."""
+    """Dump only mapped PTEs from the current one-level page table."""
     ptbr = vm.mmu.ptbr_pa
     if ptbr == 0:
         print("=== PAGE TABLE ===")
@@ -60,24 +80,23 @@ def dump_page_table(vm):
         return
 
     print(f"=== PAGE TABLE (PTBR=0x{ptbr:08x}) ===")
-    # Assume 1024 entries (4KB / 4 bytes per entry)
-    for i in range(0, 1024, 8):
-        entries = []
-        for j in range(8):
-            if i + j >= 1024:
-                break
-            addr = ptbr + (i + j) * 4
-            if addr + 3 < len(vm.physical_memory):
-                try:
-                    val = vm.physical_memory[addr:addr + 4]
-                    val = int.from_bytes(val, "little")
-                    entries.append(f"{i+j:3d}:{val:08x}")
-                except:
-                    entries.append(f"{i+j:3d}:--------")
-            else:
-                entries.append(f"{i+j:3d}:--------")
-        if entries:
-            print("  " + "  ".join(entries))
+    mapped = 0
+    entries = vm.mmu.virtual_size // vm.mmu.page_size
+    for vpn in range(entries):
+        addr = ptbr + vpn * 4
+        if addr + 4 > len(vm.physical_memory):
+            break
+        pte = int.from_bytes(vm.physical_memory[addr:addr + 4], "little")
+        flags = pte & 0xFFF
+        if not flags & PAGE_PRESENT:
+            continue
+        ppn = pte >> 12
+        va = vpn * vm.mmu.page_size
+        pa = ppn * vm.mmu.page_size
+        print(f"  VA 0x{va:08x} -> PA 0x{pa:08x}  PTE=0x{pte:08x} [{format_page_flags(flags)}]")
+        mapped += 1
+    if not mapped:
+        print("  no present entries")
     print()
 
 def dump_idt(vm):
@@ -115,15 +134,9 @@ def dump_tlb(vm):
         print("  TLB empty")
     else:
         for vpn, (ppn, flags) in sorted(vm.mmu.tlb.entries.items()):
-            va = vpn << 12  # assuming 4KB pages
-            pa = ppn << 12
-            flag_str = ""
-            if flags & 1: flag_str += "R"
-            if flags & 2: flag_str += "W"
-            if flags & 4: flag_str += "X"
-            if flags & 8: flag_str += "U"
-            if flags & 16: flag_str += "P"
-            print(f"  VPN=0x{vpn:05x} (VA=0x{va:08x}) -> PPN=0x{ppn:05x} (PA=0x{pa:08x}) [{flag_str}]")
+            va = vpn * vm.mmu.page_size
+            pa = ppn * vm.mmu.page_size
+            print(f"  VA 0x{va:08x} -> PA 0x{pa:08x}  VPN=0x{vpn:05x} PPN=0x{ppn:05x} [{format_page_flags(flags)}]")
     print()
 
 def dump_trap_state(vm):
@@ -134,6 +147,16 @@ def dump_trap_state(vm):
     print(f"  Trap return PC: 0x{vm.trap_return_pc:08x}")
     print(f"  Trap cause: {vm.trap_cause}")
     print(f"  Trap value: 0x{vm.trap_value:08x}")
+    print()
+
+
+def dump_memory(vm, addr, size):
+    """Dump the configured virtual memory range at DEBUG time."""
+    print(f"=== MEMORY DUMP (VA=0x{addr:08x}, size={size}) ===")
+    try:
+        vm.hexdump(addr, size)
+    except Exception as exc:
+        print(f"  unavailable: {exc}")
     print()
 
 def dump_short(vm):
@@ -157,4 +180,19 @@ def dump_all(vm):
     dump_page_table(vm)
     dump_idt(vm)
     dump_tlb(vm)
+    print("="*50 + "\n")
+
+
+def dump_debug2(vm, dump_range=None):
+    """Dump execution state plus compact MMU views for address-space tests."""
+    print("\n" + "="*50)
+    print("KR32 VM DEBUG DUMP (MMU)")
+    print("="*50)
+    dump_registers(vm)
+    dump_flags(vm)
+    dump_trap_state(vm)
+    dump_page_table(vm)
+    dump_tlb(vm)
+    if dump_range is not None:
+        dump_memory(vm, dump_range[0], dump_range[1])
     print("="*50 + "\n")

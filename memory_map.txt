@@ -1,0 +1,113 @@
+Current layout after the changes:
+Physical memory
+===============
+
+0x00000000  +-------------------------------+
+            | boot / reset vector            |
+            | mapped global supervisor       |
+0x00001000  +-------------------------------+
+
+0x00002000  +-------------------------------+
+            | kernel trap / scheduler code   |
+            | mapped global supervisor       |
+0x00003000  +-------------------------------+
+
+0x00003000  +-------------------------------+
+            | task0 kernel trapframe bottom  |
+            | mapped global supervisor       |
+0x00004000  +-------------------------------+
+
+0x00004000  +-------------------------------+
+            | kernel stacks                  |
+            | task0 kstack top: 0x4000       |
+            | task1 kstack top: 0x4200       |
+            | task2 kstack top: 0x4400       |
+            | mapped global supervisor       |
+0x00005000  +-------------------------------+
+
+0x00005000  +-------------------------------+
+            | task0 user stack physical page |
+0x00006000  +-------------------------------+
+
+0x00006000  +-------------------------------+
+            | task0 user data physical page  |
+0x00007000  +-------------------------------+
+
+0x00007000  +-------------------------------+
+            | scheduler task table           |
+            | CURRENT_TASK                   |
+            | mapped global supervisor       |
+0x00008000  +-------------------------------+
+
+0x00008000  +-------------------------------+
+            | task user code page            |
+            | idle_task / TASK_A / TASK_B    |
+            | mapped user RX                 |
+0x00009000  +-------------------------------+
+
+0x00009000  +-------------------------------+
+            | task1 user stack physical page |
+0x0000A000  +-------------------------------+
+
+0x0000A000  +-------------------------------+
+            | task2 user stack physical page |
+0x0000B000  +-------------------------------+
+
+0x0000B000  +-------------------------------+
+            | task1 user data physical page  |
+            | VA 0x6000 contains AAAAAAAA    |
+0x0000C000  +-------------------------------+
+
+0x0000C000  +-------------------------------+
+            | task2 user data physical page  |
+            | VA 0x6000 contains BBBBBBBB    |
+0x0000D000  +-------------------------------+
+
+
+0x00200000  +-------------------------------+
+            | IDT / trap vector table        |
+            | physical only during setup now |
+            | NOTE: not mapped after MMU on  |
+0x00201000  +-------------------------------+
+
+
+0x00400000  +-------------------------------+
+            | task0 page table               |
+0x00500000  +-------------------------------+
+            | task1 page table               |
+0x00600000  +-------------------------------+
+            | task2 page table               |
+0x00700000  +-------------------------------+
+Virtual mappings shared by all tasks
+====================================
+
+VA 0x00000000 -> PA 0x00000000   [P R W X G] supervisor
+VA 0x00002000 -> PA 0x00002000   [P R W X G] supervisor
+VA 0x00003000 -> PA 0x00003000   [P R W X G] supervisor
+VA 0x00004000 -> PA 0x00004000   [P R W X G] supervisor
+VA 0x00007000 -> PA 0x00007000   [P R W X G] supervisor
+
+VA 0x00008000 -> PA 0x00008000   [P R X U]   user code
+Task 0 address space
+====================
+
+PTBR = 0x00400000
+
+VA 0x00005000 -> PA 0x00005000   [P R W U]   user stack
+VA 0x00006000 -> PA 0x00006000   [P R W U]   user data
+Task 1 address space
+====================
+
+PTBR = 0x00500000
+
+VA 0x00005000 -> PA 0x00009000   [P R W U]   user stack
+VA 0x00006000 -> PA 0x0000B000   [P R W U]   user data
+Task 2 address space
+====================
+
+PTBR = 0x00600000
+
+VA 0x00005000 -> PA 0x0000A000   [P R W U]   user stack
+VA 0x00006000 -> PA 0x0000C000   [P R W U]   user data
+Important note: 0x00200000 IDT is used physically by raise_trap, not through normal virtual memory translation,
+ so it currently does not need a virtual mapping.

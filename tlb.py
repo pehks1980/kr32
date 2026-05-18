@@ -21,8 +21,17 @@ class TLB:
         while len(self.entries) > self.capacity:
             self.entries.popitem(last=False)
 
-    def flush(self):
-        self.entries.clear()
+    def flush(self, preserve_flag=0):
+        """Flush cached translations, optionally keeping global entries."""
+        if not preserve_flag:
+            self.entries.clear()
+            return
+
+        self.entries = OrderedDict(
+            (vpn, entry)
+            for vpn, entry in self.entries.items()
+            if entry[1] & preserve_flag
+        )
 
     def flush_vpn(self, vpn):
         self.entries.pop(vpn, None)

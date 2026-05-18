@@ -5,12 +5,15 @@ from token import OP
 from mmu import (
     MMU,
     MODE_KERNEL,
+    MODE_USER,
     PAGE_EXEC,
+    PAGE_GLOBAL,
     PAGE_READ,
+    PAGE_USER,
     PAGE_WRITE,
     PageFault,
 )
-from debug import dump_all, dump_short
+from debug import dump_all, dump_debug2, dump_short
 from device.timer import PIT
 from device.pic import PIC
 
@@ -118,6 +121,7 @@ class CPU:
         self.traceint = False
         self.trace_handler = False
         self.trace_fault = False
+        self.debug_dump_range = None
         self.current_instr_pc = None
         self.current_instr = None
         self.trap_return_pc = 0
@@ -619,6 +623,12 @@ class CPU:
         self.check_physical_mem(paddr, 1)
         return paddr
 
+    def require_supervisor(self, opname):
+        """Reject privileged instructions while the CPU is in user mode."""
+        if self.mode == MODE_USER:
+            self.raise_trap(TRAP_ILLEGAL_MEM, 0)
+            raise TrapDelivery()
+
     def raise_trap(self, vector, value=0, resume_pc=None):
         """
         Deliver a synchronous trap/exception to the guest kernel.
@@ -637,6 +647,12 @@ class CPU:
         self.trap_return_pc = return_pc
         self.trap_cause = vector
         self.trap_value = value
+
+        if self.mode == MODE_USER:
+            self.sstatus &= ~SSTATUS_SPP
+        else:
+            self.sstatus |= SSTATUS_SPP
+        self.mode = MODE_KERNEL
 
         # Save RISC-V-like supervisor trap state.
         self.sepc = fault_pc if resume_pc is None else resume_pc
@@ -1087,8 +1103,10 @@ class CPU:
                     if self.debug_mode is not None:
                         if self.debug_mode == 0:
                             dump_short(self)
-                        else:
+                        elif self.debug_mode == 1:
                             dump_all(self)
+                        else:
+                            dump_debug2(self, self.debug_dump_range)
                         if debug_delay:
                             time.sleep(debug_delay)
                         self.raise_trap(TRAP_DEBUG, debug_delay, resume_pc=self.pc)
@@ -1099,25 +1117,33 @@ class CPU:
                 # MMU CONTROL
                 # =================================================
                 elif op == 0x50:  # SETPTBR Rn - set page table base register
-                    self.mmu.ptbr_pa = self.r(a)
+                    self.require_supervisor("SETPTBR")
+                    new_ptbr = self.r(a)
+                    if self.mmu.ptbr_pa != new_ptbr:
+                        self.mmu.ptbr_pa = new_ptbr
+                        self.mmu.flush_tlb(preserve_global=True)
 
                 elif op == 0x51:  # SETIDTR Rn - set IDT base register
+                    self.require_supervisor("SETIDTR")
                     # Guest kernel sets the IDT base physical address
                     self.idt_base_pa = self.r(a)
                     self.stvec = self.r(a)
 
                 elif op == 0x52:  # ENABLEMMU
+                    self.require_supervisor("ENABLEMMU")
                     self.mmu.enabled = True
 
                 # =================================================
                 # TRAP / INTERRUPT CONTROL
                 # =================================================
                 elif op == 0x53:  # ENABLEINT - enable interrupt delivery
+                    self.require_supervisor("ENABLEINT")
                     # After this, traps can be delivered via IDT
                     self.interrupt_enabled = True
                     self.sstatus |= SSTATUS_SIE
 
                 elif op == 0x54:  # DISABLEINT - disable interrupt delivery
+                    self.require_supervisor("DISABLEINT")
                     # Traps will be masked after this
                     self.interrupt_enabled = False
                     self.sstatus &= ~SSTATUS_SIE
@@ -1140,16 +1166,21 @@ class CPU:
                     self.setr(a, self.csr_read(b))
 
                 elif op == 0x59:  # CSRW csr, Rs
+                    self.require_supervisor("CSRW")
                     self.csr_write(b, self.r(a))
 
                 elif op == 0x5A:  # CSRS csr, Rs
+                    self.require_supervisor("CSRS")
                     self.csr_write(b, self.csr_read(b) | self.r(a))
 
                 elif op == 0x5B:  # CSRC csr, Rs
+                    self.require_supervisor("CSRC")
                     self.csr_write(b, self.csr_read(b) & ~self.r(a))
 
                 elif op == 0x5C:  # SRET - return from supervisor trap
+                    self.require_supervisor("SRET")
                     self.unpack_flags(self.sflags)
+                    self.mode = MODE_KERNEL if self.sstatus & SSTATUS_SPP else MODE_USER
                     if self.sstatus & SSTATUS_SPIE:
                         self.sstatus |= SSTATUS_SIE
                         self.interrupt_enabled = True
@@ -1157,10 +1188,12 @@ class CPU:
                         self.sstatus &= ~SSTATUS_SIE
                         self.interrupt_enabled = False
                     self.sstatus |= SSTATUS_SPIE
+                    self.sstatus &= ~SSTATUS_SPP
                     self.in_trap_handler = False
                     self.pc = self.sepc
 
                 elif op == 0x5D:  # CSRRW Rd, csr, Rs - atomic CSR/register swap primitive
+                    self.require_supervisor("CSRRW")
                     # This is intentionally RISC-V-like. Trap entry uses
                     # CSRRW SP, SSCRATCH, SP to swap from the interrupted
                     # task stack to that task's kernel stack.
@@ -1170,6 +1203,7 @@ class CPU:
                     self.setr(a, old_csr)
 
                 elif op == 0x5E:  # EOI Rn - end-of-interrupt for the PIC
+                    self.require_supervisor("EOI")
                     # IRQ acknowledgement is guest-kernel controlled. The
                     # interrupt number is delivered in STVAL and the handler
                     # writes it back via EOI once the IRQ is handled.
@@ -1266,8 +1300,8 @@ def main():
     parser.add_argument(
         "--debug",
         type=int,
-        choices=[0, 1],
-        help="enable debug dumps: 0=short (regs+flags), 1=full"
+        choices=[0, 1, 2],
+        help="enable debug dumps: 0=short, 1=full, 2=MMU/process view"
     )
     args = parser.parse_args()
 
@@ -1284,6 +1318,8 @@ def main():
     cpu.traceint = args.traceint
     cpu.trace_fault = args.tracefault
     cpu.trace_handler = args.tracehandler
+    if args.dump and args.debug == 2:
+        cpu.debug_dump_range = (int(args.dump[0], 0), int(args.dump[1], 0))
     if args.no_mmu:
         cpu.mmu.enabled = False
 

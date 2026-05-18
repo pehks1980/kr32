@@ -8,6 +8,7 @@ PAGE_WRITE = 1 << 1
 PAGE_EXEC = 1 << 2
 PAGE_USER = 1 << 3
 PAGE_PRESENT = 1 << 4
+PAGE_GLOBAL = 1 << 5
 
 ACCESS_FLAG = {
     "r": PAGE_READ,
@@ -81,8 +82,10 @@ class MMU:
         self.page_table.pop(vpn, None)
         self.tlb.flush_vpn(vpn)
 
-    def flush_tlb(self):
-        self.tlb.flush()
+    def flush_tlb(self, preserve_global=False):
+        # A PTBR switch is RISC-like SFENCE.VMA behavior: user entries are
+        # invalidated, while supervisor global mappings may stay cached.
+        self.tlb.flush(PAGE_GLOBAL if preserve_global else 0)
 
     def check_access(self, vaddr, access, mode, flags):
         needed = ACCESS_FLAG[access]

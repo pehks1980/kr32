@@ -19,10 +19,39 @@
 ; ================================================================
 
 ; ================================================================
+; FOR memory map and stucts please refer to memory_map.txt
+; ================================================================
+
+
+; ================================================================
 ; KR32 KERNEL - UNIFIED TRAP HANDLER (Linux style)
 ; ================================================================
+
+
 .org 0x0000
 B KERNEL_START
+
+.EQU PTE_R,       0x0001
+.EQU PTE_W,       0x0002
+.EQU PTE_X,       0x0004
+.EQU PTE_U,       0x0008
+.EQU PTE_P,       0x0010
+.EQU PTE_G,       0x0020
+
+.EQU KERNEL_FLAGS, 0x0037       ; P|R|W|X|G, supervisor-only shared mapping
+.EQU USER_RX,      0x001D       ; P|R|X|U
+.EQU USER_RW,      0x001B       ; P|R|W|U
+
+.EQU TASK0_PTBR,   0x00400000   ; one 1 MiB one-level table per address space
+.EQU TASK1_PTBR,   0x00500000
+.EQU TASK2_PTBR,   0x00600000
+
+.EQU TASK0_USTACK_PA, 0x00005000 ; physical memory address stack and data when map pages tasks 0,1,2 in memory image
+.EQU TASK1_USTACK_PA, 0x00009000 ; func page init makes map in page table for every task (0) runs in kernel mode
+.EQU TASK2_USTACK_PA, 0x0000A000
+.EQU TASK0_DATA_PA,   0x00006000
+.EQU TASK1_DATA_PA,   0x0000B000
+.EQU TASK2_DATA_PA,   0x0000C000
 
 .org 0x2000
 
@@ -72,27 +101,92 @@ init_idt:
 
 
 ; ================================================================
-; Initialize Page Tables (identity map first 64KB)
+; Initialize Page Tables
 ; ================================================================
 init_page_tables:
-    LI R1 0x00100000           ; PT base
-    LI R2 16                   ; 16 entries (64KB)
-    LI R3 0                    ; VPN counter
+    PUSH LR
 
-init_loop:
-    MOV R4 R3                  ; PPN = VPN
-    SHL R4 R4 12               ; Shift to bits[31:12]
-    LI R6 0x001F               ; Flags: PRESENT|READ|WRITE|EXEC|USER
-    OR R4 R4 R6
-    SHL R5 R3 2                ; offset = VPN * 4
-    STW R4 [R1+R5]
-    
-    ADD R3 R3 1
-    CMP R3 R2
-    BNE init_loop
+    ; EVERY TASK owns a different PTBR. Kernel pages are mapped into ALL
+    ; address spaces as supervisor global entries; user stack/data pages are
+    ; mapped per task to prove same-VA, different-PA isolation.
+    LI R1 TASK0_PTBR            ; task 0 page table pointer (phys address)
+    BL map_common_kernel        ; map kernel page table for task 0 - a kernel process "idle loop" run in kernel mode
+    LI R2 0x00005000            ; page VA -virt addr
+    LI R3 TASK0_USTACK_PA       ; page PA -phys addr (.org one)
+    LI R4 USER_RW               ; page access matrix stored it page table entry (PTE)
+    BL map_page
+    LI R2 0x00006000
+    LI R3 TASK0_DATA_PA
+    LI R4 USER_RW
+    BL map_page
 
-    LI R1 0x00100000
+    LI R1 TASK1_PTBR             ; USER task 1 page table pointer (phys address)
+    BL map_common_kernel
+    LI R2 0x00005000             ;page used for stack
+    LI R3 TASK1_USTACK_PA        ; physical address - note! in virtual space virtual address can be the same (like here x05000)
+    LI R4 USER_RW                ; so mmu does the trick and with help of tlb fast translates vpn to ppn : offset
+    BL map_page
+    LI R2 0x00006000             ;page used for data
+    LI R3 TASK1_DATA_PA
+    LI R4 USER_RW
+    BL map_page
+
+    LI R1 TASK2_PTBR            ; USER task 2 - same
+    BL map_common_kernel
+    LI R2 0x00005000
+    LI R3 TASK2_USTACK_PA
+    LI R4 USER_RW
+    BL map_page
+    LI R2 0x00006000
+    LI R3 TASK2_DATA_PA
+    LI R4 USER_RW
+    BL map_page
+
+    LI R1 TASK0_PTBR
     SETPTBR R1
+    POP LR
+    RET
+
+map_common_kernel:
+    PUSH LR
+
+    ; Boot page, kernel/trap code, kernel stacks, scheduler/task metadata,
+    ; and the user text page are identity-mapped into every address space.
+    LI R2 0x00000000      ;page 0 - boot (0000)
+    LI R3 0x00000000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+    LI R2 0x00002000      ;page 1,2,3 = kernel code (2000,3000,4000)
+    LI R3 0x00002000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+    LI R2 0x00003000
+    LI R3 0x00003000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+    LI R2 0x00004000
+    LI R3 0x00004000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+    LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
+    LI R3 0x00007000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+    LI R2 0x00008000      ; page 5 text page (program) for user mode process
+    LI R3 0x00008000
+    LI R4 USER_RX
+    BL map_page
+
+    POP LR
+    RET
+
+map_page:
+    ; R1=PTBR, R2=VA, R3=PA, R4=flags. The PTE format stores the physical
+    ; page base in bits [31:12] and KR32 permission bits in [11:0].
+    SHR R5 R2 12               ; VPN
+    SHL R5 R5 2                ; page-table byte offset
+    OR R6 R3 R4                ; PTE = PA page base | flags
+    STW R6 [R1 + R5]
     RET
 
 
@@ -270,17 +364,18 @@ trap_restore:               ; this does a resume of task restores state frame
 .EQU TASK_PC,      8          ; debug/metadata: entry or last known PC
 .EQU TASK_ACTIVE, 12
 .EQU TASK_PID,    16
-.EQU TASK_SIZE,   20
+.EQU TASK_PTBR,   20         ; physical base of this task's page table
+.EQU TASK_SIZE,   24
 
 .EQU TF_USP,      20          ; trapframe offset from SP to saved task SP
 
 ; ------------------------------------------------
 ; Task table
 ; ------------------------------------------------
-.ORG 0x3000
+.ORG 0x7000
 
 tasks:
-    .SPACE 60              ; 3 tasks * 20 bytes
+    .SPACE 72              ; 3 tasks * 24 bytes
 
 CURRENT_TASK:
     .WORD 0
@@ -292,9 +387,9 @@ CURRENT_TASK:
 .EQU TASK1_KSTACK_TOP, 0x4200
 .EQU TASK2_KSTACK_TOP, 0x4400
 
-.EQU TASK0_USTACK_TOP, 0x5000
-.EQU TASK1_USTACK_TOP, 0x5200
-.EQU TASK2_USTACK_TOP, 0x5400
+.EQU TASK0_USTACK_TOP, 0x6000
+.EQU TASK1_USTACK_TOP, 0x6000
+.EQU TASK2_USTACK_TOP, 0x6000
 
 ; ================================================================
 ; INIT SCHEDULER
@@ -330,8 +425,8 @@ init_scheduler:
     PUSH R1                  ; sepc - this is new place of PC in trap frame
     LI R1 0
     PUSH R1                  ; sflags
-    LI R1 0x20
-    PUSH R1                  ; sstatus.SPIE
+    LI R1 0x120
+    PUSH R1                  ; sstatus.SPIE|SPP: idle resumes as supervisor task
     LI R1 0
     PUSH R1                  ; scause
     PUSH R1                  ; stval - other valuable s-data on top (or bottom-)
@@ -351,6 +446,9 @@ init_scheduler:
 
     LI R1 0
     STW R1 [R2 + TASK_PID]   ;set PID=0 for this task
+
+    LI R1 TASK0_PTBR
+    STW R1 [R2 + TASK_PTBR]
 
     ; ------------------------------------------------
     ; Task 1 - do the same
@@ -400,6 +498,9 @@ init_scheduler:
 
     LI R1 1
     STW R1 [R2 + TASK_PID]
+
+    LI R1 TASK1_PTBR
+    STW R1 [R2 + TASK_PTBR]
 
     ; ------------------------------------------------
     ; Task 2 - same
@@ -451,6 +552,9 @@ init_scheduler:
 
     LI R1 2
     STW R1 [R2 + TASK_PID]
+
+    LI R1 TASK2_PTBR
+    STW R1 [R2 + TASK_PTBR]
 
     ; ------------------------------------------------
     ; CURRENT_TASK = 0 - init 0 task to shedule first
@@ -563,6 +667,9 @@ do_switch:
     ; ------------------------------------------------
     ; Restore new task trap frame SP
     ; ------------------------------------------------
+    LDW R7 [R5 + TASK_PTBR]
+    SETPTBR R7              ; switch address space; VM flushes non-global TLB entries
+
     LDW SP [R5 + TASK_KSP] ; load next task's kernel trapframe
     ; trap_restore will restore SSCRATCH with the saved task SP, then
     ; CSRRW swaps back to that task stack immediately before SRET.
@@ -575,6 +682,7 @@ do_switch:
 ; ================================================================
 ; TASKS
 ; ================================================================
+.ORG 0x8000
 
 ; --TASK 0 ----------------------------------------------
 
@@ -592,10 +700,13 @@ idle_loop:
 TASK_A_START:
 
     LI R2 0
+    LI R4 0x00006000
+    LI R5 0xAAAAAAAA
 
 task_a_loop:
     ADD R2 R2 1
-    DEBUG 2
+    STW R5 [R4]
+    DEBUG 1
     B task_a_loop
 
 ; ---TASK 2---------------------------------------------
@@ -603,8 +714,11 @@ task_a_loop:
 TASK_B_START:
 
     LI R3 0
+    LI R4 0x00006000
+    LI R5 0xBBBBBBBB
 
 task_b_loop:
     ADD R3 R3 1
-    DEBUG 2
+    STW R5 [R4]
+    DEBUG 1
     B task_b_loop

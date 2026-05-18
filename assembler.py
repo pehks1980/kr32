@@ -1,4 +1,5 @@
 import struct
+import sys
 
 # =========================================================
 # KR32-RISC OPCODES
@@ -154,6 +155,28 @@ def csr(x: str) -> int:
 # =========================================================
 # ASSEMBLER
 # =========================================================
+class AssemblerError(Exception):
+    def __init__(self, phase, message, lineno=None, addr=None, source=None):
+        super().__init__(message)
+        self.phase = phase
+        self.message = message
+        self.lineno = lineno
+        self.addr = addr
+        self.source = source
+
+    def __str__(self):
+        parts = [f"[ASM] {self.phase} error"]
+        if self.lineno is not None:
+            parts.append(f"line {self.lineno}")
+        if self.addr is not None:
+            parts.append(f"addr 0x{self.addr:08X}")
+
+        header = ": ".join((" ".join(parts), self.message))
+        if self.source:
+            return f"{header}\n    {self.source}"
+        return header
+
+
 class Assembler:
     def __init__(self):
         self.labels = {}
@@ -222,6 +245,8 @@ class Assembler:
 
     def instr_size(self, line):
         tokens = self.tokenize(line)
+        if not tokens:
+            return 0
         op = normalize_op(tokens[0])
         if op == "LI" or op in (
             "B", "BEQ", "BNE",
@@ -244,53 +269,77 @@ class Assembler:
     def pass1(self, src):
         self.pc = 0
 
-        for line in src:
-            line = self.strip_comment(line).upper()
+        for lineno, raw_line in enumerate(src, 1):
+            source = raw_line.rstrip("\n")
+            line = self.strip_comment(raw_line).upper()
 
             if not line:
                 continue
 
-            tokens = self.tokenize(line)
+            try:
+                tokens = self.tokenize(line)
+                addr = self.pc
 
-            # label
-            if line.endswith(":"):
-                label = line[:-1]
+                # label
+                if line.endswith(":"):
+                    label = line[:-1]
 
-                if label.startswith("."):
-                    label = self.current_global + label
-                else:
-                    self.current_global = label
+                    if label.startswith("."):
+                        label = self.current_global + label
+                    else:
+                        self.current_global = label
 
-                self.labels[label] = self.pc
-                continue
+                    if label in self.labels:
+                        raise ValueError(f"duplicate label: {label}")
+                    self.labels[label] = self.pc
+                    continue
 
-            # directives
-            if tokens[0] == ".ORG":
-                self.lines.append(line)
-                self.pc = int(tokens[1], 0)
-                continue
+                entry = {
+                    "text": line,
+                    "source": source,
+                    "lineno": lineno,
+                    "addr": addr,
+                }
 
-            elif tokens[0] == ".WORD":
-                self.lines.append(line)
-                count = len(tokens) - 1
-                self.pc += count * 4
-                continue
+                # directives
+                if tokens[0] == ".ORG":
+                    if len(tokens) != 2:
+                        raise ValueError(".ORG expects exactly one address")
+                    self.lines.append(entry)
+                    self.pc = int(tokens[1], 0)
+                    continue
 
-            elif tokens[0] == ".SPACE":
-                self.lines.append(line)
-                self.pc += self.resolve_expr(" ".join(tokens[1:]))
-                continue
+                elif tokens[0] == ".WORD":
+                    if len(tokens) < 2:
+                        raise ValueError(".WORD expects at least one value")
+                    self.lines.append(entry)
+                    count = len(tokens) - 1
+                    self.pc += count * 4
+                    continue
 
-            elif tokens[0] == ".EQU":
-                name = tokens[1]
-                value = self.resolve_expr(" ".join(tokens[2:]))
-                self.consts[name] = value
-                self.lines.append(line)
-                continue
+                elif tokens[0] == ".SPACE":
+                    if len(tokens) < 2:
+                        raise ValueError(".SPACE expects a size")
+                    self.lines.append(entry)
+                    self.pc += self.resolve_expr(" ".join(tokens[1:]))
+                    continue
 
-            # instruction
-            self.lines.append(line)
-            self.pc += self.instr_size(line)
+                elif tokens[0] == ".EQU":
+                    if len(tokens) < 3:
+                        raise ValueError(".EQU expects a name and value")
+                    name = tokens[1]
+                    value = self.resolve_expr(" ".join(tokens[2:]))
+                    self.consts[name] = value
+                    self.lines.append(entry)
+                    continue
+
+                # instruction
+                self.lines.append(entry)
+                self.pc += self.instr_size(line)
+            except AssemblerError:
+                raise
+            except Exception as exc:
+                raise AssemblerError("pass1", str(exc), lineno, self.pc, source) from exc
     
     # -----------------------------------------------------
     # parse memory operand like [Rbase + offset] or [Rbase]
@@ -363,148 +412,166 @@ class Assembler:
     def pass2(self):
         self.pc = 0
 
-        for line in self.lines:
-            p = self.tokenize(line)
-            op = normalize_op(p[0])
+        for entry in self.lines:
+            start_pc = self.pc
+            try:
+                self.encode_line(entry)
+            except AssemblerError:
+                raise
+            except Exception as exc:
+                raise AssemblerError(
+                    "pass2",
+                    str(exc),
+                    entry["lineno"],
+                    start_pc,
+                    entry["source"],
+                ) from exc
 
-            if op == ".ORG":
-                self.pc = int(p[1], 0)
-                continue
+    def encode_line(self, entry):
+        line = entry["text"]
+        p = self.tokenize(line)
+        if not p:
+            return
+        op = normalize_op(p[0])
 
-            elif op == ".WORD":
-                for item in p[1:]:
-                    self.emit32(self.resolve_expr(item))
-                continue
+        if op == ".ORG":
+            self.pc = int(p[1], 0)
+            return
 
-            elif op == ".SPACE":
-                size = self.resolve_expr(" ".join(p[1:]))
-                for _ in range(size):
-                    self.emit8(0)
-                continue
+        elif op == ".WORD":
+            for item in p[1:]:
+                self.emit32(self.resolve_expr(item))
+            return
 
-            elif op == ".EQU":
-                continue
+        elif op == ".SPACE":
+            size = self.resolve_expr(" ".join(p[1:]))
+            for _ in range(size):
+                self.emit8(0)
+            return
 
-            # =================================================
-            # MOV Rn IMM16
-            # MOV Rn Rm
-            # =================================================
-            elif op == "MOV":
-                rd = reg(p[1])
-                src = p[2]
+        elif op == ".EQU":
+            return
 
-                if is_reg_token(src):
-                    self.emit32(self.encode(OP[op], 0x80 | rd, reg(src), 0))
-                else:
-                    imm = self.resolve_expr(src) & 0xFFFF
-                    self.emit32(
-                        self.encode(OP[op], rd, (imm >> 8) & 0xFF, imm & 0xFF)
-                    )
+        # =================================================
+        # MOV Rn IMM16
+        # MOV Rn Rm
+        # =================================================
+        elif op == "MOV":
+            rd = reg(p[1])
+            src = p[2]
 
-            elif op == "LI":
-                rd = reg(p[1])
-                imm = self.resolve_expr(p[2]) & 0xFFFFFFFF
-                self.emit32(self.encode(OP[op], rd, 0, 0))
-                self.emit32(imm)
+            if is_reg_token(src):
+                self.emit32(self.encode(OP[op], 0x80 | rd, reg(src), 0))
+            else:
+                imm = self.resolve_expr(src) & 0xFFFF
+                self.emit32(
+                    self.encode(OP[op], rd, (imm >> 8) & 0xFF, imm & 0xFF)
+                )
 
-            # =================================================
-            # ALU Rn Ra Rb
-            # ALU Rn Ra IMM7
-            # =================================================
-            elif op in ("ADD", "SUB", "AND", "OR", "XOR", "SHL", "SHR", "SAR"):
-                rd = reg(p[1])
-                rs1 = reg(p[2])
-                src2 = p[3]
+        elif op == "LI":
+            rd = reg(p[1])
+            imm = self.resolve_expr(p[2]) & 0xFFFFFFFF
+            self.emit32(self.encode(OP[op], rd, 0, 0))
+            self.emit32(imm)
 
-                if is_reg_token(src2):
-                    self.emit32(self.encode(OP[op], rd, rs1, reg(src2)))
-                else:
-                    imm = self.resolve_expr(src2)
-                    if imm < 0 or imm > 0x7F:
-                        raise ValueError(f"{op} immediate out of range (0..127): {imm}")
-                    self.emit32(self.encode(OP[op], rd, rs1, 0x80 | imm))
+        # =================================================
+        # ALU Rn Ra Rb
+        # ALU Rn Ra IMM7
+        # =================================================
+        elif op in ("ADD", "SUB", "AND", "OR", "XOR", "SHL", "SHR", "SAR"):
+            rd = reg(p[1])
+            rs1 = reg(p[2])
+            src2 = p[3]
 
-            elif op in ("MUL", "DIV", "MOD", "DIVU", "MODU"):
-                rd = reg(p[1])
-                rs1 = reg(p[2])
-                rs2 = reg(p[3])
-                self.emit32(self.encode(OP[op], rd, rs1, rs2))
+            if is_reg_token(src2):
+                self.emit32(self.encode(OP[op], rd, rs1, reg(src2)))
+            else:
+                imm = self.resolve_expr(src2)
+                if imm < 0 or imm > 0x7F:
+                    raise ValueError(f"{op} immediate out of range (0..127): {imm}")
+                self.emit32(self.encode(OP[op], rd, rs1, 0x80 | imm))
+
+        elif op in ("MUL", "DIV", "MOD", "DIVU", "MODU"):
+            rd = reg(p[1])
+            rs1 = reg(p[2])
+            rs2 = reg(p[3])
+            self.emit32(self.encode(OP[op], rd, rs1, rs2))
 
             # =================================================
             # CMP Ra Rb   (ONLY 2 operands)
             # =================================================
-            elif op == "CMP":
-                rs1 = reg(p[1])
-                rhs = p[2]
-                if is_reg_token(rhs):
-                    self.emit32(self.encode(OP[op], rs1, reg(rhs), 0))
-                else:
-                    imm = self.resolve_expr(rhs)
-                    if imm < 0 or imm > 0x7F:
-                        raise ValueError(f"{op} immediate out of range (0..127): {imm}")
-                    self.emit32(self.encode(OP[op], rs1, 0, 0x80 | imm))
+        elif op == "CMP":
+            rs1 = reg(p[1])
+            rhs = p[2]
+            if is_reg_token(rhs):
+                self.emit32(self.encode(OP[op], rs1, reg(rhs), 0))
+            else:
+                imm = self.resolve_expr(rhs)
+                if imm < 0 or imm > 0x7F:
+                    raise ValueError(f"{op} immediate out of range (0..127): {imm}")
+                self.emit32(self.encode(OP[op], rs1, 0, 0x80 | imm))
 
-            elif op == "DEBUG":
-                delay = 0
-                if len(p) > 1:
-                    delay = self.resolve_expr(p[1]) & 0xFFFFFF
-                    if delay > 0xFFFFFF:
-                        raise ValueError("DEBUG delay out of range (0..0xFFFFFF)")
-                self.emit32(
-                    self.encode(OP[op], (delay >> 16) & 0xFF, (delay >> 8) & 0xFF, delay & 0xFF)
-                )
+        elif op == "DEBUG":
+            delay = 0
+            if len(p) > 1:
+                delay = self.resolve_expr(p[1]) & 0xFFFFFF
+                if delay > 0xFFFFFF:
+                    raise ValueError("DEBUG delay out of range (0..0xFFFFFF)")
+            self.emit32(
+                self.encode(OP[op], (delay >> 16) & 0xFF, (delay >> 8) & 0xFF, delay & 0xFF)
+            )
 
             # =================================================
             # BRANCHES (label)
             # =================================================
-            elif op in (
-                "B", "BEQ", "BNE",
-                "BLT", "BLE", "BGT", "BGE",
-                "BLTU", "BLEU", "BGTU", "BGEU",
-                "BL",
-            ):
-                target = self.resolve_expr(p[1]) & 0xFFFFFFFF
-                self.emit32(self.encode(OP[op]))
-                self.emit32(target)
+        elif op in (
+            "B", "BEQ", "BNE",
+            "BLT", "BLE", "BGT", "BGE",
+            "BLTU", "BLEU", "BGTU", "BGEU",
+            "BL",
+        ):
+            target = self.resolve_expr(p[1]) & 0xFFFFFFFF
+            self.emit32(self.encode(OP[op]))
+            self.emit32(target)
 
             # =================================================
             # PUSH/POP Rn
             # =================================================
-            elif op == "PUSH":
-                self.emit32(self.encode(OP[op], reg(p[1])))
+        elif op == "PUSH":
+            self.emit32(self.encode(OP[op], reg(p[1])))
 
-            elif op == "POP":
-                self.emit32(self.encode(OP[op], reg(p[1])))
+        elif op == "POP":
+            self.emit32(self.encode(OP[op], reg(p[1])))
 
-            elif op == "FUNC_ENTER":
-                self.emit32(self.encode(OP["PUSH"], reg("FP")))
-                self.emit32(self.encode(OP["MOV"], 0x80 | reg("FP"), reg("SP"), 0))
-                self.emit32(self.encode(OP["PUSH"], reg("LR")))
+        elif op == "FUNC_ENTER":
+            self.emit32(self.encode(OP["PUSH"], reg("FP")))
+            self.emit32(self.encode(OP["MOV"], 0x80 | reg("FP"), reg("SP"), 0))
+            self.emit32(self.encode(OP["PUSH"], reg("LR")))
 
-            elif op == "FUNC_LEAVE":
+        elif op == "FUNC_LEAVE":
+            self.emit32(self.encode(OP["POP"], reg("LR")))
+            self.emit32(self.encode(OP["POP"], reg("FP")))
+            self.emit32(self.encode(OP["RET"]))
+
+        elif op == "RETURN":
+            if len(p) == 1:
+                self.emit32(self.encode(OP["POP"], reg("LR")))
+                self.emit32(self.encode(OP["POP"], reg("FP")))
+                self.emit32(self.encode(OP["RET"]))
+            else:
+                self.emit32(self.encode(OP["MOV"], 0x80 | reg("R1"), reg(p[1]), 0))
                 self.emit32(self.encode(OP["POP"], reg("LR")))
                 self.emit32(self.encode(OP["POP"], reg("FP")))
                 self.emit32(self.encode(OP["RET"]))
 
-            elif op == "RETURN":
-                if len(p) == 1:
-                    self.emit32(self.encode(OP["POP"], reg("LR")))
-                    self.emit32(self.encode(OP["POP"], reg("FP")))
-                    self.emit32(self.encode(OP["RET"]))
-                else:
-                    self.emit32(self.encode(OP["MOV"], 0x80 | reg("R1"), reg(p[1]), 0))
-                    self.emit32(self.encode(OP["POP"], reg("LR")))
-                    self.emit32(self.encode(OP["POP"], reg("FP")))
-                    self.emit32(self.encode(OP["RET"]))
+        elif op in ("CALL", "CALLEX"):
+            target = self.resolve(p[1]) & 0xFFFFFFFF
+            self.emit32(self.encode(OP["BL"]))
+            self.emit32(target)
 
-            elif op in ("CALL", "CALLEX"):
-                target = self.resolve(p[1]) & 0xFFFFFFFF
-                self.emit32(self.encode(OP["BL"]))
-                self.emit32(target)
-
-            elif op in ("ARG1", "ARG2", "ARG3", "ARG4"):
-                dest = {"ARG1": "R1", "ARG2": "R2", "ARG3": "R3", "ARG4": "R4"}[op]
-                self.emit32(self.encode(OP["MOV"], 0x80 | reg(dest), reg(p[1]), 0))
+        elif op in ("ARG1", "ARG2", "ARG3", "ARG4"):
+            dest = {"ARG1": "R1", "ARG2": "R2", "ARG3": "R3", "ARG4": "R4"}[op]
+            self.emit32(self.encode(OP["MOV"], 0x80 | reg(dest), reg(p[1]), 0))
 
             # =================================================
             # MEMORY (byte-addressed)
@@ -512,123 +579,123 @@ class Assembler:
             # STB/STH/STW Rn Rbase offset
             # Also accepts bracket syntax: LDW Rn [Rbase + offset]
             # =================================================
-            elif op in ("LDB", "LDH", "LDW", "LDBS", "LDHS"):
-                rd = reg(p[1])
+        elif op in ("LDB", "LDH", "LDW", "LDBS", "LDHS"):
+            rd = reg(p[1])
 
-                mem = p[2]
-                base, off = self.parse_mem_operand(mem)
+            mem = p[2]
+            base, off = self.parse_mem_operand(mem)
 
-                base = reg(base)
+            base = reg(base)
 
-                if is_reg_token(off):
-                    off_reg = reg(off)
+            if is_reg_token(off):
+                off_reg = reg(off)
 
-                    self.emit32(
-                        self.encode(OP[op], rd, base, 0x80 | off_reg)
+                self.emit32(
+                    self.encode(OP[op], rd, base, 0x80 | off_reg)
+                )
+
+            else:
+                imm = self.resolve_expr(off)
+
+                if imm < 0 or imm > 0x7F:
+                    raise ValueError(
+                        f"{op} offset out of range (0..127): {imm}"
                     )
 
-                else:
-                    imm = self.resolve_expr(off)
+                self.emit32(
+                    self.encode(OP[op], rd, base, imm)
+                )
 
-                    if imm < 0 or imm > 0x7F:
-                        raise ValueError(
-                            f"{op} offset out of range (0..127): {imm}"
-                        )
 
-                    self.emit32(
-                        self.encode(OP[op], rd, base, imm)
+        elif op in ("STB", "STH", "STW"):
+            rs = reg(p[1])
+
+            mem = p[2]
+            base, off = self.parse_mem_operand(mem)
+
+            base = reg(base)
+
+            if is_reg_token(off):
+                off_reg = reg(off)
+
+                self.emit32(
+                    self.encode(OP[op], rs, base, 0x80 | off_reg)
+                )
+
+            else:
+                imm = self.resolve_expr(off)
+
+                if imm < 0 or imm > 0x7F:
+                    raise ValueError(
+                        f"{op} offset out of range (0..127): {imm}"
                     )
 
-
-            elif op in ("STB", "STH", "STW"):
-                rs = reg(p[1])
-
-                mem = p[2]
-                base, off = self.parse_mem_operand(mem)
-
-                base = reg(base)
-
-                if is_reg_token(off):
-                    off_reg = reg(off)
-
-                    self.emit32(
-                        self.encode(OP[op], rs, base, 0x80 | off_reg)
-                    )
-
-                else:
-                    imm = self.resolve_expr(off)
-
-                    if imm < 0 or imm > 0x7F:
-                        raise ValueError(
-                            f"{op} offset out of range (0..127): {imm}"
-                        )
-
-                    self.emit32(
-                        self.encode(OP[op], rs, base, imm)
-                    )
+                self.emit32(
+                    self.encode(OP[op], rs, base, imm)
+                )
 
             # =================================================
             # MMU CONTROL
             # =================================================
-            elif op == "SETPTBR":
-                self.emit32(self.encode(OP[op], reg(p[1])))
+        elif op == "SETPTBR":
+            self.emit32(self.encode(OP[op], reg(p[1])))
 
-            elif op == "ENABLEMMU":
-                self.emit32(self.encode(OP[op]))
+        elif op == "ENABLEMMU":
+            self.emit32(self.encode(OP[op]))
 
             # =================================================
             # SYSTEM
             # =================================================
-            elif op == "RET":
-                self.emit32(self.encode(OP[op]))
+        elif op == "RET":
+            self.emit32(self.encode(OP[op]))
 
-            elif op == "SVC":
-                self.emit32(self.encode(OP[op], int(p[1])))
+        elif op == "SVC":
+            self.emit32(self.encode(OP[op], int(p[1])))
 
-            elif op == "JR":
-                self.emit32(self.encode(OP[op], reg(p[1])))
+        elif op == "JR":
+            self.emit32(self.encode(OP[op], reg(p[1])))
 
-            elif op == "JALR":
-                self.emit32(self.encode(OP[op], reg(p[1])))
+        elif op == "JALR":
+            self.emit32(self.encode(OP[op], reg(p[1])))
 
             # =================================================
             # TRAP / INTERRUPT CONTROL
             # =================================================
-            elif op == "SETIDTR":
-                self.emit32(self.encode(OP[op], reg(p[1])))
+        elif op == "SETIDTR":
+            self.emit32(self.encode(OP[op], reg(p[1])))
 
-            elif op == "ENABLEINT":
-                self.emit32(self.encode(OP[op]))
+        elif op == "ENABLEINT":
+            self.emit32(self.encode(OP[op]))
 
-            elif op == "DISABLEINT":
-                self.emit32(self.encode(OP[op]))
+        elif op == "DISABLEINT":
+            self.emit32(self.encode(OP[op]))
 
-            elif op == "IRET":
-                self.emit32(self.encode(OP[op]))
+        elif op == "IRET":
+            self.emit32(self.encode(OP[op]))
 
-            elif op == "HLT":
-                self.emit32(self.encode(OP[op]))
+        elif op == "HLT":
+            self.emit32(self.encode(OP[op]))
 
-            elif op == "GETCAUSE":
-                self.emit32(self.encode(OP[op], reg(p[1])))
+        elif op == "GETCAUSE":
+            self.emit32(self.encode(OP[op], reg(p[1])))
 
-            elif op == "CSRR":
-                self.emit32(self.encode(OP[op], reg(p[1]), csr(p[2]), 0))
+        elif op == "CSRR":
+            self.emit32(self.encode(OP[op], reg(p[1]), csr(p[2]), 0))
 
-            elif op in ("CSRW", "CSRS", "CSRC"):
-                self.emit32(self.encode(OP[op], reg(p[2]), csr(p[1]), 0))
+        elif op in ("CSRW", "CSRS", "CSRC"):
+            self.emit32(self.encode(OP[op], reg(p[2]), csr(p[1]), 0))
 
-            elif op == "SRET":
-                self.emit32(self.encode(OP[op]))
+        elif op == "SRET":
+            self.emit32(self.encode(OP[op]))
 
-            elif op == "CSRRW":
-                self.emit32(self.encode(OP[op], reg(p[1]), csr(p[2]), reg(p[3])))
+        elif op == "CSRRW":
+            self.emit32(self.encode(OP[op], reg(p[1]), csr(p[2]), reg(p[3])))
 
-            elif op == "EOI":
-                self.emit32(self.encode(OP[op], reg(p[1])))
+        elif op == "EOI":
+            self.emit32(self.encode(OP[op], reg(p[1])))
 
-            else:
-                raise Exception(f"[ASM] Unknown instruction: {line}")
+        else:
+            raise Exception(f"unknown instruction: {line}")
 
     # -----------------------------------------------------
     # BUILD IMAGE
@@ -636,9 +703,17 @@ class Assembler:
     def build(self, src, out="memory.img"):
         self.labels = {}
         self.lines = []
+        self.consts = {}
+        self.current_global = ""
+        self.pc = 0
+        self.memory = bytearray(16 * 1024 * 1024)
 
-        self.pass1(src)
-        self.pass2()
+        try:
+            self.pass1(src)
+            self.pass2()
+        except AssemblerError as exc:
+            print(exc, file=sys.stderr)
+            raise SystemExit(1)
 
         with open(out, "wb") as f:
             f.write(self.memory[:self.pc])
