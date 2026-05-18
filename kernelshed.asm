@@ -19,7 +19,7 @@
 ; ================================================================
 
 ; ================================================================
-; FOR memory map and stucts please refer to memory_map.txt
+; FOR memory map and structs please refer to memory_map.txt
 ; ================================================================
 
 
@@ -287,16 +287,92 @@ handle_page_fault:
     B trap_restore
 
 handle_syscall:
-    ; STVAL contains syscall number
+    ; STVAL contains the SVC immediate. User arguments are saved in the
+    ; trapframe at TF_R1..TF_R4, and the return value is written to TF_R1.
+    ; so essentially args get passed using stackframe very similar when we do usual bl call
+    ; except that here is interrupt logic and special instructions applied
+    ; so SVC is a special BL to OS call -)
     CSRR R2 STVAL
-    
-    CMP R2 1
-    BEQ syscall_exit:
-    
+
+    CMP R2 SYS_COUNT
+    BGE syscall_unknown
+
+    LI R3 syscall_table         ;compute entry by SVC x number and execute call function call on address on R5
+    SHL R4 R2 2
+    LDW R5 [R3 + R4]
+    JR R5
+
+    ;; no return B trap_restore
+
+syscall_unknown:
+    LI R1 0xFFFFFFFF                    ; R1 has error code FFFF
+    STW R1 [SP + TF_R1]
     B trap_restore
 
-syscall_exit:
-    HLT
+syscall_table:
+    .WORD syscall_yield         ; SVC 0
+    .WORD syscall_exit          ; SVC 1
+    .WORD syscall_getpid        ; SVC 2
+    .WORD syscall_debug         ; SVC 3
+    .WORD syscall_write_test    ; SVC 4
+
+syscall_yield:
+    LI R1 0
+    STW R1 [SP + TF_R1]         ; r1=0 - success
+    ; Voluntary reschedule. The return value must be written before
+    ; switching, while SP still points at the yielding task's trapframe.
+    ;;BL schedule_and_switch
+    ;;RET
+    B schedule_and_switch
+
+syscall_exit:               ; basically a call from task to remove from scheduler so it wont be executed
+    ; Mark the current task inactive and immediately switch to another task.
+    ; A later scheduler improvement should detect "no runnable tasks".
+    LI R1 CURRENT_TASK
+    LDW R2 [R1]
+    LI R3 TASK_SIZE
+    MUL R4 R2 R3
+    LI R5 tasks
+    ADD R5 R5 R4
+    LI R6 0                     ;0 to disable this task
+    STW R6 [R5 + TASK_ACTIVE]
+    LI R1 0
+    STW R1 [SP + TF_R1]         ; r1=0 - return success
+    B schedule_and_switch
+    ;;RET
+
+syscall_getpid:
+    LI R1 CURRENT_TASK
+    LDW R2 [R1]
+    LI R3 TASK_SIZE
+    MUL R4 R2 R3
+    LI R5 tasks
+    ADD R5 R5 R4
+    LDW R1 [R5 + TASK_PID]        ; get pid from task scheduler data
+    STW R1 [SP + TF_R1]           ; save it to its trapframe which goes back when it s next time this task resumes
+    ;;RET                           ; on resume r1 will have pid read after svc call
+    B trap_restore
+
+syscall_debug:
+    ; Placeholder debug syscall: return the first user argument unchanged.
+    ; This proves argument and return-value plumbing without nested traps.
+    LDW R1 [SP + TF_R1]
+    STW R1 [SP + TF_R1]
+    ;;RET
+    B trap_restore
+
+syscall_write_test:
+    ; Minimal copy-from-current-address-space test:
+    ;   R1=user VA, R2=value. Store value to that VA and return 0.
+    ; Full copy_from_user validation can be added after page-fault policy.
+    LDW R1 [SP + TF_R1]
+    LDW R2 [SP + TF_R2]
+    STW R2 [R1]
+    LI R1 0
+    STW R1 [SP + TF_R1]
+
+    ;RET
+    B trap_restore
 
 handle_debug:
     ; Debug trap - just return
@@ -309,9 +385,10 @@ handle_irq:
     CSRR R1 STVAL
     EOI R1
 
-    BL schedule_and_switch
+   ;;no return! BL schedule_and_switch
+    ;; B trap_restore
 
-    B trap_restore
+    B schedule_and_switch
 
 trap_restore:               ; this does a resume of task restores state frame
                             ; and makes SRET - machine runs the task
@@ -367,7 +444,33 @@ trap_restore:               ; this does a resume of task restores state frame
 .EQU TASK_PTBR,   20         ; physical base of this task's page table
 .EQU TASK_SIZE,   24
 
-.EQU TF_USP,      20          ; trapframe offset from SP to saved task SP
+.EQU TF_STVAL,     0          ; trapframe privileged state saved by trap_entry
+.EQU TF_SCAUSE,    4
+.EQU TF_SSTATUS,   8
+.EQU TF_SFLAGS,   12
+.EQU TF_SEPC,     16
+.EQU TF_USP,      20          ; saved interrupted task SP
+.EQU TF_R15,      24          ; saved GPRs, matching trap_restore pop order
+.EQU TF_R14,      28
+.EQU TF_R12,      32
+.EQU TF_R11,      36
+.EQU TF_R10,      40
+.EQU TF_R9,       44
+.EQU TF_R8,       48
+.EQU TF_R7,       52
+.EQU TF_R6,       56
+.EQU TF_R5,       60
+.EQU TF_R4,       64
+.EQU TF_R3,       68
+.EQU TF_R2,       72
+.EQU TF_R1,       76
+
+.EQU SYS_YIELD,    0
+.EQU SYS_EXIT,     1
+.EQU SYS_GETPID,   2
+.EQU SYS_DEBUG,    3
+.EQU SYS_WRITE_TEST, 4
+.EQU SYS_COUNT,    5
 
 ; ------------------------------------------------
 ; Task table
@@ -588,20 +691,13 @@ wrap_check:
 
     CMP R3 3
     BLT check_task
-
-    LI R3 0
-
-    ;R3 next task (1) ;R2 current task (0) for eg
-
+    LI R3 0              ;R3 next task (1) ;R2 current task (0) for eg
 check_task:
-
     ; ------------------------------------------------
     ; Compute address of tasks[R3]
     ; ------------------------------------------------
-
     LI R4 TASK_SIZE
     MUL R5 R3 R4
-
     LI R6 tasks
     ADD R5 R5 R6               ; R5 = &tasks[R3]
 
@@ -616,10 +712,12 @@ check_task:
     ; if not active go to next task in list
     ADD R3 R3 1
     B wrap_check
+
 ; R3 next task is active - switch to it
 ; R2 current task
 ; R3 next (+1) typically
 ; R1 - points to CURRENT_TASK variable (mem)
+
 ; ================================================================
 ; CONTEXT SWITCH
 ; ================================================================
@@ -674,7 +772,8 @@ do_switch:
     ; trap_restore will restore SSCRATCH with the saved task SP, then
     ; CSRRW swaps back to that task stack immediately before SRET.
 
-    RET
+    ;; no return RET
+    B trap_restore
 
 
 
@@ -706,6 +805,8 @@ TASK_A_START:
 task_a_loop:
     ADD R2 R2 1
     STW R5 [R4]
+    SVC SYS_GETPID
+    STW R1 [R4 + 4]
     DEBUG 1
     B task_a_loop
 
@@ -716,9 +817,17 @@ TASK_B_START:
     LI R3 0
     LI R4 0x00006000
     LI R5 0xBBBBBBBB
-
 task_b_loop:
     ADD R3 R3 1
     STW R5 [R4]
+    SVC SYS_GETPID
+    STW R1 [R4 + 4]
     DEBUG 1
-    B task_b_loop
+    CMP R3 3
+    BLE task_b_loop
+    DEBUG 2
+    LI R1 15
+    SVC SYS_EXIT
+task_b_dead:
+    DEBUG 2
+    B task_b_dead

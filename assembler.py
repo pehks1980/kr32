@@ -650,7 +650,10 @@ class Assembler:
             self.emit32(self.encode(OP[op]))
 
         elif op == "SVC":
-            self.emit32(self.encode(OP[op], int(p[1])))
+            imm = self.resolve_expr(p[1])
+            if imm < 0 or imm > 0xFF:
+                raise ValueError(f"SVC immediate out of range (0..255): {imm}")
+            self.emit32(self.encode(OP[op], imm))
 
         elif op == "JR":
             self.emit32(self.encode(OP[op], reg(p[1])))
