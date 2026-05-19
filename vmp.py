@@ -90,6 +90,7 @@ class CPU:
                  tlb_size=64,
         tracevirt = False,
         debug_mode = None,
+        trace = False,
     ):
         self.MEM_SIZE = mem_size
 
@@ -118,6 +119,7 @@ class CPU:
         #trace virtaadd transl
         self.tracevirt = tracevirt
         self.debug_mode = debug_mode
+        self.trace = trace
         self.traceint = False
         self.trace_handler = False
         self.trace_fault = False
@@ -356,6 +358,8 @@ class CPU:
             0x5C: "SRET",
             0x5D: "CSRRW",
             0x5E: "EOI",
+            0x5F: "TRACE",
+
             0xFF: "HLT",
         }.get(op)
 
@@ -427,6 +431,8 @@ class CPU:
             return f"CSRRW {self.reg_name(a)}, {self.csr_name(b)}, {self.reg_name(c)}"
         if op == 0x5E:
             return f"EOI {self.reg_name(a)}"
+        if op == 0x5F:
+            return f"TRACE {c}"
         
         if op == 0xFF:
             return "HLT"
@@ -1113,6 +1119,20 @@ class CPU:
                     elif debug_delay:
                         time.sleep(debug_delay)
 
+                elif op == 0x5F:  # TRACE - toggle per-instruction tracing at runtime
+                    trace_val = (a << 16) | (b << 8) | c
+                    # simple convention: 0 = disable, 1 = enable
+                    if trace_val == 0:
+                        self.trace = False
+                        self.tracevirt = False
+                    elif trace_val == 1:
+                        self.trace = True
+                    elif trace_val == 2:
+                        self.trace = True
+                        self.tracevirt = True
+
+
+
                 # =================================================
                 # MMU CONTROL
                 # =================================================
@@ -1219,7 +1239,7 @@ class CPU:
                     # Unknown instruction: deliver invalid instruction trap
                     self.raise_trap(TRAP_INVALID_INSTR, op)
 
-                if trace or (self.trace_handler and self.in_trap_handler):
+                if self.trace or (self.trace_handler and self.in_trap_handler):
                     operands = self.trace_operands(op, a, b, c, ext, before_reg, mem_write)
                     skip_regs, skip_mem = self.trace_redundant_changes(op, a, b, c)
                     show_flags = self.trace_shows_flags(op, b)
@@ -1314,6 +1334,7 @@ def main():
         tlb_size=int(args.tlb_size, 0),
         tracevirt=args.tracevirt,
         debug_mode=args.debug,
+        trace=args.trace,
     )
     cpu.traceint = args.traceint
     cpu.trace_fault = args.tracefault
@@ -1329,7 +1350,7 @@ def main():
     print("[BOOT] Reset CPU state")
     print("[BOOT] Starting execution")
 
-    cpu.run(0, trace=args.trace)
+    cpu.run(0)
 
     if args.dump:
         addr = int(args.dump[0], 0)

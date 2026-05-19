@@ -42,16 +42,52 @@ B KERNEL_START
 .EQU USER_RX,      0x001D       ; P|R|X|U
 .EQU USER_RW,      0x001B       ; P|R|W|U
 
+.EQU PAGE_SIZE,    0x1000
+.EQU PAGE_MASK,    0x0FFF
+.EQU PTBR0_VA,     0x00009000
+.EQU PTBR1_VA,     0x0000A000
+.EQU PTBR2_VA,     0x0000B000
+
 .EQU TASK0_PTBR,   0x00400000   ; one 1 MiB one-level table per address space
 .EQU TASK1_PTBR,   0x00500000
 .EQU TASK2_PTBR,   0x00600000
 
 .EQU TASK0_USTACK_PA, 0x00005000 ; physical memory address stack and data when map pages tasks 0,1,2 in memory image
-.EQU TASK1_USTACK_PA, 0x00009000 ; func page init makes map in page table for every task (0) runs in kernel mode
-.EQU TASK2_USTACK_PA, 0x0000A000
+.EQU TASK1_USTACK_PA, 0x0000B000 ; func page init makes map in page table for every task (0) runs in kernel mode
+.EQU TASK2_USTACK_PA, 0x0000C000
 .EQU TASK0_DATA_PA,   0x00006000
-.EQU TASK1_DATA_PA,   0x0000B000
-.EQU TASK2_DATA_PA,   0x0000C000
+.EQU TASK1_DATA_PA,   0x0000D000
+.EQU TASK2_DATA_PA,   0x0000E000
+
+;memory map used for data validation when make syscalls which transfer data b/w kernel and user
+.EQU KERNEL_BASE,     0x0000
+.EQU KERNEL_LIMIT,    0x7FFF
+.EQU USER_BASE,       0x00005000
+.EQU USER_LIMIT,      0x000FFFFF
+
+.EQU KBUFFER_SIZE,   256
+.EQU FD_ENTRY_DEVICE, 0
+.EQU FD_ENTRY_FLAGS,  4
+.EQU FD_ENTRY_SIZE,   8
+.EQU FD_FLAG_READ,    1
+.EQU FD_FLAG_WRITE,   2
+.EQU DEV_OFF_READ,    0
+.EQU DEV_OFF_WRITE,   4
+
+.EQU STDIN_FD,       0
+.EQU STDOUT_FD,      1
+.EQU STDERR_FD,      2
+.EQU CONSOLE_INPUT_LEN, 5
+.EQU USER_WRITE_BUF, 0x6000
+.EQU USER_READ_BUF,  0x6010
+
+; KBUFFER
+.org 0x1000
+KBUFFER_WR:
+    .SPACE 256              ; 256b
+KBUFFER_RD:
+    .SPACE 256              ; 256b
+
 
 .org 0x2000
 
@@ -175,6 +211,35 @@ map_common_kernel:
     LI R2 0x00008000      ; page 5 text page (program) for user mode process
     LI R3 0x00008000
     LI R4 USER_RX
+    BL map_page
+    LI R2 0x00019000      ; page 5 text page (program) for user mode process
+    LI R3 0x00019000
+    LI R4 USER_RX
+    BL map_page
+    LI R2 0x0001a000      ; page 5 text page (program) for user mode process
+    LI R3 0x0001a000
+    LI R4 USER_RX
+    BL map_page
+
+    ; Kernel-only helpers: copy routines and page-table inspection
+    LI R2 0x00001000      ; page for kernel buffers
+    LI R3 0x00001000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 PTBR0_VA
+    LI R3 TASK0_PTBR
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 PTBR1_VA
+    LI R3 TASK1_PTBR
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 PTBR2_VA
+    LI R3 TASK2_PTBR
+    LI R4 KERNEL_FLAGS
     BL map_page
 
     POP LR
@@ -314,7 +379,8 @@ syscall_table:
     .WORD syscall_exit          ; SVC 1
     .WORD syscall_getpid        ; SVC 2
     .WORD syscall_debug         ; SVC 3
-    .WORD syscall_write_test    ; SVC 4
+    .WORD syscall_write         ; SVC 4
+    .WORD syscall_read          ; SVC 5
 
 syscall_yield:
     LI R1 0
@@ -361,18 +427,383 @@ syscall_debug:
     ;;RET
     B trap_restore
 
-syscall_write_test:
-    ; Minimal copy-from-current-address-space test:
-    ;   R1=user VA, R2=value. Store value to that VA and return 0.
-    ; Full copy_from_user validation can be added after page-fault policy.
+syscall_read:
+    ; R1 = fd
+    ; R2 = user buffer
+    ; R3 = length
     LDW R1 [SP + TF_R1]
     LDW R2 [SP + TF_R2]
-    STW R2 [R1]
+    LDW R3 [SP + TF_R3]
+
+    MOV R7 R2               ; save user buffer
+    MOV R6 R3               ; save length
+    LI R2 FD_FLAG_READ      ; pass flags in R2 per fetch_fd_entry convention
+    BL fetch_fd_entry
+    CMP R1 0
+    BEQ bad_fd
+    MOV R9 R1               ; device object pointer
+    CMP R6 0
+    BEQ read_done
+
+    PUSH R7
+    PUSH R6
+    PUSH R9
+    MOV R1 R7
+    MOV R2 R6
+    LI R3 1                ; write access for destination buffer
+    BL user_buffer_valid_range
+    POP R9
+    POP R6
+    POP R7
+    CMP R1 1
+    BNE bad_pointer
+
+    PUSH R7
+    LI R1 KBUFFER_RD
+    MOV R2 R6
+    MOV R3 R9
+    BL device_read
+    POP R7
+    CMP R1 0
+    BEQ read_done
+
+    MOV R2 R1              ; actual bytes read
+    MOV R1 R7              ; user destination
+    MOV R4 KBUFFER_RD
+    BL copy_to_user
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+read_done:
     LI R1 0
     STW R1 [SP + TF_R1]
-
-    ;RET
     B trap_restore
+
+syscall_write:
+    ; R1 = fd
+    ; R2 = user buffer
+    ; R3 = length
+    LDW R1 [SP + TF_R1]
+    LDW R2 [SP + TF_R2]
+    LDW R3 [SP + TF_R3]
+
+    MOV R7 R2               ; save user buffer
+    MOV R6 R3               ; save length
+    LI R2 FD_FLAG_WRITE     ; pass flags in R2 per fetch_fd_entry convention
+    BL fetch_fd_entry
+    CMP R1 0
+    BEQ bad_fd
+    MOV R9 R1               ; device object pointer
+    ; R7 and R6 already contain user buffer and length
+    LI R8 0                ; total written
+
+write_loop:
+    CMP R6 0
+    BEQ write_done
+
+    LI R2 KBUFFER_SIZE
+    CMP R6 R2
+    BLT write_chunk_small
+    LI R2 KBUFFER_SIZE
+    B write_chunk
+
+write_chunk_small:
+    MOV R2 R6
+
+write_chunk:
+    PUSH R7
+    PUSH R6
+    PUSH R9
+    MOV R1 R7
+    MOV R2 R2
+    LI R3 0                ; read access for source buffer
+    BL user_buffer_valid_range
+    POP R9
+    POP R6
+    POP R7
+    CMP R1 1
+    BNE bad_pointer
+
+    MOV R1 R7
+    MOV R4 KBUFFER_WR
+    BL copy_from_user
+    MOV R10 R1             ; bytes copied
+
+    PUSH R7
+    PUSH R9
+    MOV R1 KBUFFER_WR
+    MOV R2 R10
+    MOV R3 R9
+    BL device_write
+    POP R9
+    POP R7
+
+    ADD R8 R8 R1
+    ADD R7 R7 R10
+    SUB R6 R6 R10
+    B write_loop
+
+write_done:
+    MOV R1 R8
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+bad_fd:
+    LI R1 0xFFFF
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+bad_pointer:
+    LI R1 0xFFFF
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+device_read:
+    ; R1 = kernel buffer, R2 = len, R3 = device object pointer
+    LDW R4 [R3 + DEV_OFF_READ]
+    JR R4
+
+device_write:
+    ; R1 = kernel buffer, R2 = len, R3 = device object pointer
+    LDW R4 [R3 + DEV_OFF_WRITE]
+    JR R4
+
+dev_console_read:
+    ; R1 = kernel buffer, R2 = len, R3 = device object pointer
+    ; Copy a small fixed console input string into the kernel buffer.
+    LI R4 CONSOLE_INPUT_LEN
+    CMP R4 R2
+    BLT dr_use_len
+    MOV R4 R2
+
+dr_use_len:
+    LI R5 console_input
+    MOV R6 R4
+
+dr_copy_loop:
+    CMP R6 0
+    BEQ dr_done
+    LDB R7 [R5]
+    STB R7 [R1]
+    ADD R1 R1 1
+    ADD R5 R5 1
+    SUB R6 R6 1
+    B dr_copy_loop
+
+dr_done:
+    MOV R1 R4
+    RET
+
+dev_console_write:
+    ; R1 = kernel buffer, R2 = len
+    LI R3 0
+
+dcw_loop:
+    CMP R3 R2
+    BGE dcw_done
+    LDB R4 [R1 + R3]
+    ADD R3 R3 1
+    B dcw_loop
+
+dcw_done:
+    MOV R1 R2
+    RET
+
+fetch_fd_entry:
+    ; R1 = fd, R2 = required flags
+    CMP R1 0
+    BLT fd_invalid
+    CMP R1 3
+    BGE fd_invalid
+
+    LI R4 CURRENT_TASK
+    LDW R4 [R4]
+    LI R5 TASK_SIZE
+    MUL R4 R4 R5
+    LI R5 tasks
+    ADD R4 R4 R5
+    LDW R4 [R4 + TASK_FD_TABLE]
+
+    SHL R5 R1 3
+    ADD R4 R4 R5
+    LDW R6 [R4 + FD_ENTRY_FLAGS]
+    AND R6 R6 R2
+    CMP R6 R2
+    BNE fd_invalid
+
+    LDW R1 [R4 + FD_ENTRY_DEVICE]
+    RET
+
+fd_invalid:
+    LI R1 0
+    RET
+
+user_buffer_valid_range:
+    ; R1 = user ptr, R2 = length, R3 = access type (0=read,1=write)
+    LI R4 0
+    CMP R2 R4
+    BEQ uv_valid
+
+    LI R4 USER_BASE
+    CMP R1 R4
+    BLT uv_invalid
+
+    LI R4 USER_LIMIT
+    ADD R5 R1 R2
+    SUB R5 R5 1
+    CMP R5 R1
+    BLT uv_invalid
+    CMP R5 R4
+    BGT uv_invalid
+    MOV R12 R5              ; save end address for page calculation
+
+    LI R6 CURRENT_TASK
+    LDW R6 [R6]
+    LI R7 TASK_SIZE
+    MUL R6 R6 R7
+    LI R7 tasks
+    ADD R6 R6 R7
+    LDW R6 [R6 + TASK_PTBR]
+    LI R7 TASK0_PTBR
+    CMP R6 R7
+    BEQ uv_ptbr0
+    LI R7 TASK1_PTBR
+    CMP R6 R7
+    BEQ uv_ptbr1
+    LI R7 TASK2_PTBR
+    CMP R6 R7
+    BEQ uv_ptbr2
+    B uv_invalid
+
+uv_ptbr0:
+    LI R6 PTBR0_VA
+    B uv_check_pages
+uv_ptbr1:
+    LI R6 PTBR1_VA
+    B uv_check_pages
+uv_ptbr2:
+    LI R6 PTBR2_VA
+
+uv_check_pages:
+    SHR R7 R1 12
+    SHR R8 R12 12
+uv_loop:
+    CMP R7 R8
+    BGT uv_valid
+    SHL R9 R7 2
+    ADD R9 R9 R6
+    LDW R10 [R9]
+    AND R11 R10 PTE_P
+    CMP R11 0
+    BEQ uv_invalid
+    AND R11 R10 PTE_U
+    CMP R11 0
+    BEQ uv_invalid
+    CMP R3 0
+    BEQ uv_check_read
+    AND R11 R10 PTE_W
+    CMP R11 0
+    BEQ uv_invalid
+    B uv_next
+uv_check_read:
+    AND R11 R10 PTE_R
+    CMP R11 0
+    BEQ uv_invalid
+uv_next:
+    ADD R7 R7 1
+    B uv_loop
+
+uv_valid:
+    LI R1 1
+    RET
+
+uv_invalid:
+    LI R1 0
+    RET
+
+copy_from_user:
+    ; R1 = src user, R2 = len, R4 = dest kernel
+   ; DEBUG 2
+    LI R5 0
+cfu_head:
+    CMP R2 0
+    BEQ cfu_done
+    OR R6 R1 R4
+    AND R6 R6 3
+    CMP R6 0
+    BEQ cfu_word
+    LDB R7 [R1]
+    STB R7 [R4]
+    ADD R1 R1 1
+    ADD R4 R4 1
+    ADD R5 R5 1
+    SUB R2 R2 1
+    B cfu_head
+cfu_word:
+    CMP R2 4
+    BLT cfu_tail
+    LDW R7 [R1]
+    STW R7 [R4]
+    ADD R1 R1 4
+    ADD R4 R4 4
+    ADD R5 R5 4
+    SUB R2 R2 4
+    B cfu_word
+cfu_tail:
+    CMP R2 0
+    BEQ cfu_done
+    LDB R7 [R1]
+    STB R7 [R4]
+    ADD R1 R1 1
+    ADD R4 R4 1
+    ADD R5 R5 1
+    SUB R2 R2 1
+    B cfu_tail
+cfu_done:
+    MOV R1 R5
+    RET
+
+copy_to_user:
+    ; R1 = dest user, R2 = len, R4 = src kernel
+   ; DEBUG 2
+    LI R5 0
+ctu_head:
+    CMP R2 0
+    BEQ ctu_done
+    OR R6 R1 R4
+    AND R6 R6 3
+    CMP R6 0
+    BEQ ctu_word
+    LDB R7 [R4]
+    STB R7 [R1]
+    ADD R1 R1 1
+    ADD R4 R4 1
+    ADD R5 R5 1
+    SUB R2 R2 1
+    B ctu_head
+ctu_word:
+    CMP R2 4
+    BLT ctu_tail
+    LDW R7 [R4]
+    STW R7 [R1]
+    ADD R1 R1 4
+    ADD R4 R4 4
+    ADD R5 R5 4
+    SUB R2 R2 4
+    B ctu_word
+ctu_tail:
+    CMP R2 0
+    BEQ ctu_done
+    LDB R7 [R4]
+    STB R7 [R1]
+    ADD R1 R1 1
+    ADD R4 R4 1
+    ADD R5 R5 1
+    SUB R2 R2 1
+    B ctu_tail
+ctu_done:
+    MOV R1 R5
+    RET
 
 handle_debug:
     ; Debug trap - just return
@@ -442,7 +873,8 @@ trap_restore:               ; this does a resume of task restores state frame
 .EQU TASK_ACTIVE, 12
 .EQU TASK_PID,    16
 .EQU TASK_PTBR,   20         ; physical base of this task's page table
-.EQU TASK_SIZE,   24
+.EQU TASK_FD_TABLE, 24       ; pointer to task file descriptor table
+.EQU TASK_SIZE,   28
 
 .EQU TF_STVAL,     0          ; trapframe privileged state saved by trap_entry
 .EQU TF_SCAUSE,    4
@@ -469,8 +901,9 @@ trap_restore:               ; this does a resume of task restores state frame
 .EQU SYS_EXIT,     1
 .EQU SYS_GETPID,   2
 .EQU SYS_DEBUG,    3
-.EQU SYS_WRITE_TEST, 4
-.EQU SYS_COUNT,    5
+.EQU SYS_WRITE,    4
+.EQU SYS_READ,     5
+.EQU SYS_COUNT,    6
 
 ; ------------------------------------------------
 ; Task table
@@ -478,10 +911,26 @@ trap_restore:               ; this does a resume of task restores state frame
 .ORG 0x7000
 
 tasks:
-    .SPACE 72              ; 3 tasks * 24 bytes
+    .SPACE 84              ; 3 tasks * 28 bytes
 
 CURRENT_TASK:
     .WORD 0
+
+fd_table:
+    .WORD console_dev
+    .WORD FD_FLAG_READ
+    .WORD console_dev
+    .WORD FD_FLAG_WRITE
+    .WORD console_dev
+    .WORD FD_FLAG_WRITE
+
+console_dev:
+    .WORD dev_console_read
+    .WORD dev_console_write
+
+console_input:
+    .WORD 0x41544144      ; "DATA"
+    .WORD 0x0A000000      ; "\n"
 
 ; ------------------------------------------------
 ; Stack tops
@@ -552,6 +1001,8 @@ init_scheduler:
 
     LI R1 TASK0_PTBR
     STW R1 [R2 + TASK_PTBR]
+    LI R1 fd_table
+    STW R1 [R2 + TASK_FD_TABLE]
 
     ; ------------------------------------------------
     ; Task 1 - do the same
@@ -604,6 +1055,8 @@ init_scheduler:
 
     LI R1 TASK1_PTBR
     STW R1 [R2 + TASK_PTBR]
+    LI R1 fd_table
+    STW R1 [R2 + TASK_FD_TABLE]
 
     ; ------------------------------------------------
     ; Task 2 - same
@@ -658,6 +1111,8 @@ init_scheduler:
 
     LI R1 TASK2_PTBR
     STW R1 [R2 + TASK_PTBR]
+    LI R1 fd_table
+    STW R1 [R2 + TASK_FD_TABLE]
 
     ; ------------------------------------------------
     ; CURRENT_TASK = 0 - init 0 task to shedule first
@@ -791,43 +1246,51 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    DEBUG 2
+    DEBUG 1 
     B idle_loop
 
 ; --TASK 1----------------------------------------------
-
+.ORG 0x19000
 TASK_A_START:
+    DEBUG 2
+    ; Prepare a write string in user memory.
+    LI R1 USER_WRITE_BUF
+    LI R2 0x6C6C6548         ; "Hell"
+    STW R2 [R1]
+    LI R2 0x57202C6F         ; "o, W"
+    STW R2 [R1 + 4]
+    LI R2 0x21646C72         ; "rld!"
+    STW R2 [R1 + 8]
+    LI R2 0x0A
+    STB R2 [R1 + 12]
 
-    LI R2 0
-    LI R4 0x00006000
-    LI R5 0xAAAAAAAA
-
-task_a_loop:
-    ADD R2 R2 1
-    STW R5 [R4]
-    SVC SYS_GETPID
-    STW R1 [R4 + 4]
+    LI R1 1
     DEBUG 1
-    B task_a_loop
+    LI R2 USER_WRITE_BUF
+    LI R3 13
+    SVC SYS_WRITE
+
+    ; Exit after the write test.
+    LI R1 SYS_EXIT
+    SVC SYS_EXIT
 
 ; ---TASK 2---------------------------------------------
-
+.org 0x1a000
 TASK_B_START:
 
-    LI R3 0
-    LI R4 0x00006000
-    LI R5 0xBBBBBBBB
-task_b_loop:
-    ADD R3 R3 1
-    STW R5 [R4]
-    SVC SYS_GETPID
-    STW R1 [R4 + 4]
+    ; Perform a read from stdin into a user buffer.
+    TRACE 1
+    LI R1 0
+    DEBUG 2
+    LI R2 USER_READ_BUF
+    LI R3 CONSOLE_INPUT_LEN
+    SVC SYS_READ
     DEBUG 1
-    CMP R3 3
-    BLE task_b_loop
-    DEBUG 2
-    LI R1 15
+    ; Store the actual count returned by SYS_READ into user space.
+    LI R4 USER_READ_BUF
+    STW R1 [R4 + 8]
+    TRACE 0
+    HLT
+    ; Exit after the read test.
+    LI R1 SYS_EXIT
     SVC SYS_EXIT
-task_b_dead:
-    DEBUG 2
-    B task_b_dead

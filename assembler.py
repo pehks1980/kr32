@@ -71,6 +71,7 @@ OP = {
     "SRET": 0x5C,
     "CSRRW": 0x5D,
     "EOI": 0x5E,
+    "TRACE": 0x5F,
 }
 
 REG_ALIAS = {
@@ -520,6 +521,12 @@ class Assembler:
             self.emit32(
                 self.encode(OP[op], (delay >> 16) & 0xFF, (delay >> 8) & 0xFF, delay & 0xFF)
             )
+        elif op == "TRACE":
+            # TRACE n: n=0 -> disable per-instruction trace, n=1 -> enable per-instruction trace
+            val = 0
+            if len(p) > 1:
+                val = self.resolve_expr(p[1]) & 0xFFFFFF
+            self.emit32(self.encode(OP[op], (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF))
 
             # =================================================
             # BRANCHES (label)
