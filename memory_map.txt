@@ -1,4 +1,5 @@
-Current layout after the changes:
+# KR32 Memory Map (updated)
+
 Physical memory
 ===============
 
@@ -40,29 +41,44 @@ Physical memory
 0x00008000  +-------------------------------+
 
 0x00008000  +-------------------------------+
-            | task user code page            |
-            | idle_task / TASK_A / TASK_B    |
+            | task user code page (TASK0)    |
+            | idle_task (user)               |
             | mapped user RX                 |
 0x00009000  +-------------------------------+
 
 0x00009000  +-------------------------------+
-            | task1 user stack physical page |
+            | PTBR0_VA (virtual location where TASK0 PTBR is mapped) |
 0x0000A000  +-------------------------------+
 
 0x0000A000  +-------------------------------+
-            | task2 user stack physical page |
+            | PTBR1_VA (virtual location where TASK1 PTBR is mapped) |
 0x0000B000  +-------------------------------+
+
+0x0000B000  +-------------------------------+
+            | PTBR2_VA (virtual location where TASK2 PTBR is mapped) |
+0x0000C000  +-------------------------------+
+
+0x0000B000  +-------------------------------+
+            | task1 user stack physical page  |
+0x0000C000  +-------------------------------+
+
+0x0000C000  +-------------------------------+
+            | task2 user stack physical page  |
+0x0000D000  +-------------------------------+
 
 0x0000B000  +-------------------------------+
             | task1 user data physical page  |
-            | VA 0x6000 contains AAAAAAAA    |
 0x0000C000  +-------------------------------+
 
 0x0000C000  +-------------------------------+
             | task2 user data physical page  |
-            | VA 0x6000 contains BBBBBBBB    |
 0x0000D000  +-------------------------------+
 
+0x00019000  +-------------------------------+
+            | task1 user code (TASK_A)       |
+0x0001A000  +-------------------------------+
+            | task2 user code (TASK_B)       |
+0x0001B000  +-------------------------------+
 
 0x00200000  +-------------------------------+
             | IDT / trap vector table        |
@@ -70,14 +86,15 @@ Physical memory
             | NOTE: not mapped after MMU on  |
 0x00201000  +-------------------------------+
 
-
 0x00400000  +-------------------------------+
-            | task0 page table               |
+            | task0 page table (TASK0_PTBR)  |
 0x00500000  +-------------------------------+
-            | task1 page table               |
+            | task1 page table (TASK1_PTBR)  |
 0x00600000  +-------------------------------+
-            | task2 page table               |
+            | task2 page table (TASK2_PTBR)  |
 0x00700000  +-------------------------------+
+
+
 Virtual mappings shared by all tasks
 ====================================
 
@@ -87,7 +104,14 @@ VA 0x00003000 -> PA 0x00003000   [P R W X G] supervisor
 VA 0x00004000 -> PA 0x00004000   [P R W X G] supervisor
 VA 0x00007000 -> PA 0x00007000   [P R W X G] supervisor
 
-VA 0x00008000 -> PA 0x00008000   [P R X U]   user code
+VA 0x00008000 -> PA 0x00008000   [P R X U]   user code (idle_task)
+VA 0x00019000 -> PA 0x00019000   [P R X U]   user code (TASK_A)
+VA 0x0001A000 -> PA 0x0001A000   [P R X U]   user code (TASK_B)
+
+VA 0x00009000 -> PA 0x00400000   [P R W X G] kernel-only (TASK0 page-table mapping)
+VA 0x0000A000 -> PA 0x00500000   [P R W X G] kernel-only (TASK1 page-table mapping)
+VA 0x0000B000 -> PA 0x00600000   [P R W X G] kernel-only (TASK2 page-table mapping)
+
 Task 0 address space
 ====================
 
@@ -95,19 +119,31 @@ PTBR = 0x00400000
 
 VA 0x00005000 -> PA 0x00005000   [P R W U]   user stack
 VA 0x00006000 -> PA 0x00006000   [P R W U]   user data
+
 Task 1 address space
 ====================
 
 PTBR = 0x00500000
 
-VA 0x00005000 -> PA 0x00009000   [P R W U]   user stack
-VA 0x00006000 -> PA 0x0000B000   [P R W U]   user data
+VA 0x00005000 -> PA 0x0000B000   [P R W U]   user stack
+VA 0x00006000 -> PA 0x0000D000   [P R W U]   user data
+
 Task 2 address space
 ====================
 
 PTBR = 0x00600000
 
-VA 0x00005000 -> PA 0x0000A000   [P R W U]   user stack
-VA 0x00006000 -> PA 0x0000C000   [P R W U]   user data
-Important note: 0x00200000 IDT is used physically by raise_trap, not through normal virtual memory translation,
- so it currently does not need a virtual mapping.
+VA 0x00005000 -> PA 0x0000C000   [P R W U]   user stack
+VA 0x00006000 -> PA 0x0000E000   [P R W U]   user data
+
+Important notes
+===============
+- `PTBR0_VA`, `PTBR1_VA`, `PTBR2_VA` are defined as `0x00009000`, `0x0000A000`, `0x0000B000` in `kernelshed.asm` and are mapped
+  by `map_common_kernel` to the physical page-table bases (`TASK0_PTBR`, `TASK1_PTBR`, `TASK2_PTBR`) with kernel flags.
+- User code pages for `TASK_A` and `TASK_B` were moved to physical addresses `0x00019000` and `0x0001A000` and are
+  identity-mapped in the virtual address space at the same VA (`0x00019000` and `0x0001A000`).
+- With the current page-map changes the PTBR VAs (`0x9000/0xA000/0xB000`) are distinct from user-code VAs
+  (`0x8000/0x19000/0x1A000`), so collisions are avoided. Keep PTBR VAs reserved for kernel-only mappings to
+  prevent accidental overlap with user pages.
+
+Note: `0x00200000` IDT is used physically by the VM's `raise_trap` path and does not require a virtual mapping.

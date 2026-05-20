@@ -1,0 +1,88 @@
+KR32 Scheduler Task Switch Flow
+================================
+
+Legend:
+  KSP   = kernel stack pointer
+  USP   = interrupted user stack pointer
+  PTBR  = page table base register
+  SEPC  = saved user PC for resume
+  SSCRATCH = scratch CSR used for stack swap
+
+1) User task runs in its address space
+   - MMU enabled, mode = USER
+   - Task code executes at VA 0x00019000 / 0x0001A000 / 0x00008000
+
+2) Trap happens (syscall / interrupt / fault)
+   - CPU enters kernel trap at `trap_entry`
+   - `CSRRW SP SSCRATCH SP` swaps from user stack to kernel stack
+   - User registers are pushed onto kernel stack
+   - User SP is saved in trapframe slot `TF_USP`
+   - Privileged state saved: SEPC, SFLAGS, SSTATUS, SCAUSE, STVAL
+
+3) Kernel handles trap
+   - For a syscall: `handle_syscall` dispatches into `syscall_*`
+   - For an interrupt: `handle_irq` jumps to `schedule_and_switch`
+   - On a yield/exit/syscall, the kernel decides to switch tasks
+
+4) `schedule_and_switch`
+   - Load `CURRENT_TASK` index from memory
+   - Find next active task index
+   - Save old task metadata:
+       * `TASK_USP` ← [SP + TF_USP]
+       * `TASK_KSP` ← current kernel SP
+   - Load next task metadata
+   - Set PTBR to new task page table:
+       * `LDW R7 [R5 + TASK_PTBR]`
+       * `SETPTBR R7`
+   - Load next task kernel trapframe SP:
+       * `LDW SP [R5 + TASK_KSP]`
+   - Branch to `trap_restore`
+
+5) `trap_restore`
+   - Pop saved privileged state
+       * STVAL, SCAUSE, SSTATUS, SFLAGS, SEPC
+   - Pop saved task SP and write it into `SSCRATCH`
+   - Pop saved GPRs in reverse order
+   - `CSRRW SP SSCRATCH SP` swaps back to the interrupted task stack
+   - Execute `SRET`
+   - CPU returns to user mode with `pc = SEPC`
+
+6) Result: task resumes where it left off
+   - New address space is active because PTBR changed before restore
+   - User SP is restored from the task's saved trapframe
+   - Execution continues in user mode in the next task
+
+ASCII Flow Diagram
+===================
+
+User Task N      Kernel Trap      Scheduler      Next Task M
+-------------    -------------    ------------   -------------
+   |                 |                 |               |
+   | --trap-->       |                 |               |
+   |                 | `trap_entry`    |               |
+   |                 | swap stacks     |               |
+   |                 | save state      |               |
+   |                 |                 |               |
+   |                 |            ---->+               |
+   |                 |            |    | `schedule_and_switch`
+   |                 |            |    | select next task
+   |                 |            |    | save old KSP/USP
+   |                 |            |    | set PTBR
+   |                 |            |    |
+   |                 |            |    V
+   |                 |         `trap_restore`
+   |                 |            | restore state
+   |                 |            | restore SSCRATCH
+   |                 |            | swap stacks
+   |                 |            | `SRET`
+   |                 |            |               |
+   |                 |            |               V
+   |                 |            |         resume Task M
+   |                 |            |               |
+
+Notes
+=====
+- PTBR is changed before restoring the next task, so the right task page table is active when user mode resumes.
+- `trap_entry` and `trap_restore` use the kernel stack for the trap handler and save the interrupted user stack pointer in `SSCRATCH`.
+- The task table stores `TASK_KSP` (kernel trapframe SP) and `TASK_USP` (user stack pointer) for each task.
+- A task switch does not explicitly copy registers between tasks; it restores the trapframe of the selected next task.

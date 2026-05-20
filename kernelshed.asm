@@ -99,6 +99,7 @@ KERNEL_START:
     BL init_idt
 
     ; Initialize Page Tables
+    ; check memory_map.txt for current layout
     BL init_page_tables
 
     ; Init_task_scheduler (hard-coded)
