@@ -429,7 +429,7 @@ syscall_debug:
     B trap_restore
 
 syscall_read:
-    ; R1 = fd
+    ; R1 = fd (from trapframe)
     ; R2 = user buffer
     ; R3 = length
     LDW R1 [SP + TF_R1]
@@ -438,11 +438,15 @@ syscall_read:
 
     MOV R7 R2               ; save user buffer
     MOV R6 R3               ; save length
+    PUSH R7
+    PUSH R6
     LI R2 FD_FLAG_READ      ; pass flags in R2 per fetch_fd_entry convention
     BL fetch_fd_entry
+    POP R6
+    POP R7
     CMP R1 0
     BEQ bad_fd
-    MOV R9 R1               ; device object pointer
+    MOV R9 R1               ; device object pointer /dev/console for example
     CMP R6 0
     BEQ read_done
 
@@ -463,7 +467,7 @@ syscall_read:
     LI R1 KBUFFER_RD
     MOV R2 R6
     MOV R3 R9
-    BL device_read
+    BL device_read          ; read from device fake string console_input - like buffer and copy to kernel buffer  
     POP R7
     CMP R1 0
     BEQ read_done
@@ -471,7 +475,7 @@ syscall_read:
     MOV R2 R1              ; actual bytes read
     MOV R1 R7              ; user destination
     MOV R4 KBUFFER_RD
-    BL copy_to_user
+    BL copy_to_user        ; copy from kernel buffer to user buffer
     STW R1 [SP + TF_R1]
     B trap_restore
 
@@ -490,8 +494,12 @@ syscall_write:
 
     MOV R7 R2               ; save user buffer
     MOV R6 R3               ; save length
+    PUSH R7
+    PUSH R6
     LI R2 FD_FLAG_WRITE     ; pass flags in R2 per fetch_fd_entry convention
     BL fetch_fd_entry
+    POP R6
+    POP R7
     CMP R1 0
     BEQ bad_fd
     MOV R9 R1               ; device object pointer
@@ -1253,7 +1261,7 @@ idle_loop:
 ; --TASK 1----------------------------------------------
 .ORG 0x19000
 TASK_A_START:
-    DEBUG 2
+    ;DEBUG 2
     ; Prepare a write string in user memory.
     LI R1 USER_WRITE_BUF
     LI R2 0x6C6C6548         ; "Hell"
@@ -1266,11 +1274,11 @@ TASK_A_START:
     STB R2 [R1 + 12]
 
     LI R1 1
-    DEBUG 1
+   ; DEBUG 1
     LI R2 USER_WRITE_BUF
     LI R3 13
     SVC SYS_WRITE
-
+    DEBUG 2
     ; Exit after the write test.
     LI R1 SYS_EXIT
     SVC SYS_EXIT
@@ -1286,7 +1294,7 @@ TASK_B_START:
     LI R2 USER_READ_BUF
     LI R3 CONSOLE_INPUT_LEN
     SVC SYS_READ
-    DEBUG 1
+    DEBUG 2
     ; Store the actual count returned by SYS_READ into user space.
     LI R4 USER_READ_BUF
     STW R1 [R4 + 8]
