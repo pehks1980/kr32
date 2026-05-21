@@ -605,6 +605,7 @@ dr_done:
 
 dev_console_write:
     ; R1 = kernel buffer, R2 = len
+    ; its not reall write 
     LI R3 0
 
 dcw_loop:
