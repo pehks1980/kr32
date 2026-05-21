@@ -1,3 +1,4 @@
+import argparse
 import struct
 import sys
 
@@ -182,6 +183,7 @@ class Assembler:
     def __init__(self):
         self.labels = {}
         self.lines = []
+        self.listing = []
         #self.out = []
         self.pc = 0
         #self.memory = {}
@@ -270,6 +272,7 @@ class Assembler:
     def pass1(self, src):
         self.pc = 0
 
+        self.listing = []
         for lineno, raw_line in enumerate(src, 1):
             source = raw_line.rstrip("\n")
             line = self.strip_comment(raw_line).upper()
@@ -293,6 +296,7 @@ class Assembler:
                     if label in self.labels:
                         raise ValueError(f"duplicate label: {label}")
                     self.labels[label] = self.pc
+                    self.listing.append({"type": "label", "source": source, "addr": addr})
                     continue
 
                 entry = {
@@ -307,6 +311,7 @@ class Assembler:
                     if len(tokens) != 2:
                         raise ValueError(".ORG expects exactly one address")
                     self.lines.append(entry)
+                    self.listing.append({"type": "directive", **entry})
                     self.pc = int(tokens[1], 0)
                     continue
 
@@ -314,6 +319,7 @@ class Assembler:
                     if len(tokens) < 2:
                         raise ValueError(".WORD expects at least one value")
                     self.lines.append(entry)
+                    self.listing.append({"type": "directive", **entry})
                     count = len(tokens) - 1
                     self.pc += count * 4
                     continue
@@ -322,6 +328,7 @@ class Assembler:
                     if len(tokens) < 2:
                         raise ValueError(".SPACE expects a size")
                     self.lines.append(entry)
+                    self.listing.append({"type": "directive", **entry})
                     self.pc += self.resolve_expr(" ".join(tokens[1:]))
                     continue
 
@@ -332,10 +339,12 @@ class Assembler:
                     value = self.resolve_expr(" ".join(tokens[2:]))
                     self.consts[name] = value
                     self.lines.append(entry)
+                    self.listing.append({"type": "directive", **entry})
                     continue
 
                 # instruction
                 self.lines.append(entry)
+                self.listing.append({"type": "instruction", **entry})
                 self.pc += self.instr_size(line)
             except AssemblerError:
                 raise
@@ -710,7 +719,17 @@ class Assembler:
     # -----------------------------------------------------
     # BUILD IMAGE
     # -----------------------------------------------------
-    def build(self, src, out="memory.img"):
+    def print_listing(self):
+        for entry in self.listing:
+            if entry["type"] == "label":
+                print(entry["source"])
+            elif entry["type"] == "instruction":
+                addr = entry["addr"]
+                print(f"0x{addr:08X}   {entry['source']}")
+            else:
+                print(entry["source"])
+
+    def build(self, src, out="memory.img", list_listing=False, write_output=True):
         self.labels = {}
         self.lines = []
         self.consts = {}
@@ -725,7 +744,38 @@ class Assembler:
             print(exc, file=sys.stderr)
             raise SystemExit(1)
 
-        with open(out, "wb") as f:
-            f.write(self.memory[:self.pc])
+        if write_output:
+            with open(out, "wb") as f:
+                f.write(self.memory[:self.pc])
 
-        print(f"[ASM] Built {out} ({self.pc} bytes)")
+        if list_listing:
+            self.print_listing()
+
+        if write_output:
+            print(f"[ASM] Built {out} ({self.pc} bytes)")
+        else:
+            print(f"[ASM] Listing generated, binary output skipped")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="KR32 assembler")
+    parser.add_argument("src", nargs="?", default="kernel.asm",
+                        help="source assembly file")
+    parser.add_argument("-o", "--output", default="memory.img",
+                        help="output binary image file")
+    parser.add_argument("--list", action="store_true",
+                        help="print a physical-address assembly listing to stdout")
+    parser.add_argument("--list-only", action="store_true",
+                        help="print the listing without writing the binary image")
+    args = parser.parse_args()
+
+    with open(args.src, "r", encoding="utf-8") as f:
+        source_lines = f.readlines()
+
+    assembler = Assembler()
+    assembler.build(
+        source_lines,
+        out=args.output,
+        list_listing=args.list or args.list_only,
+        write_output=not args.list_only,
+    )
