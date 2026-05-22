@@ -185,6 +185,10 @@ init_page_tables:
     POP LR
     RET
 
+; ================================================================
+; Map common kernel pages into the given page table (PTBR in R1)
+; ================================================================
+
 map_common_kernel:
     PUSH LR
 
@@ -262,6 +266,10 @@ map_common_kernel:
 
     POP LR
     RET
+
+;================================================================
+; Map a single page: VA in R2, PA in R3, flags in R
+;================================================================
 
 map_page:
     ; R1=PTBR, R2=VA, R3=PA, R4=flags. The PTE format stores the physical
@@ -370,11 +378,14 @@ handle_page_fault:
     B trap_restore
 
 handle_syscall:
+    ;=================================================================
     ; STVAL contains the SVC immediate. User arguments are saved in the
     ; trapframe at TF_R1..TF_R4, and the return value is written to TF_R1.
     ; so essentially args get passed using stackframe very similar when we do usual bl call
     ; except that here is interrupt logic and special instructions applied
     ; so SVC is a special BL to OS call -)
+    ;=================================================================
+
     CSRR R2 STVAL
 
     CMP R2 SYS_COUNT
@@ -388,9 +399,17 @@ handle_syscall:
     ;; no return B trap_restore
 
 syscall_unknown:
+;================================================================
+; For unknown syscalls, return an error code (e.g., 0xFFFFFFFF) in R1 and restore.
+;================================================================
+
     LI R1 0xFFFFFFFF                    ; R1 has error code FFFF
     STW R1 [SP + TF_R1]
     B trap_restore
+
+;================================================================
+; SYSCALL HANDLERS  
+;================================================================
 
 syscall_table:
     .WORD syscall_yield         ; SVC 0
@@ -401,6 +420,11 @@ syscall_table:
     .WORD syscall_read          ; SVC 5
 
 syscall_yield:
+;================================================================
+; Yield the CPU to allow other tasks to run. This is a voluntary context switch.
+; The scheduler will pick the next runnable task and switch to it.
+;================================================================
+
     LI R1 0
     STW R1 [SP + TF_R1]         ; r1=0 - success
     ; Voluntary reschedule. The return value must be written before
@@ -408,9 +432,13 @@ syscall_yield:
 
     B schedule_and_switch
 
-syscall_exit:               ; basically a call from task to remove from scheduler so it wont be executed
+syscall_exit:
+    ;================================================================               
+    ; basically a call from task to remove from scheduler so it wont be executed
     ; Mark the current task inactive and immediately switch to another task.
     ; A later scheduler improvement should detect "no runnable tasks".
+    ;================================================================
+
     LI R1 CURRENT_TASK
     LDW R2 [R1]
     LI R3 TASK_SIZE
@@ -424,6 +452,10 @@ syscall_exit:               ; basically a call from task to remove from schedule
     B schedule_and_switch
 
 syscall_getpid:
+    ;================================================================
+    ; Return the current task's PID. This proves that the task can read its own PID.
+    ;================================================================
+
     LI R1 CURRENT_TASK
     LDW R2 [R1]
     LI R3 TASK_SIZE
@@ -436,17 +468,23 @@ syscall_getpid:
     B trap_restore
 
 syscall_debug:
+    ;================================================================
     ; Placeholder debug syscall: return the first user argument unchanged.
     ; This proves argument and return-value plumbing without nested traps.
+    ;=====  
+
     LDW R1 [SP + TF_R1]
     STW R1 [SP + TF_R1]
     
     B trap_restore
 
 syscall_read:
+    ;================================================================
     ; R1 = fd (from trapframe)
     ; R2 = user buffer
     ; R3 = length
+    ;================================================================
+
     LDW R1 [SP + TF_R1]
     LDW R2 [SP + TF_R2]
     LDW R3 [SP + TF_R3]
@@ -502,9 +540,12 @@ read_done:
     B trap_restore
 
 syscall_write:
+    ;================================================================
     ; R1 = fd
     ; R2 = user buffer
     ; R3 = length
+    ;================================================================
+
     LDW R1 [SP + TF_R1]
     LDW R2 [SP + TF_R2]
     LDW R3 [SP + TF_R3]
@@ -537,6 +578,12 @@ write_chunk_small:
     MOV R2 R6
 
 write_chunk:
+    ;================================================================
+    ; Validate user buffer and length for this chunk. This is required
+    ; before copying to kernel buffer or accessing the device, to prevent
+    ; buffer overflows or invalid memory accesses.
+    ;================================================================
+
     PUSH R7
     PUSH R6
     PUSH R9
@@ -588,17 +635,25 @@ bad_pointer:
     B trap_restore
 
 device_read:
+    ;================================================================
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
+    ;================================================================
+
     LDW R4 [R3 + DEV_OFF_READ]  ; get device read function pointer
     JR R4                       ; execute it
 
 device_write:
+    ;================================================================
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
+    ;================================================================
+
     LDW R4 [R3 + DEV_OFF_WRITE] ; get device write function pointer
     JR R4                       ; execute it
-;
+
+;================================================================
 ; read /dev/console - from MMIO UART, polling RX_READY until data arrives
-;
+;================================================================
+
 con_rd:
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
     ; Reads up to R2 bytes from the UART into kernel buffer at R1.
@@ -635,8 +690,13 @@ dr_done:
 ;================================================================
 
 con_wr:
+    ;================================================================
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
     ; Transmits R2 bytes from kernel buffer at R1 through the UART.
+    ; Polls the UART_STATUS TX_READY bit before sending each byte.
+    ; This is a simple synchronous write that blocks until all bytes are sent.
+    ;================================================================
+
     LI R4 0x00100000            ; UART MMIO Base Address
     LI R5 0                     ; index = 0 (bytes written so far)
 
@@ -660,7 +720,15 @@ dcw_done:
     RET
 
 fetch_fd_entry:
+    ;================================================================
     ; R1 = fd, R2 = required flags
+    ; Returns device object pointer in R1 if valid, or 0 if invalid.
+    ; Validity checks:
+    ; - fd must be in range [0, 3)
+    ; - fd table entry must have at least the required flags set
+    ;
+    ;================================================================
+
     CMP R1 0
     BLT fd_invalid
     CMP R1 3
@@ -689,7 +757,17 @@ fd_invalid:
     RET
 
 user_buffer_valid_range:
+    ;================================================================
     ; R1 = user ptr, R2 = length, R3 = access type (0=read,1=write)
+    ; Returns 1 if the entire user buffer is valid and accessible with
+    ; the requested permissions, or 0 if any byte is invalid.
+    ; Validation checks:
+    ; - length must be > 0
+    ; - user pointer must be >= USER_BASE and the end of the buffer must be <= USER_LIMIT
+    ; - each page spanned by the buffer must be present (P) and user-accessible (U) in the page table
+    ; - if access type is write, pages must also have the writable (W) bit set
+    ;================================================================
+
     LI R4 0
     CMP R2 R4
     BEQ uv_valid
@@ -738,6 +816,12 @@ uv_check_pages:
     SHR R7 R1 12
     SHR R8 R12 12
 uv_loop:
+    ;================================================================
+    ; For each page spanned by the buffer, check the corresponding PTE in the page table:
+    ; - must be present (P) and user-accessible (U)
+    ; - if access type is write, must also have the writable (W) bit set
+    ;================================================================
+
     CMP R7 R8
     BGT uv_valid
     SHL R9 R7 2
@@ -774,7 +858,13 @@ uv_invalid:
     RET
 
 copy_from_user:
-    ; R1 = src user, R2 = len, R4 = dest kernel
+    ;================================================================
+    ; R1 = src user, R2 = len, R4 = dest kernel 
+    ; Copies data from user buffer at R1 to kernel buffer at R4, for R2 bytes.
+    ; This is a simple byte-by-byte copy that handles unaligned addresses.
+    ; Returns the number of bytes copied in R1.
+    ;================================================================
+
    ; DEBUG 2
     LI R5 0
 cfu_head:
@@ -816,7 +906,13 @@ cfu_done:
     RET
 
 copy_to_user:
-    ; R1 = dest user, R2 = len, R4 = src kernel
+    ;================================================================
+    ; R1 = dest user, R2 = len, R4 = src kernel 
+    ; Copies data from kernel buffer at R4 to user buffer at R1, for R2 bytes.
+    ; This is a simple byte-by-byte copy that handles unaligned addresses.
+    ; Returns the number of bytes copied in R1.
+    ;================================================================
+
    ; DEBUG 2
     LI R5 0
 ctu_head:
@@ -862,7 +958,13 @@ handle_debug:
     B trap_restore
 
 handle_irq:
-    ; Read the pending IRQ vector from STVAL
+    ;================================================================
+    ; Read the pending IRQ vector from STVAL    
+    ; and dispatch based on the IRQ number. For this platform:
+    ; - IRQ 0 = Timer/PIT
+    ; - IRQ 1 = UART RX
+    ;================================================================
+
     CSRR R1 STVAL
 
     CMP R1 0
@@ -870,15 +972,19 @@ handle_irq:
 
     CMP R1 1
     BEQ handle_uart_irq
-
+    ;================================================================
     ; Default IRQ handling: acknowledge PIC and restore
+    ;================================================================
     LI R2 0x00102000
     STW R1 [R2 + 8]             ; PIC_ACK = R1
     B trap_restore
 
 handle_timer_irq:
 
-    ; Acknowledge IRQ 0 (Timer) in PIC MMIO
+    ;================================================================
+    ; Acknowledge IRQ 0 (Timer) in PIC MMIO 
+    ;================================================================ 
+
     LI R2 0x00102000
     LI R3 0
     STW R3 [R2 + 8]             ; PIC_ACK = 0
@@ -887,8 +993,10 @@ handle_timer_irq:
     B schedule_and_switch
 
 handle_uart_irq:
-
+    ;================================================================
     ;only Acknowledge IRQ 1 (UART RX) in PIC MMIO data flows through rx buffer
+    ;================================================================
+
     LI R2 0x00102000
     LI R3 1
     STW R3 [R2 + 8]             ; PIC_ACK = 1
@@ -896,10 +1004,14 @@ handle_uart_irq:
     ; Resume the interrupted task immediately
     B trap_restore
 
-trap_restore:               ; this does a resume of task restores state frame
-                            ; and makes SRET - machine runs the task
-                            ; note SP should point to task's kernel trapframe!
+trap_restore:
+    ;================================================================
+    ; this does a resume of task restores state frame
+    ; and makes SRET - machine runs the task
+    ; note SP should point to task's kernel trapframe!
     ; Restore privileged state saved after the GPRs.
+    ;================================================================
+
     POP R1                  ; stval, informational only
     POP R1                  ; scause, informational only
     POP R1
@@ -926,10 +1038,12 @@ trap_restore:               ; this does a resume of task restores state frame
     POP R3
     POP R2
     POP R1
-
+    ;================================================================
     ; Switch back from kernel stack to interrupted task stack.
     ; Before: SP=kernel stack top, SSCRATCH=task SP.
     ; After:  SP=task SP, SSCRATCH=kernel stack top for next trap.
+    ;================================================================
+
     CSRRW SP SSCRATCH SP
     SRET
 
@@ -1057,10 +1171,14 @@ init_scheduler:
     ; Task 0
     ; ------------------------------------------------
 
-    LI SP TASK0_KSTACK_TOP
+    ;================================================================
     ; Build the initial trapframe on the task's kernel stack. It has
     ; the same shape as an IRQ-created trapframe, so first dispatch and
     ; later preemptive resumes use the exact same restore path.
+    ;================================================================
+
+    LI SP TASK0_KSTACK_TOP
+    
     LI R1 0
     PUSH R1                  ; R1
     PUSH R1                  ; R2
@@ -1292,6 +1410,9 @@ do_switch:
     ; Save new current task index
     ; ------------------------------------------------
     ; update current task now is next one (+1)
+    ; this is used for debugging and also by user_buffer_valid_range 
+    ; to find the current page table base for validation of user pointers
+    ;      
     STW R3 [R1]
 
     ; ------------------------------------------------
@@ -1341,8 +1462,6 @@ do_switch:
 
     ;; no return RET
     B trap_restore
-
-
 
 
 ; ================================================================
