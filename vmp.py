@@ -1,4 +1,5 @@
 import argparse
+import sys
 import time
 from token import OP
 
@@ -16,6 +17,7 @@ from mmu import (
 from debug import dump_all, dump_debug2, dump_short
 from device.timer import PIT
 from device.pic import PIC
+from device.uart import UARTDevice
 
 # KR32 REGS CONVENTION:
 #   R0        = hardwired ZERO
@@ -163,6 +165,8 @@ class CPU:
         self.timer = PIT(period_ms=2000)  # tick every 2 seconds
         self.pic = PIC()
         self.pic.enable_irq(0)  # enable timer IRQ
+        self.uart = UARTDevice()
+       
 
         # -------------------------------------------------
         # DEBUGGER STATE
@@ -171,6 +175,7 @@ class CPU:
         self.watchpoints = []
         self.stop_reason = None
         self.stop_info = None
+        self.image_path = None
 
     # -----------------------------------------------------
     # SAFE REGISTER ACCESS
@@ -296,6 +301,11 @@ class CPU:
 
     def clear_breakpoint(self, addr):
         self.breakpoints.discard(addr)
+
+    def clear_breakpoint_index(self, index):
+        addrs = self.list_breakpoints()
+        if 0 <= index < len(addrs):
+            self.breakpoints.discard(addrs[index])
 
     def list_breakpoints(self):
         return sorted(self.breakpoints)
@@ -752,14 +762,16 @@ class CPU:
                 print(f"[TRAP] vector={vector} value=0x{value:08X} pc=0x{fault_pc:08X} handler_base=0x{self.idt_base_pa:08X}")
                 if self.current_instr is not None:
                     op = (self.current_instr >> 24) & 0xFF
-                a  = (self.current_instr >> 16) & 0xFF
-                b  = (self.current_instr >> 8) & 0xFF
-                c  = self.current_instr & 0xFF
-                if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
-                    target = self.mem_read_u32(fault_pc + 4)
-                    print(f"[TRAP INST] {self.disasm(op, a, b, c, target)}")
+                    a  = (self.current_instr >> 16) & 0xFF
+                    b  = (self.current_instr >> 8) & 0xFF
+                    c  = self.current_instr & 0xFF
+                    if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
+                        target = self.mem_read_u32(fault_pc + 4)
+                        print(f"[TRAP INST] {self.disasm(op, a, b, c, target)}")
+                    else:
+                        print(f"[TRAP INST] {self.disasm(op, a, b, c)}")
                 else:
-                    print(f"[TRAP INST] {self.disasm(op, a, b, c)}")
+                    print("[TRAP INST] <no current instruction>")
 
         # Check if IDT base is set and interrupt delivery is enabled
         if self.idt_base_pa == 0:
@@ -786,11 +798,44 @@ class CPU:
         self.pc = handler_pc
         raise TrapDelivery()
 
+    # -----------------------------------------------------
+    # MMIO INTERCEPTION
+    # -----------------------------------------------------
+    def is_mmio(self, paddr):
+        # MMIO resides in pages 0x00100000 (UART), 0x00101000 (Timer/PIT), 0x00102000 (PIC)
+        return 0x00100000 <= paddr < 0x00103000
+
+    def mmio_read(self, paddr):
+        page = paddr & 0xFFFFF000
+        offset = paddr & 0x00000FFF
+        if page == 0x00100000:
+            return self.uart.read_reg(offset)
+        elif page == 0x00101000:
+            return self.timer.read_reg(offset)
+        elif page == 0x00102000:
+            return self.pic.read_reg(offset)
+        return 0
+
+    def mmio_write(self, paddr, val):
+        page = paddr & 0xFFFFF000
+        offset = paddr & 0x00000FFF
+        if page == 0x00100000:
+            self.uart.write_reg(offset, val)
+        elif page == 0x00101000:
+            self.timer.write_reg(offset, val)
+        elif page == 0x00102000:
+            self.pic.write_reg(offset, val)
+
     def physical_read_u8(self, paddr):
+        if self.is_mmio(paddr):
+            return self.mmio_read(paddr) & 0xFF
         self.check_physical_mem(paddr, 1)
         return self.physical_memory[paddr]
 
     def physical_write_u8(self, paddr, val):
+        if self.is_mmio(paddr):
+            self.mmio_write(paddr, val)
+            return
         self.check_physical_mem(paddr, 1)
         self.physical_memory[paddr] = val & 0xFF
     #trace virt to physical translation
@@ -903,6 +948,59 @@ class CPU:
 
         self.check_physical_mem(0, len(data))
         self.physical_memory[0:len(data)] = data
+        self.image_path = file
+       
+
+    def reset(self, preserve_debug=True):
+        preserve_breakpoints = set(self.breakpoints) if preserve_debug else set()
+        preserve_watchpoints = [watch.copy() for watch in self.watchpoints] if preserve_debug else []
+        preserve_tracevirt = self.tracevirt
+        preserve_debug_mode = self.debug_mode
+        preserve_trace = self.trace
+        preserve_traceint = self.traceint
+        preserve_trace_fault = self.trace_fault
+        preserve_trace_handler = self.trace_handler
+        preserve_debug_dump_range = self.debug_dump_range
+        preserve_quiet = self.quiet
+        image_path = self.image_path
+
+        mem_size = self.MEM_SIZE
+        page_size = self.mmu.page_size
+        virtual_size = self.mmu.virtual_size
+        tlb_size = self.mmu.tlb.capacity
+
+        self.__init__(
+            mem_size=mem_size,
+            page_size=page_size,
+            virtual_size=virtual_size,
+            tlb_size=tlb_size,
+            tracevirt=preserve_tracevirt,
+            debug_mode=preserve_debug_mode,
+            trace=preserve_trace,
+        )
+        self.traceint = preserve_traceint
+        self.trace_fault = preserve_trace_fault
+        self.trace_handler = preserve_trace_handler
+        self.debug_dump_range = preserve_debug_dump_range
+        self.quiet = preserve_quiet
+
+        if image_path is not None:
+            self.load_image(image_path)
+
+        
+        self.uart.reset()
+        self.breakpoints = preserve_breakpoints
+        self.watchpoints = []
+        for watch in preserve_watchpoints:
+            if watch["type"] == "reg":
+                self.add_watchpoint_reg(watch["reg"])
+            else:
+                self.add_watchpoint_mem(watch["addr"], watch["size"])
+
+        self.stop_reason = None
+        self.stop_info = None
+        self.running = True
+        self.pc = 0
 
     # -----------------------------------------------------
     # FETCH
@@ -917,10 +1015,20 @@ class CPU:
         self.current_instr_pc = instr_pc
         self.current_instr = None
         try:
+            #if self.pc in self.device_hooks:
+            #    self.device_hooks[self.pc]()
+            #    return
+
             if self.timer.tick():
                 if self.trace_output:
                     print("[TIMER] tick")
                 self.pic.raise_irq(0)
+
+            if self.uart.update():
+                if self.uart.rx_int_enable & 1:
+                    if self.trace_output:
+                        print("[UART] RX interrupt raised")
+                    self.pic.raise_irq(1)
 
             if self.interrupt_enabled and not self.in_trap_handler:
                 irq = self.pic.next_irq()
@@ -1352,6 +1460,7 @@ def main():
         action="store_true",
         help="trace instructions only while inside trap/interrupt handlers"
     )
+
     parser.add_argument(
         "--debug",
         type=int,
@@ -1370,6 +1479,7 @@ def main():
         tracevirt=args.tracevirt,
         debug_mode=args.debug,
         trace=args.trace,
+       
     )
     cpu.traceint = args.traceint
     cpu.trace_fault = args.tracefault

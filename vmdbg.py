@@ -57,6 +57,16 @@ class VMDbgShell(cmd.Cmd):
         "continue    - alias for run"
         return self.do_run(args)
 
+    def do_restart(self, args):
+        "restart     - reload image and reset CPU state, preserving breakpoints/watchpoints"
+        try:
+            self.cpu.reset()
+            print(f"restarted debug session, PC=0x{self.cpu.pc:08X}")
+        except Exception as exc:
+            print(f"restart failed: {exc}")
+
+    do_r = do_restart
+
     def do_step(self, args):
         "step [n]    - execute n instructions (default 1)"
         count = 1
@@ -83,14 +93,18 @@ class VMDbgShell(cmd.Cmd):
         print(f"breakpoint added at 0x{addr:08X}")
 
     def do_clear(self, args):
-        "clear ADDR    - remove a breakpoint at ADDR"
+        "clear INDEX   - remove a breakpoint by index"
         try:
-            addr = parse_int(args.strip())
+            idx = parse_int(args.strip())
         except argparse.ArgumentTypeError as exc:
             print(exc)
             return
-        self.cpu.clear_breakpoint(addr)
-        print(f"breakpoint removed at 0x{addr:08X}")
+        self.cpu.clear_breakpoint_index(idx)
+        print(f"breakpoint {idx} removed")
+
+    def do_cb(self, args):
+        "cb INDEX      - remove a breakpoint by index"
+        return self.do_clear(args)
 
     def do_watch(self, args):
         "watch reg N | watch mem ADDR[:SIZE] - add a watchpoint"
@@ -128,12 +142,25 @@ class VMDbgShell(cmd.Cmd):
         self.cpu.clear_watchpoint(idx)
         print(f"watchpoint {idx} removed")
 
+    def do_cw(self, args):
+        "cw INDEX      - remove a watchpoint by index"
+        return self.do_unwatch(args)
+
     def do_info(self, args):
-        "info breakpoints|watchpoints - list configured buildpoints/watchpoints"
-        if args.strip() == "breakpoints":
-            for addr in self.cpu.list_breakpoints():
-                print(f"0x{addr:08X}")
-        elif args.strip() == "watchpoints":
+        "info breakpoints|watchpoints - list configured breakpoints/watchpoints"
+        arg = args.strip()
+        if arg == "breakpoints":
+            for idx, addr in enumerate(self.cpu.list_breakpoints()):
+                print(f"{idx}: 0x{addr:08X}")
+        elif arg == "watchpoints":
+            for idx, watch in enumerate(self.cpu.list_watchpoints()):
+                print(f"{idx}: {watch}")
+        elif arg == "":
+            print(f"breakpoints ({len(self.cpu.breakpoints)})")
+            for idx, addr in enumerate(self.cpu.list_breakpoints()):
+                print(f"{idx}: 0x{addr:08X}")
+            print()
+            print(f"watchpoints ({len(self.cpu.watchpoints)})")
             for idx, watch in enumerate(self.cpu.list_watchpoints()):
                 print(f"{idx}: {watch}")
         else:
@@ -220,7 +247,15 @@ def main():
 
     image_path = Path(args.image)
     if not args.no_build:
-        src = Path(args.asm).read_text().splitlines()
+        if args.asm == "kernelshed.asm":
+            print("[BUILD] Preprocessing kernelshed.asm using preprocess_cmacros.py...")
+            import subprocess
+            subprocess.run("python3 tools/preprocess_cmacros.py kernelshed.asm > kernelshed_pre.asm", shell=True, check=True)
+            src_file = "kernelshed_pre.asm"
+        else:
+            src_file = args.asm
+            
+        src = Path(src_file).read_text().splitlines()
         Assembler().build(src, out=str(image_path))
     elif not image_path.exists():
         raise SystemExit(f"error: image file {image_path} does not exist")

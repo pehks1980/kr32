@@ -1,32 +1,9 @@
 ; ================================================================
-; KR32 KERNEL - BOOTSTRAP AND TRAP HANDLERS
+; KR32 KERNEL - BOOTSTRAP AND TRAP HANDLERS (C-like macros)
+; Converted by tools/convert_to_cmacros.py — original saved as kernelshed.asm.orig
+; Use tools/preprocess_cmacros.py to expand and generate real assembly.
+; Example: python3 tools/preprocess_cmacros.py kernelshed.asm > kernelshed_pre.asm
 ; ================================================================
-; This kernel initializes the virtual memory system (MMU + page tables)
-; and sets up exception handling via an Interrupt Descriptor Table (IDT).
-; All traps and exceptions are delivered through the IDT.
-;
-; KR32 CALLING CONVENTION:
-;   R0        = hardwired ZERO
-;   R1-R4     = argument registers (arg0..arg3)
-;   R1        = return value register
-;   R5-R11    = caller-saved temporaries
-;   R12       = callee-saved temporary (optional)
-;   R13       = SP (stack pointer)
-;   R14       = FP (frame pointer)
-;   R15       = LR (return link)
-;   Callees must preserve FP/LR/SP and may use R1-R11 freely.
-; KR32 KERNEL - UNIFIED TRAP HANDLER (Linux style)
-; ================================================================
-
-; ================================================================
-; FOR memory map and structs please refer to memory_map.txt
-; ================================================================
-
-
-; ================================================================
-; KR32 KERNEL - UNIFIED TRAP HANDLER (Linux style)
-; ================================================================
-
 
 .org 0x0000
 B KERNEL_START
@@ -77,43 +54,65 @@ B KERNEL_START
 .EQU STDIN_FD,       0
 .EQU STDOUT_FD,      1
 .EQU STDERR_FD,      2
-.EQU CONSOLE_INPUT_LEN, 5
+.EQU CONSOLE_INPUT_LEN, 64
 .EQU USER_WRITE_BUF, 0x6000
 .EQU USER_READ_BUF,  0x6010
 
 ; KBUFFER
 .org 0x1000
 KBUFFER_WR:
-    .SPACE 256              ; 256b
+        .SPACE 256              ; 256b
 KBUFFER_RD:
-    .SPACE 256              ; 256b
+        .SPACE 256              ; 256b
 
 
 .org 0x2000
 
-KERNEL_START:
-    LI SP 0x0000F000
-    MOV FP SP
+func KERNEL_START
+        LI SP 0x0000F000
+        MOV FP SP
 
-    ; Initialize unified IDT (all traps go to trap_entry)
-    BL init_idt
+        ; Initialize unified IDT (all traps go to trap_entry)
+    call init_idt
 
-    ; Initialize Page Tables
-    ; check memory_map.txt for current layout
-    BL init_page_tables
+        ; Initialize Page Tables
+        ; check memory_map.txt for current layout
+    call init_page_tables
 
-    ; Init_task_scheduler (hard-coded)
-    BL init_scheduler
+        ; Init_task_scheduler (hard-coded)
+    call init_scheduler
 
-    ; Enable MMU and interrupts
-    BL enable_vm
+        ; ----------------------------------------------------
+        ; Setup MMIO PIC: Enable IRQ 0 (timer) and IRQ 1 (uart)
+        ; ----------------------------------------------------
+        LI R1 0x00102000
+        LI R2 3
+        STW R2 [R1 + 0]         ; PIC_MASK = 3 (INT 0 & 1 enabled)
 
-    ; Start first task through the same trapframe restore path used
-    ; by preemptive switches.
-    LI R1 tasks
-    LDW SP [R1 + TASK_KSP]
-    B trap_restore
+        ; ----------------------------------------------------
+        ; Setup MMIO PIT: Set period to 2000 ms and enable ticks
+        ; ----------------------------------------------------
+        LI R1 0x00101000
+        LI R2 2000
+        STW R2 [R1 + 0]         ; PIT_PERIOD = 2000 ms
+        LI R2 3
+        STW R2 [R1 + 4]         ; PIT_CTRL = 3 (PIT_ENABLE | INT_ENABLE)
 
+        ; ----------------------------------------------------
+        ; Setup MMIO UART: Enable RX interrupts
+        ; ----------------------------------------------------
+        LI R1 0x00100000
+        LI R2 1
+        STW R2 [R1 + 8]         ; UART_CTRL = 1 (RX_INT_ENABLE)
+
+        ; Enable MMU and interrupts
+    call enable_vm
+
+        ; Start first task through the same trapframe restore path used
+        ; by preemptive switches.
+        LI R1 tasks
+        LDW SP [R1 + TASK_KSP]
+        B trap_restore
 
 ; ================================================================
 ; Initialize IDT - ALL TRAPS GO TO ONE ENTRY
@@ -240,6 +239,22 @@ map_common_kernel:
 
     LI R2 PTBR2_VA
     LI R3 TASK2_PTBR
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    ; Map MMIO pages (UART, Timer/PIT, and PIC) into kernel address space
+    LI R2 0x00100000      ; UART physical and virtual base
+    LI R3 0x00100000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x00101000      ; PIT physical and virtual base
+    LI R3 0x00101000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x00102000      ; PIC physical and virtual base
+    LI R3 0x00102000
     LI R4 KERNEL_FLAGS
     BL map_page
 
@@ -569,54 +584,72 @@ bad_pointer:
 
 device_read:
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
-    LDW R4 [R3 + DEV_OFF_READ]
-    JR R4
+    LDW R4 [R3 + DEV_OFF_READ]  ; get device read function pointer
+    JR R4                       ; execute it
 
 device_write:
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
-    LDW R4 [R3 + DEV_OFF_WRITE]
-    JR R4
-
-dev_console_read:
+    LDW R4 [R3 + DEV_OFF_WRITE] ; get device write function pointer
+    JR R4                       ; execute it
+;
+; read /dev/console - from MMIO UART, polling RX_READY until data arrives
+;
+con_rd:
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
-    ; Copy a small fixed console input string into the kernel buffer.
-    LI R4 CONSOLE_INPUT_LEN
-    CMP R4 R2
-    BLT dr_use_len
-    MOV R4 R2
+    ; Reads up to R2 bytes from the UART into kernel buffer at R1.
+    ; Stops early when a newline '\n' (ASCII 10) is received.
+    LI R4 0x00100000            ; UART MMIO Base Address
+    LI R5 0                     ; index = 0 (bytes read so far)
 
-dr_use_len:
-    LI R5 console_input
-    MOV R6 R4
+dr_loop:
+    CMP R5 R2                   ; have we read enough bytes?
+    BGE dr_done                 ; yes -> return
 
-dr_copy_loop:
+dr_poll_ready:
+    LDW R6 [R4 + 4]             ; read UART_STATUS register
+    AND R6 R6 1                 ; bit 0 = RX_READY
     CMP R6 0
-    BEQ dr_done
-    LDB R7 [R5]
-    STB R7 [R1]
-    ADD R1 R1 1
+    BEQ dr_poll_ready           ; spin-wait until a character arrives
+
+    LDW R7 [R4 + 0]             ; pop character from UART_DATA (RX FIFO)
+    STB R7 [R1 + R5]            ; store it into the kernel buffer
     ADD R5 R5 1
-    SUB R6 R6 1
-    B dr_copy_loop
+
+    ; If we received a newline, stop reading early
+    CMP R7 10
+    BEQ dr_done
+
+    B dr_loop
 
 dr_done:
-    MOV R1 R4
+    MOV R1 R5                   ; return number of bytes actually read
     RET
-
-dev_console_write:
-    ; R1 = kernel buffer, R2 = len
-    ; its not reall write 
-    LI R3 0
+;
+; write /dev/console - to MMIO UART, polling TX_READY before each byte
+;
+con_wr:
+    ; R1 = kernel buffer, R2 = len, R3 = device object pointer
+    ; Transmits R2 bytes from kernel buffer at R1 through the UART.
+    LI R4 0x00100000            ; UART MMIO Base Address
+    LI R5 0                     ; index = 0 (bytes written so far)
 
 dcw_loop:
-    CMP R3 R2
-    BGE dcw_done
-    LDB R4 [R1 + R3]
-    ADD R3 R3 1
+    CMP R5 R2                   ; have we written all bytes?
+    BGE dcw_done                ; yes -> return
+
+dcw_poll_tx:
+    LDW R6 [R4 + 4]             ; read UART_STATUS register
+    AND R6 R6 2                 ; bit 1 = TX_READY
+    CMP R6 0
+    BEQ dcw_poll_tx             ; spin-wait until transmitter is ready
+
+    LDB R7 [R1 + R5]            ; load next byte from kernel buffer
+    STW R7 [R4 + 0]             ; write to UART_DATA register (transmit)
+    ADD R5 R5 1
     B dcw_loop
 
 dcw_done:
-    MOV R1 R2
+    MOV R1 R2                   ; return number of bytes written
     RET
 
 fetch_fd_entry:
@@ -820,16 +853,44 @@ handle_debug:
     B trap_restore
 
 handle_irq:
-    ; The CPU delivered IRQ number in STVAL. Acknowledge the PIC from
-    ; the kernel, after identifying the interrupt source, instead of
-    ; letting VMP auto-ack before the handler runs.
+    ; Read the pending IRQ vector from STVAL
     CSRR R1 STVAL
-    EOI R1
 
-   ;;no return! BL schedule_and_switch
-    ;; B trap_restore
+    CMP R1 0
+    BEQ handle_timer_irq
 
+    CMP R1 1
+    BEQ handle_uart_irq
+
+    ; Default IRQ handling: acknowledge PIC and restore
+    LI R2 0x00102000
+    STW R1 [R2 + 8]             ; PIC_ACK = R1
+    B trap_restore
+
+handle_timer_irq:
+    ; Acknowledge IRQ 0 (Timer) in PIC MMIO
+    LI R2 0x00102000
+    LI R3 0
+    STW R3 [R2 + 8]             ; PIC_ACK = 0
+    
+    ; Yield the CPU (reschedule and switch tasks)
     B schedule_and_switch
+
+handle_uart_irq:
+    ; Read received character from UART DATA register
+    ;LI R2 0x00100000
+    ;LDW R3 [R2 + 0]             ; R3 = character read from UART_DATA
+
+    ; Write/Echo it back to UART DATA register
+   ; STW R3 [R2 + 0]             ; Echo character to host stdout
+
+    ;only Acknowledge IRQ 1 (UART RX) in PIC MMIO data flows through rx buffer
+    LI R2 0x00102000
+    LI R3 1
+    STW R3 [R2 + 8]             ; PIC_ACK = 1
+
+    ; Resume the interrupted task immediately
+    B trap_restore
 
 trap_restore:               ; this does a resume of task restores state frame
                             ; and makes SRET - machine runs the task
@@ -927,18 +988,18 @@ CURRENT_TASK:
     .WORD 0
 
 fd_table:
-    .WORD console_dev
+    .WORD con_dev
     .WORD FD_FLAG_READ
-    .WORD console_dev
+    .WORD con_dev
     .WORD FD_FLAG_WRITE
-    .WORD console_dev
+    .WORD con_dev
     .WORD FD_FLAG_WRITE
 
-console_dev:
-    .WORD dev_console_read
-    .WORD dev_console_write
+con_dev:
+    .WORD con_rd
+    .WORD con_wr
 
-console_input:
+con_input:
     .WORD 0x41544144      ; "DATA"
     .WORD 0x0A000000      ; "\n"
 
@@ -1269,15 +1330,17 @@ TASK_A_START:
     STW R2 [R1]
     LI R2 0x57202C6F         ; "o, W"
     STW R2 [R1 + 4]
-    LI R2 0x21646C72         ; "rld!"
+    LI R2 0x646C726F         ; "orld"
     STW R2 [R1 + 8]
-    LI R2 0x0A
+    LI R2 0x21
     STB R2 [R1 + 12]
+    LI R2 0x0A
+    STB R2 [R1 + 13]
 
     LI R1 1
    ; DEBUG 1
     LI R2 USER_WRITE_BUF
-    LI R3 13
+    LI R3 14
     SVC SYS_WRITE
     DEBUG 2
     ; Exit after the write test.
@@ -1288,19 +1351,31 @@ TASK_A_START:
 .org 0x1a000
 TASK_B_START:
 
+read_write_loop:
     ; Perform a read from stdin into a user buffer.
-    TRACE 1
+    ;TRACE 1
     LI R1 0
-    DEBUG 2
+    ;DEBUG 2
     LI R2 USER_READ_BUF
     LI R3 CONSOLE_INPUT_LEN
     SVC SYS_READ
     DEBUG 2
-    ; Store the actual count returned by SYS_READ into user space.
-    LI R4 USER_READ_BUF
-    STW R1 [R4 + 8]
-    TRACE 0
-    HLT
-    ; Exit after the read test.
+
+    CMP R1 0
+    BEQ task_b_done
+
+    ; Echo the data back via SYS_WRITE.
+    MOV R5 R1              ; save length returned by SYS_READ
+    LI R1 1                ; stdout file descriptor
+    LI R2 USER_READ_BUF
+    MOV R3 R5
+    SVC SYS_WRITE
+    DEBUG 2
+
+    B read_write_loop
+
+task_b_done:
+    ; Exit after the read/write test.
+    DEBUG 2
     LI R1 SYS_EXIT
     SVC SYS_EXIT

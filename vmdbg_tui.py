@@ -25,14 +25,15 @@ def parse_watch_mem(value):
 
 
 class KM32TUI:
-    HELP_TEXT = "s=step r=run t=toggle b=break cb=clear c=continue d=disasm m=mem i=info w=watch u=unwatch regs=regs h=help q=quit"
+    HELP_TEXT = "s=step r=run restart=reset t=toggle b=break cb=clear c=continue d=disasm m=mem i=info w=watch u=unwatch cw=unwatch regs=regs h=help q=quit"
     HELP_LINES = [
         "Commands:",
         "  s [N]         - step N instructions (default 1)",
         "  r             - run until breakpoint/watchpoint/halt",
+        "  restart       - reload image and reset CPU state",
         "  t [ADDR]      - toggle breakpoint at ADDR or current PC",
         "  b ADDR        - set breakpoint at ADDR",
-        "  cb ADDR       - clear breakpoint at ADDR",
+        "  cb INDEX      - clear breakpoint by index",
         "  c             - continue (alias for run)",
         "  d ADDR [CNT]  - disassemble CNT instructions from ADDR",
         "  m ADDR SIZE   - dump memory at ADDR",
@@ -41,6 +42,7 @@ class KM32TUI:
         "  w reg N       - watch register N",
         "  w mem ADDR[:SIZE] - watch memory range",
         "  u INDEX       - remove watchpoint by index",
+        "  cw INDEX      - remove watchpoint by index",
         "  regs          - show register values",
         "  h             - show this help",
         "  q             - quit",
@@ -81,12 +83,12 @@ class KM32TUI:
     def _draw(self):
         self.stdscr.erase()
         max_y, max_x = self.stdscr.getmaxyx()
-        info_w = 34
-        cmd_h = 3
-        output_h = min(16, max_y // 3)
+        info_w = max(24, min(40, max_x // 4))
+        cmd_h = 4
+        output_h = min(max(8, max_y // 4), max_y - 10)
         top_h = max_y - output_h - cmd_h
         disasm_w = max_x - info_w - 1
-        if disasm_w < 40 or top_h < 10:
+        if max_x < 50 or disasm_w < 30 or top_h < 8:
             self.stdscr.addstr(0, 0, "Terminal too small for KR32 TUI. Resize and retry.")
             self.stdscr.refresh()
             return
@@ -250,8 +252,14 @@ class KM32TUI:
                 lines = lines[start_index:]
         return lines
 
+    def _format_watchpoint(self, watch):
+        if watch["type"] == "reg":
+            return f"reg R{watch['reg']}"
+        return f"mem 0x{watch['addr']:08X}:{watch['size']}"
+
     def _draw_info(self):
         height, width = self.info_win.getmaxyx()
+        rows = []
         regs = []
         for i in range(0, 16):
             regs.append((f"R{i}", self.cpu.r(i)))
@@ -261,26 +269,35 @@ class KM32TUI:
             line = f"{col1[i][0]}={col1[i][1]:08X}"
             if i < len(col2):
                 line += f"  {col2[i][0]}={col2[i][1]:08X}"
-            self.info_win.addstr(i + 1, 1, line[: width - 2])
+            rows.append(line)
 
-        flags = f"Z={int(self.cpu.Z)} N={int(self.cpu.N)} C={int(self.cpu.C)} V={int(self.cpu.V)}"
-        self.info_win.addstr(10, 1, flags[: width - 2])
-        self.info_win.addstr(11, 1, f"MODE={'USER' if self.cpu.mode == 1 else 'KERNEL'}")
-        self.info_win.addstr(12, 1, f"PC=0x{self.cpu.pc:08X}")
-        self.info_win.addstr(13, 1, f"SP=0x{self.cpu.sp:08X}")
-        self.info_win.addstr(14, 1, f"LR=0x{self.cpu.r(self.cpu.LR_REG):08X}")
-        self.info_win.addstr(15, 1, f"stop={self._format_stop_reason()}")
-        self.info_win.addstr(16, 1, f"breaks={len(self.cpu.breakpoints)} watches={len(self.cpu.watchpoints)}")
-        status_lines = self.status.splitlines() or [""]
-        line_index = 17
-        self.info_win.addstr(line_index, 1, f"status={status_lines[0][: width - 10]}")
-        for extra_line in status_lines[1:]:
-            line_index += 1
-            if line_index >= height - 1:
+        rows.append(f"Z={int(self.cpu.Z)} N={int(self.cpu.N)} C={int(self.cpu.C)} V={int(self.cpu.V)}")
+        rows.append(f"MODE={'USER' if self.cpu.mode == 1 else 'KERNEL'}")
+        rows.append(f"PC=0x{self.cpu.pc:08X}")
+        rows.append(f"SP=0x{self.cpu.sp:08X}")
+        rows.append(f"LR=0x{self.cpu.r(self.cpu.LR_REG):08X}")
+        rows.append(f"stop={self._format_stop_reason()}")
+
+        bp_addrs = self.cpu.list_breakpoints()
+        bp_line = " ".join(f"0x{addr:08X}" for addr in bp_addrs)
+        if len(bp_line) > width - 18:
+            bp_line = bp_line[: width - 21] + "..."
+        rows.append(f"breaks={len(bp_addrs)} {bp_line}".strip())
+
+        wp_descs = [self._format_watchpoint(w) for w in self.cpu.list_watchpoints()]
+        wp_line = " ".join(wp_descs)
+        if len(wp_line) > width - 18:
+            wp_line = wp_line[: width - 21] + "..."
+        rows.append(f"watches={len(wp_descs)} {wp_line}".strip())
+
+        status_lines = [f"status={line}" for line in self.status.splitlines() or [""]]
+        rows.extend(status_lines)
+        rows.append(f"trace={'on' if self.trace else 'off'}")
+
+        for i, line in enumerate(rows, start=1):
+            if i >= height - 1:
                 break
-            self.info_win.addstr(line_index, 1, extra_line[: width - 2])
-        tail_line = min(line_index + 1, height - 1)
-        self.info_win.addstr(tail_line, 1, f"trace={'on' if self.trace else 'off'}")
+            self.info_win.addstr(i, 1, line[: width - 2])
 
     def _format_stop_reason(self):
         reason = self.cpu.stop_reason
@@ -340,6 +357,11 @@ class KM32TUI:
                         break
                 self.status = f"stepped {count} instrs"
                 return False
+            if op in ("restart", "reset"):
+                self.cpu.reset()
+                self.status = f"restarted debug session, PC=0x{self.cpu.pc:08X}"
+                self.output_lines = [self.status]
+                return False
             if op in ("r", "run", "c", "continue"):
                 self.cpu.stop_reason = None
                 self.cpu.stop_info = None
@@ -365,16 +387,18 @@ class KM32TUI:
                 self.output_lines = [self.status]
                 return False
             if op in ("cb", "clear") and len(parts) >= 2:
-                addr = parse_int(parts[1])
-                self.cpu.clear_breakpoint(addr)
-                self.status = f"cleared 0x{addr:08X}"
+                idx = parse_int(parts[1])
+                self.cpu.clear_breakpoint_index(idx)
+                self.status = f"cleared breakpoint {idx}"
                 return False
             if op in ("i", "info"):
                 if len(parts) == 1:
-                    self.status = f"breaks={len(self.cpu.breakpoints)} watches={len(self.cpu.watchpoints)}"
-                    self.output_lines = [self.status]
+                    lines = [f"breakpoints ({len(self.cpu.breakpoints)})"] + [f"{idx}: 0x{addr:08X}" for idx, addr in enumerate(self.cpu.list_breakpoints())]
+                    lines += ["", f"watchpoints ({len(self.cpu.watchpoints)})"] + [f"{idx}: {watch}" for idx, watch in enumerate(self.cpu.list_watchpoints())]
+                    self.output_lines = lines[: self.output_win.getmaxyx()[0] - 2]
+                    self.status = "info"
                 elif parts[1] == "breakpoints":
-                    lines = [f"breakpoints ({len(self.cpu.breakpoints)})"] + [f"0x{addr:08X}" for addr in self.cpu.list_breakpoints()]
+                    lines = [f"breakpoints ({len(self.cpu.breakpoints)})"] + [f"{idx}: 0x{addr:08X}" for idx, addr in enumerate(self.cpu.list_breakpoints())]
                     self.output_lines = lines[: self.output_win.getmaxyx()[0] - 2]
                     self.status = "breakpoints"
                 elif parts[1] == "watchpoints":
@@ -410,7 +434,7 @@ class KM32TUI:
                     self.status = f"watch mem 0x{addr:08X}:{size}"
                     return False
                 raise ValueError("watch reg N | watch mem ADDR[:SIZE]")
-            if op in ("u", "unwatch") and len(parts) == 2:
+            if op in ("u", "unwatch", "cw") and len(parts) == 2:
                 idx = parse_int(parts[1])
                 self.cpu.clear_watchpoint(idx)
                 self.status = f"unwatched {idx}"
@@ -481,7 +505,15 @@ def main():
 
     image_path = Path(args.image)
     if not args.no_build:
-        src = Path(args.asm).read_text().splitlines()
+        if args.asm == "kernelshed.asm":
+            print("[BUILD] Preprocessing kernelshed.asm using preprocess_cmacros.py...")
+            import subprocess
+            subprocess.run("python3 tools/preprocess_cmacros.py kernelshed.asm > kernelshed_pre.asm", shell=True, check=True)
+            src_file = "kernelshed_pre.asm"
+        else:
+            src_file = args.asm
+            
+        src = Path(src_file).read_text().splitlines()
         Assembler().build(src, out=str(image_path))
     elif not image_path.exists():
         raise SystemExit(f"error: image file {image_path} does not exist")

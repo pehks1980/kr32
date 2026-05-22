@@ -1,0 +1,15 @@
+; Sample C-like source for preprocess_cmacros.py
+; Demonstrates func/arg/decl_local/alloc/if/return
+
+func sum
+  arg1 R1
+  arg2 R2
+  decl_local TMP, 8
+  alloc 8
+  ifnz R1
+    ADD R3, R1, R2
+    return R3
+  endif
+  free 8
+  return 0
+endfunc
