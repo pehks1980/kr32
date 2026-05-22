@@ -117,6 +117,7 @@ func KERNEL_START
 ; ================================================================
 ; Initialize IDT - ALL TRAPS GO TO ONE ENTRY
 ; ================================================================
+
 init_idt:
     LI R1 0x00200000           ; IDT base physical address
     
@@ -139,6 +140,7 @@ init_idt:
 ; ================================================================
 ; Initialize Page Tables
 ; ================================================================
+
 init_page_tables:
     PUSH LR
 
@@ -403,8 +405,7 @@ syscall_yield:
     STW R1 [SP + TF_R1]         ; r1=0 - success
     ; Voluntary reschedule. The return value must be written before
     ; switching, while SP still points at the yielding task's trapframe.
-    ;;BL schedule_and_switch
-    ;;RET
+
     B schedule_and_switch
 
 syscall_exit:               ; basically a call from task to remove from scheduler so it wont be executed
@@ -417,11 +418,10 @@ syscall_exit:               ; basically a call from task to remove from schedule
     LI R5 tasks
     ADD R5 R5 R4
     LI R6 0                     ;0 to disable this task
-    STW R6 [R5 + TASK_ACTIVE]
+    STW R6 [R5 + TASK_STATE]
     LI R1 0
     STW R1 [SP + TF_R1]         ; r1=0 - return success
     B schedule_and_switch
-    ;;RET
 
 syscall_getpid:
     LI R1 CURRENT_TASK
@@ -432,7 +432,7 @@ syscall_getpid:
     ADD R5 R5 R4
     LDW R1 [R5 + TASK_PID]        ; get pid from task scheduler data
     STW R1 [SP + TF_R1]           ; save it to its trapframe which goes back when it s next time this task resumes
-    ;;RET                           ; on resume r1 will have pid read after svc call
+                                  ; on resume r1 will have pid read after svc call
     B trap_restore
 
 syscall_debug:
@@ -440,7 +440,7 @@ syscall_debug:
     ; This proves argument and return-value plumbing without nested traps.
     LDW R1 [SP + TF_R1]
     STW R1 [SP + TF_R1]
-    ;;RET
+    
     B trap_restore
 
 syscall_read:
@@ -492,11 +492,13 @@ syscall_read:
     MOV R4 KBUFFER_RD
     BL copy_to_user        ; copy from kernel buffer to user buffer
     STW R1 [SP + TF_R1]
+
     B trap_restore
 
 read_done:
     LI R1 0
     STW R1 [SP + TF_R1]
+
     B trap_restore
 
 syscall_write:
@@ -570,16 +572,19 @@ write_chunk:
 write_done:
     MOV R1 R8
     STW R1 [SP + TF_R1]
+
     B trap_restore
 
 bad_fd:
     LI R1 0xFFFF
     STW R1 [SP + TF_R1]
+
     B trap_restore
 
 bad_pointer:
     LI R1 0xFFFF
     STW R1 [SP + TF_R1]
+
     B trap_restore
 
 device_read:
@@ -624,9 +629,11 @@ dr_poll_ready:
 dr_done:
     MOV R1 R5                   ; return number of bytes actually read
     RET
-;
-; write /dev/console - to MMIO UART, polling TX_READY before each byte
-;
+
+;=================================================================
+; write /dev/con - to MMIO UART, polling TX_READY before each byte
+;================================================================
+
 con_wr:
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
     ; Transmits R2 bytes from kernel buffer at R1 through the UART.
@@ -748,10 +755,12 @@ uv_loop:
     CMP R11 0
     BEQ uv_invalid
     B uv_next
+
 uv_check_read:
     AND R11 R10 PTE_R
     CMP R11 0
     BEQ uv_invalid
+
 uv_next:
     ADD R7 R7 1
     B uv_loop
@@ -868,6 +877,7 @@ handle_irq:
     B trap_restore
 
 handle_timer_irq:
+
     ; Acknowledge IRQ 0 (Timer) in PIC MMIO
     LI R2 0x00102000
     LI R3 0
@@ -877,12 +887,6 @@ handle_timer_irq:
     B schedule_and_switch
 
 handle_uart_irq:
-    ; Read received character from UART DATA register
-    ;LI R2 0x00100000
-    ;LDW R3 [R2 + 0]             ; R3 = character read from UART_DATA
-
-    ; Write/Echo it back to UART DATA register
-   ; STW R3 [R2 + 0]             ; Echo character to host stdout
 
     ;only Acknowledge IRQ 1 (UART RX) in PIC MMIO data flows through rx buffer
     LI R2 0x00102000
@@ -930,22 +934,15 @@ trap_restore:               ; this does a resume of task restores state frame
     SRET
 
 
-
 ; ================================================================
 ; TASK SCHEDULER (compatible with current KR32 assembler)
 ; ================================================================
 
-; ------------------------------------------------
-; Task structure offsets
-; ------------------------------------------------
-.EQU TASK_KSP,     0          ; saved kernel trapframe stack pointer
-.EQU TASK_USP,     4          ; last saved interrupted task stack pointer
-.EQU TASK_PC,      8          ; debug/metadata: entry or last known PC
-.EQU TASK_ACTIVE, 12
-.EQU TASK_PID,    16
-.EQU TASK_PTBR,   20         ; physical base of this task's page table
-.EQU TASK_FD_TABLE, 24       ; pointer to task file descriptor table
-.EQU TASK_SIZE,   28
+
+;=================================================================
+; Trapframe layout on kernel stack (matching trap_entry push order)
+;=================================================================
+
 
 .EQU TF_STVAL,     0          ; trapframe privileged state saved by trap_entry
 .EQU TF_SCAUSE,    4
@@ -968,6 +965,10 @@ trap_restore:               ; this does a resume of task restores state frame
 .EQU TF_R2,       72
 .EQU TF_R1,       76
 
+;=============================================================
+; System Call Numbers
+;=============================================================
+
 .EQU SYS_YIELD,    0
 .EQU SYS_EXIT,     1
 .EQU SYS_GETPID,   2
@@ -976,9 +977,35 @@ trap_restore:               ; this does a resume of task restores state frame
 .EQU SYS_READ,     5
 .EQU SYS_COUNT,    6
 
-; ------------------------------------------------
+;=============================================================
+; Task States
+;=============================================================
+
+.EQU TASK_DEAD,        0    ; not runnable, can be recycled for new task
+.EQU TASK_READY,       1    ; ready to run
+.EQU TASK_RUNNING,     2    ; currently running
+.EQU TASK_BLOCKED_IO,  3    ; blocked on I/O operation
+.EQU TASK_SLEEPING,    4    ; sleeping/waiting
+.EQU TASK_ZOMBIE,      5    ; terminated but not yet reaped
+
+; =============================================================
+; Task structure offsets
+; =============================================================
+
+.EQU TASK_KSP,     0          ; saved kernel trapframe stack pointer
+.EQU TASK_USP,     4          ; last saved interrupted task stack pointer
+.EQU TASK_PC,      8          ; debug/metadata: entry or last known PC
+.EQU TASK_STATE,  12          ; TASK_READY, TASK_RUNNING, etc.
+.EQU TASK_PID,    16          ; task ID for debugging/metadata
+.EQU TASK_PTBR,   20          ; physical base of this task's page table
+.EQU TASK_FD_TABLE, 24        ; pointer to task file descriptor table
+.EQU TASK_SIZE,   28
+
+
+; =============================================================
 ; Task table
-; ------------------------------------------------
+; =============================================================
+
 .ORG 0x7000
 
 tasks:
@@ -986,6 +1013,10 @@ tasks:
 
 CURRENT_TASK:
     .WORD 0
+
+;==============================================================
+; File descriptor table and device objects
+;==============================================================
 
 fd_table:
     .WORD con_dev
@@ -995,17 +1026,18 @@ fd_table:
     .WORD con_dev
     .WORD FD_FLAG_WRITE
 
+;==============================================================
+; Device con objects
+;==============================================================
+
 con_dev:
     .WORD con_rd
     .WORD con_wr
 
-con_input:
-    .WORD 0x41544144      ; "DATA"
-    .WORD 0x0A000000      ; "\n"
-
-; ------------------------------------------------
+;==============================================================
 ; Stack tops
-; ------------------------------------------------
+;==============================================================
+
 .EQU TASK0_KSTACK_TOP, 0x4000
 .EQU TASK1_KSTACK_TOP, 0x4200
 .EQU TASK2_KSTACK_TOP, 0x4400
@@ -1017,12 +1049,14 @@ con_input:
 ; ================================================================
 ; INIT SCHEDULER
 ; ================================================================
+
 init_scheduler:
     MOV R12 SP ;important we save kernel sp becuse we form stack frame at tasks SPs
 
     ; ------------------------------------------------
     ; Task 0
     ; ------------------------------------------------
+
     LI SP TASK0_KSTACK_TOP
     ; Build the initial trapframe on the task's kernel stack. It has
     ; the same shape as an IRQ-created trapframe, so first dispatch and
@@ -1065,7 +1099,7 @@ init_scheduler:
     STW R1 [R2 + TASK_PC]   ;start PC of the task
 
     LI R1 1
-    STW R1 [R2 + TASK_ACTIVE] ;set this task as as active
+    STW R1 [R2 + TASK_STATE] ;set this task as as ready to run
 
     LI R1 0
     STW R1 [R2 + TASK_PID]   ;set PID=0 for this task
@@ -1078,6 +1112,7 @@ init_scheduler:
     ; ------------------------------------------------
     ; Task 1 - do the same
     ; ------------------------------------------------
+
     LI SP TASK1_KSTACK_TOP
     LI R1 0
     PUSH R1                  ; R1
@@ -1119,7 +1154,7 @@ init_scheduler:
     STW R1 [R2 + TASK_PC]
 
     LI R1 1
-    STW R1 [R2 + TASK_ACTIVE]
+    STW R1 [R2 + TASK_STATE]
 
     LI R1 1
     STW R1 [R2 + TASK_PID]
@@ -1132,6 +1167,7 @@ init_scheduler:
     ; ------------------------------------------------
     ; Task 2 - same
     ; ------------------------------------------------
+
     LI SP TASK2_KSTACK_TOP
     LI R1 0
     PUSH R1                  ; R1
@@ -1175,7 +1211,7 @@ init_scheduler:
     STW R1 [R2 + TASK_PC]
 
     LI R1 1
-    STW R1 [R2 + TASK_ACTIVE]
+    STW R1 [R2 + TASK_STATE]
 
     LI R1 2
     STW R1 [R2 + TASK_PID]
@@ -1188,6 +1224,7 @@ init_scheduler:
     ; ------------------------------------------------
     ; CURRENT_TASK = 0 - init 0 task to shedule first
     ; ------------------------------------------------
+
     LI R1 CURRENT_TASK
     LI R2 0
     STW R2 [R1]
@@ -1198,6 +1235,7 @@ init_scheduler:
 ; ================================================================
 ; SCHEDULE + SWITCH
 ; ================================================================
+
 schedule_and_switch:
 
     ; ------------------------------------------------
@@ -1228,18 +1266,18 @@ check_task:
     ADD R5 R5 R6               ; R5 = &tasks[R3]
 
     ; ------------------------------------------------
-    ; Check ACTIVE
+    ; Check READY state of this task
     ; ------------------------------------------------
 
-    LDW R7 [R5 + TASK_ACTIVE]
+    LDW R7 [R5 + TASK_STATE]
 
     CMP R7 1
     BEQ do_switch
-    ; if not active go to next task in list
+    ; if not ready go to next task in list
     ADD R3 R3 1
     B wrap_check
 
-; R3 next task is active - switch to it
+; R3 next task is ready - switch to it
 ; R2 current task
 ; R3 next (+1) typically
 ; R1 - points to CURRENT_TASK variable (mem)
@@ -1272,6 +1310,7 @@ do_switch:
     ; SP points to the old task's kernel trapframe. The original
     ; interrupted task SP is an explicit trapframe slot, so keep a copy
     ; in the task table for debugging and future user/kernel separation.
+
     LDW R7 [SP + TF_USP]
     STW R7 [R5 + TASK_USP]
 
@@ -1282,6 +1321,7 @@ do_switch:
     ; Compute new task address
     ; ------------------------------------------------
     ; now work with next task R3 - its index (+1) typic
+
     LI R4 TASK_SIZE
     MUL R5 R3 R4
 
@@ -1291,6 +1331,7 @@ do_switch:
     ; ------------------------------------------------
     ; Restore new task trap frame SP
     ; ------------------------------------------------
+
     LDW R7 [R5 + TASK_PTBR]
     SETPTBR R7              ; switch address space; VM flushes non-global TLB entries
 
@@ -1307,6 +1348,7 @@ do_switch:
 ; ================================================================
 ; TASKS
 ; ================================================================
+
 .ORG 0x8000
 
 ; --TASK 0 ----------------------------------------------
@@ -1348,6 +1390,7 @@ TASK_A_START:
     SVC SYS_EXIT
 
 ; ---TASK 2---------------------------------------------
+
 .org 0x1a000
 TASK_B_START:
 
