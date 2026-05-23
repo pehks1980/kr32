@@ -1478,7 +1478,7 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    DEBUG 1 
+    ;DEBUG 1 
     B idle_loop
 
 ; --TASK 1----------------------------------------------
@@ -1503,7 +1503,7 @@ TASK_A_START:
     LI R2 USER_WRITE_BUF
     LI R3 14
     SVC SYS_WRITE
-    DEBUG 2
+    ;DEBUG 2
     ; Exit after the write test.
     LI R1 SYS_EXIT
     SVC SYS_EXIT
@@ -1512,32 +1512,53 @@ TASK_A_START:
 
 .org 0x1a000
 TASK_B_START:
+    LI R1 USER_WRITE_BUF
+    LI R2 0x6C206548         ; "H ll"
+    STW R2 [R1]
+    LI R2 0x57202C6F         ; "o, W"
+    STW R2 [R1 + 4]
+    LI R2 0x646C726F         ; "orld"
+    STW R2 [R1 + 8]
+    LI R2 0x21
+    STB R2 [R1 + 12]
+    LI R2 0x0A
+    STB R2 [R1 + 13]
 
+    li R1 10
 read_write_loop:
+    push R1
     ; Perform a read from stdin into a user buffer.
     ;TRACE 1
-    LI R1 0
+    ;LI R1 0
     ;DEBUG 2
     LI R2 USER_READ_BUF
     LI R3 CONSOLE_INPUT_LEN
-    SVC SYS_READ
-    DEBUG 2
-
-    CMP R1 0
-    BEQ task_b_done
+    ;SVC SYS_READ
+    ;DEBUG 2
+    
+    ;CMP R1 0
+    ;BEQ task_b_done
 
     ; Echo the data back via SYS_WRITE.
-    MOV R5 R1              ; save length returned by SYS_READ
-    LI R1 1                ; stdout file descriptor
-    LI R2 USER_READ_BUF
-    MOV R3 R5
+;;    MOV R5 R1              ; save length returned by SYS_READ
+     LI R1 1                ; stdout file descriptor
+    ;LI R2 USER_READ_BUF
+    ;MOV R3 R5
+    ;SVC SYS_WRITE
+
+    LI R2 USER_WRITE_BUF
+    LI R3 14
     SVC SYS_WRITE
-    DEBUG 2
 
-    B read_write_loop
 
+    DEBUG 1
+    pop R1
+    sub R1 R1 1
+    cmp r1 0
+    BNE read_write_loop
+    ;TRACE 0
 task_b_done:
     ; Exit after the read/write test.
-    DEBUG 2
+    DEBUG 1
     LI R1 SYS_EXIT
     SVC SYS_EXIT
