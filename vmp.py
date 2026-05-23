@@ -185,6 +185,9 @@ class CPU:
         if idx == self.ZERO_REG:
             return 0
         return self.reg[idx]
+    # -----------------------------------------------------
+    # SAFE REGISTER WRITE (enforces ZERO_REG immutability and updates SP/FP aliases)
+    # -----------------------------------------------------
 
     def setr(self, i, v):
         idx = i & 0x1F
@@ -195,6 +198,9 @@ class CPU:
             self.sp = self.reg[idx]
         elif idx == self.FP_REG:
             self.fp = self.reg[idx]
+    # -----------------------------------------------------
+    # ALU HELPER FUNCTIONS
+    # -----------------------------------------------------
 
     def get_sp(self):
         return self.r(self.SP_REG)
@@ -205,7 +211,10 @@ class CPU:
 
     def imm16(self, hi, lo):
         return ((hi & 0xFF) << 8) | (lo & 0xFF)
-
+    # -----------------------------------------------------
+    # alu_rhs: Helper to decode the flexible 3rd operand in ALU instructions, 
+    # which can be either an immediate (if bit 7 is set) or a register value.
+    # -----------------------------------------------------
     def alu_rhs(self, c):
         if c & 0x80:
             return c & 0x7F
@@ -220,6 +229,10 @@ class CPU:
         mask = (1 << bits) - 1
         v &= mask
         return (v ^ sign) - sign
+    # -----------------------------------------------------
+    # set_cmp_flags: Helper to compute and set the condition flags (Z, N, C, V) 
+    # based on a subtraction of two 32-bit values.
+    # -----------------------------------------------------
 
     def set_cmp_flags(self, lhs, rhs):
         lhs &= 0xFFFFFFFF
@@ -248,6 +261,10 @@ class CPU:
         self.N = bool(flags & SFLAGS_N)
         self.C = bool(flags & SFLAGS_C)
         self.V = bool(flags & SFLAGS_V)
+    # -----------------------------------------------------
+    # csr_name - Helper to get human-readable names for CSRs (Control and Status Registers) used in trap handling.
+    # csr_read and csr_write: Accessors for control and status registers (CSRs) used in trap handling.
+    #------------------------------------------------------
 
     def csr_name(self, csr):
         return CSR_NAMES.get(csr, f"csr{csr}")
@@ -356,6 +373,10 @@ class CPU:
                 self.stop_info = {"index": index, "watch": watch, "current": current}
                 return True
         return False
+    # -----------------------------------------------------
+    # div_trunc: Helper for integer division that truncates towards zero, consistent with C semantics.
+    # This is used for the DIV and DIVU instructions to ensure correct behavior with negative operands.
+    # -----------------------------------------------------
 
     def div_trunc(self, lhs, rhs):
         if rhs == 0:
@@ -375,6 +396,10 @@ class CPU:
         if idx == self.LR_REG:
             return "LR"
         return f"R{idx}"
+    # -----------------------------------------------------
+    # disasm: Helper to convert a raw instruction (given by opcode and operands) into a human-readable assembly string.
+    # This is used for debugging and trace output to show the executed instructions in a more understandable form.
+    # -----------------------------------------------------
 
     def disasm(self, op, a, b, c, ext=None):
         target = ext if ext is not None else (a << 8) | b
@@ -441,6 +466,13 @@ class CPU:
 
             0xFF: "HLT",
         }.get(op)
+        #-----------------------------------------------------------------------
+        # op is the main opcode that determines the instruction type, while a, b, c 
+        # are the operand fields that can represent registers, immediates, or offsets 
+        # depending on the instruction format. 
+        # The ext field is used for instructions that require a larger immediate value (like LI) 
+        # and is passed in from the fetch-decode stage when needed.
+        # ------------------------------------------------------------------------
 
         if op == 0x00:
             return "NOP"
@@ -515,7 +547,16 @@ class CPU:
         
         if op == 0xFF:
             return "HLT"
+        #-------------------------------------------------------------
+        # If the opcode is not recognized, return a default string indicating it's unknown, 
+        # which can help with debugging or when encountering invalid instructions.
+        #-------------------------------------------------------------
         return f"UNKNOWN 0x{op:02X}"
+    # -----------------------------------------------------
+    # trace_changes: Helper to generate a human-readable summary of all the changes to registers, 
+    # flags, and memory that occurred during the execution of an instruction.
+    # This is used for detailed trace output to understand the effects of each instruction on the CPU state.
+    # -----------------------------------------------------
 
     def trace_changes(
         self,
@@ -621,6 +662,14 @@ class CPU:
             if old == new:
                 return f"{self.reg_name(idx)}:0x{old:08X} unchanged"
             return f"{self.reg_name(idx)}:0x{old:08X}->0x{new:08X}"
+        #-----------------------------------------------------------
+        # op is the opcode that determines the instruction type, while a, b, c are the operand fields.
+        # rd is the destination register index extracted from a, and regfmt(b) gives the source register value for b.
+        # dstfmt(a) formats the destination register a by showing its old and new values,
+        # while regfmt(b) and regfmt(c) format the source registers b and c similarly.
+        # For memory instructions, it calculates the effective address and shows the old and new values of
+        # the destination register or the memory location being accessed, along with the source register values and offsets.
+        #-----------------------------------------------------------       
 
         if op == 0x01:
             if a & 0x80:
@@ -698,6 +747,12 @@ class CPU:
     def check_physical_mem(self, paddr, size):
         if paddr < 0 or paddr + size > len(self.physical_memory):
             raise Exception(f"PHYS MEM OOB paddr=0x{paddr:08X} size={size}")
+    #-----------------------------------------------------
+    # translate: Helper to convert a virtual address to a physical address using the MMU, 
+    # while handling page faults by raising traps.
+    # This is used for all memory accesses that go through the MMU to ensure correct address
+    # translation and trap handling for faults.
+    #-----------------------------------------------------
 
     def translate(self, vaddr, access):
         try:
@@ -707,12 +762,26 @@ class CPU:
             raise TrapDelivery()
         self.check_physical_mem(paddr, 1)
         return paddr
+    #-----------------------------------------------------
+    # require_supervisor: Helper to enforce that certain privileged instructions can only be executed in supervisor mode,
+    # and to raise a trap if they are attempted in user mode.
+    # This is used for instructions that should not be allowed in user mode, such as those
+    # that manipulate the IDT or control registers, to ensure proper privilege separation and trap handling.
+    #-----------------------------------------------------
 
     def require_supervisor(self, opname):
         """Reject privileged instructions while the CPU is in user mode."""
         if self.mode == MODE_USER:
             self.raise_trap(TRAP_ILLEGAL_MEM, 0)
             raise TrapDelivery()
+    #-----------------------------------------------------  
+    # raise_trap: Core helper to deliver a synchronous trap/exception to the guest kernel, 
+    # saving all necessary context and state for the trap handler.
+    # This is called whenever a fault occurs (e.g., divide-by-zero, 
+    # page fault, illegal instruction) to transfer control to the appropriate 
+    # trap handler in the guest kernel, while preserving the state of the interrupted thread 
+    # and ensuring correct trap delivery semantics.
+    #-----------------------------------------------------
 
     def raise_trap(self, vector, value=0, resume_pc=None):
         """
@@ -804,7 +873,13 @@ class CPU:
     def is_mmio(self, paddr):
         # MMIO resides in pages 0x00100000 (UART), 0x00101000 (Timer/PIT), 0x00102000 (PIC)
         return 0x00100000 <= paddr < 0x00103000
-
+    #-----------------------------------------------------
+    # mmio_read and mmio_write: Helpers to handle memory-mapped I/O accesses by dispatching 
+    # reads/writes to the appropriate device emulation based on the physical address.
+    # These are called for any memory access that falls within the MMIO address range, 
+    # allowing the emulator to simulate interactions with devices like the UART, timer, and PIC 
+    # by intercepting reads/writes to their designated MMIO addresses and invoking the corresponding device methods.
+    #-----------------------------------------------------
     def mmio_read(self, paddr):
         page = paddr & 0xFFFFF000
         offset = paddr & 0x00000FFF
@@ -825,6 +900,13 @@ class CPU:
             self.timer.write_reg(offset, val)
         elif page == 0x00102000:
             self.pic.write_reg(offset, val)
+    #-----------------------------------------------------
+    # physical_read_u8 and physical_write_u8: Helpers to perform byte-level reads/writes to physical memory,
+    # while checking for MMIO and ensuring memory safety.
+    # These are the core methods for accessing physical memory, 
+    # and they first check if the address falls within the MMIO range to dispatch 
+    # to device emulation, or if it's regular memory to perform the read/write while ensuring it does not go out of bounds.
+    #-----------------------------------------------------
 
     def physical_read_u8(self, paddr):
         if self.is_mmio(paddr):
@@ -907,6 +989,14 @@ class CPU:
         self.mem_write_u8_hlp(addr + 1, val >> 8)
         self.mem_write_u8_hlp(addr + 2, val >> 16)
         self.mem_write_u8_hlp(addr + 3, val >> 24)
+    #-----------------------------------------------------
+    # hexdump and physical_hexdump: Helpers to display memory contents in a human
+    # readable format, showing both hexadecimal byte values and their ASCII representation.
+    # These are used for debugging and inspection purposes, allowing the user to visualize 
+    # the contents of memory regions by showing the byte values in hex alongside their ASCII 
+    # equivalents, which can help identify strings or
+    # data structures in memory dumps.
+    #----------------------------------------------------- 
 
     def hexdump(self, addr, size, width=16):
         if size < 0:
@@ -950,7 +1040,13 @@ class CPU:
         self.physical_memory[0:len(data)] = data
         self.image_path = file
        
-
+    #-----------------------------------------------------
+    # reset: Helper to reset the CPU state to its initial conditions, with an option to 
+    # preserve debugging state such as breakpoints and watchpoints.
+    # This is used to restart the emulation from a clean state, while optionally 
+    # keeping the debugging context intact, which can be useful for iterative testing and 
+    # debugging without losing the configured breakpoints or watchpoints.
+    #-----------------------------------------------------
     def reset(self, preserve_debug=True):
         preserve_breakpoints = set(self.breakpoints) if preserve_debug else set()
         preserve_watchpoints = [watch.copy() for watch in self.watchpoints] if preserve_debug else []
@@ -1009,6 +1105,14 @@ class CPU:
         instr = self.mem_read_u32(self.pc, access="x")
         self.pc += 4
         return instr
+    #-----------------------------------------------------
+    # _execute_instruction: Core method to execute a single instruction cycle, 
+    # including fetching the instruction, decoding it, executing it, and handling 
+    # all side effects such as updating registers, flags, memory, and checking for interrupts or traps.
+    # This is the heart of the CPU emulation, where the instruction is processed 
+    # according to its opcode and operands, and all the logic for each instruction 
+    # type is implemented, along with the necessary checks for interrupts, traps, and device updates.
+    #-----------------------------------------------------
 
     def _execute_instruction(self, trace=False):
         instr_pc = self.pc
@@ -1064,6 +1168,9 @@ class CPU:
 
             if op == 0x00:
                 pass  # NOP
+            # =================================================
+            # ALU and MOV instructions
+            # ================================================= 
 
             elif op == 0x01:
                 if a & 0x80:
@@ -1181,6 +1288,21 @@ class CPU:
 
             elif op == 0x11:
                 self.setr(a, self.pop())
+            #-------------------------------------------------
+            # op is instructions like LOAD/STORE with register+offset addressing, 
+            # where the effective address is calculated as the value in the base register 
+            # plus an offset that can be either an immediate or another register.
+            # For LOAD instructions (0x20-0x22, 0x26-0x27), it reads from the calculated 
+            # memory address and stores the value in the destination register, 
+            
+            # while for STORE instructions (0x23-0x25), it writes the value from the 
+            # source register to the calculated memory address. The offset can be 
+            # a small immediate value (if the high bit of c is not set) or 
+            # the value of another register (if the high bit of c is set), 
+            # allowing for flexible addressing modes. 
+            # The disassembly output for these instructions includes the effective address calculation 
+            # and the source/destination register values, along with any offsets used in the address calculation.
+            #-------------------------------------------------
 
             elif op in (0x20, 0x21, 0x22, 0x26, 0x27):
                 rd = a
@@ -1226,6 +1348,12 @@ class CPU:
             elif op == 0x33:
                 self.reg[15] = self.pc
                 self.pc = self.reg[a]
+            #----------------------------------------
+            # op 0x40 is a special SYSCALL instruction that triggers a system call trap to the guest kernel,
+            # passing the syscall number in register a. This allows the guest code to request 
+            # services from the kernel, and the emulator raises a trap with the appropriate vector 
+            # and arguments for the kernel to handle the system call.
+            #----------------------------------------
 
             elif op == 0x40:
                 self.raise_trap(TRAP_SYSCALL, a, resume_pc=self.pc)
@@ -1305,6 +1433,18 @@ class CPU:
             elif op == 0x5B:
                 self.require_supervisor("CSRC")
                 self.csr_write(b, self.csr_read(b) & ~self.r(a))
+            #-------------------------------------------------------
+            # op 0x5C is a special SRET instruction that returns from 
+            # a trap handler back to the interrupted code,
+            # restoring the CPU state from the saved trap context. This includes 
+            # setting the program counter to the saved EPC, 
+            # restoring the mode (user/kernel) based on the SPP bit, 
+            # and restoring the interrupt enable state based on the SPIE bit.
+            #  
+            # This allows the guest kernel's trap handler to return control back 
+            # to the user code that was interrupted, while ensuring that the CPU state 
+            # is correctly restored to continue execution seamlessly.
+            #-------------------------------------------------------
 
             elif op == 0x5C:
                 self.require_supervisor("SRET")
@@ -1375,6 +1515,13 @@ class CPU:
                 print(syscall_message)
         finally:
             self.current_instr_pc = None
+    #-----------------------------------------------------
+    # step: Helper to execute a single instruction and return whether the CPU is still running,
+    # while also handling traps and checking watchpoints. 
+    # This is used for stepping through execution one instruction at a time, 
+    # allowing for fine-grained debugging and inspection of the CPU state after each instruction, 
+    # while also ensuring that any traps or watchpoints are properly handled to stop execution when necessary.
+    # -----------------------------------------------------           
 
     def step(self, trace=False):
         self.stop_reason = None
