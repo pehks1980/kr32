@@ -517,10 +517,17 @@ syscall_read:
     BNE bad_pointer
 
     PUSH R7
+
+    LI R4 0x00100000            ; UART MMIO Base Address
+    LDW R5 [R4 + 4]             ; read UART_STATUS register
+    AND R5 R5 1                 ; bit 0 = RX_READY
+    CMP R5 0
+    BEQ read_block_uart_rx      ; no data yet go and blockio process
+
     LI R1 KBUFFER_RD
     MOV R2 R6
     MOV R3 R9
-    BL device_read          ; read from device fake string console_input - like buffer and copy to kernel buffer  
+    BL device_read          ;
     POP R7
     CMP R1 0
     BEQ read_done
@@ -532,6 +539,28 @@ syscall_read:
     STW R1 [SP + TF_R1]
 
     B trap_restore
+
+read_block_uart_rx:
+    POP R7
+
+    LI R1 CURRENT_TASK
+    LDW R2 [R1]                ; R2 = current task index
+    LI R3 TASK_SIZE
+    MUL R4 R2 R3
+    LI R5 tasks
+    ADD R5 R5 R4              ; R5 = &tasks[current]
+
+    LI R6 TASK_BLOCKED_IO
+    STW R6 [R5 + TASK_STATE]
+    LI R6 WAIT_UART_RX
+    STW R6 [R5 + TASK_WAIT]
+
+    ; Restart the SYS_READ instruction when UART RX wakes this task.
+    LDW R6 [SP + TF_SEPC]
+    SUB R6 R6 4
+    STW R6 [SP + TF_SEPC]
+
+    B schedule_and_switch
 
 read_done:
     LI R1 0
@@ -651,12 +680,13 @@ device_write:
     JR R4                       ; execute it
 
 ;================================================================
-; read /dev/console - from MMIO UART, polling RX_READY until data arrives
+; read /dev/console - from MMIO UART, consuming currently available RX bytes
 ;================================================================
 
 con_rd:
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
     ; Reads up to R2 bytes from the UART into kernel buffer at R1.
+    ; Returns when the UART RX FIFO is empty, without spinning.
     ; Stops early when a newline '\n' (ASCII 10) is received.
     LI R4 0x00100000            ; UART MMIO Base Address
     LI R5 0                     ; index = 0 (bytes read so far)
@@ -669,7 +699,7 @@ dr_poll_ready:
     LDW R6 [R4 + 4]             ; read UART_STATUS register
     AND R6 R6 1                 ; bit 0 = RX_READY
     CMP R6 0
-    BEQ dr_poll_ready           ; spin-wait until a character arrives
+    BEQ dr_done                 ; no more buffered input available
 
     LDW R7 [R4 + 0]             ; pop character from UART_DATA (RX FIFO)
     STB R7 [R1 + R5]            ; store it into the kernel buffer
@@ -994,13 +1024,42 @@ handle_timer_irq:
 
 handle_uart_irq:
     ;================================================================
-    ;only Acknowledge IRQ 1 (UART RX) in PIC MMIO data flows through rx buffer
+    ; Acknowledge IRQ 1 (UART RX), then wake all tasks which blocked on UART RX.
     ;================================================================
 
     LI R2 0x00102000
     LI R3 1
     STW R3 [R2 + 8]             ; PIC_ACK = 1
 
+    LI R1 0                     ; task index
+
+uart_wake_loop:
+    CMP R1 3
+    BGE uart_wake_done
+
+    LI R2 TASK_SIZE
+    MUL R3 R1 R2
+    LI R4 tasks
+    ADD R4 R4 R3                ; R4 = &tasks[R1]
+
+    LDW R5 [R4 + TASK_STATE]
+    CMP R5 TASK_BLOCKED_IO
+    BNE uart_wake_next
+
+    LDW R5 [R4 + TASK_WAIT]
+    CMP R5 WAIT_UART_RX         ; which have reason WAIT_UART_RX & state TASK_BLOCKED_IO
+    BNE uart_wake_next
+
+    LI R5 TASK_READY            ; restore them
+    STW R5 [R4 + TASK_STATE]
+    LI R5 WAIT_NONE
+    STW R5 [R4 + TASK_WAIT]
+
+uart_wake_next:
+    ADD R1 R1 1
+    B uart_wake_loop
+
+uart_wake_done:
     ; Resume the interrupted task immediately
     B trap_restore
 
@@ -1102,6 +1161,13 @@ trap_restore:
 .EQU TASK_SLEEPING,    4    ; sleeping/waiting
 .EQU TASK_ZOMBIE,      5    ; terminated but not yet reaped
 
+;=============================================================
+; Task wait reasons
+;=============================================================
+
+.EQU WAIT_NONE,        0
+.EQU WAIT_UART_RX,     1
+
 ; =============================================================
 ; Task structure offsets
 ; =============================================================
@@ -1113,7 +1179,8 @@ trap_restore:
 .EQU TASK_PID,    16          ; task ID for debugging/metadata
 .EQU TASK_PTBR,   20          ; physical base of this task's page table
 .EQU TASK_FD_TABLE, 24        ; pointer to task file descriptor table
-.EQU TASK_SIZE,   28
+.EQU TASK_WAIT,   28          ; WAIT_* reason when task is blocked
+.EQU TASK_SIZE,   32
 
 
 ; =============================================================
@@ -1123,7 +1190,7 @@ trap_restore:
 .ORG 0x7000
 
 tasks:
-    .SPACE 84              ; 3 tasks * 28 bytes
+    .SPACE 96              ; 3 tasks * 32 bytes
 
 CURRENT_TASK:
     .WORD 0
@@ -1529,27 +1596,22 @@ read_write_loop:
     push R1
     ; Perform a read from stdin into a user buffer.
     ;TRACE 1
-    ;LI R1 0
+    LI R1 0
     ;DEBUG 2
     LI R2 USER_READ_BUF
     LI R3 CONSOLE_INPUT_LEN
-    ;SVC SYS_READ
+    SVC SYS_READ
     ;DEBUG 2
     
-    ;CMP R1 0
-    ;BEQ task_b_done
+    CMP R1 0
+    BEQ task_b_done
 
     ; Echo the data back via SYS_WRITE.
-;;    MOV R5 R1              ; save length returned by SYS_READ
-     LI R1 1                ; stdout file descriptor
-    ;LI R2 USER_READ_BUF
-    ;MOV R3 R5
-    ;SVC SYS_WRITE
-
-    LI R2 USER_WRITE_BUF
-    LI R3 14
+    MOV R5 R1              ; save length returned by SYS_READ
+    LI R1 1                ; stdout file descriptor
+    LI R2 USER_READ_BUF
+    MOV R3 R5
     SVC SYS_WRITE
-
 
     DEBUG 1
     pop R1
