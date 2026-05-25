@@ -7,19 +7,29 @@ class UARTDevice:
     Exposes a standard serial interface mapped to memory:
       - Offset 0 (UART_DATA): Read to pop RX byte, Write to transmit TX byte.
       - Offset 4 (UART_STATUS): Status bits (Bit 0 = RX Ready, Bit 1 = TX Ready).
-      - Offset 8 (UART_CTRL): Control bits (Bit 0 = RX Interrupt Enable).
+      - Offset 8 (UART_CTRL): Control bits (Bit 0 = RX Interrupt Enable, Bit 1 = TX Interrupt Enable).
     """
 
     def __init__(self):
         # FIFO buffer for received characters
         self.rx_fifo = []
-        # Control register: Bit 0 = RX Interrupt Enable
-        self.rx_int_enable = 0
+        self.tx_fifo = []
+        self.tx_output = []
+        self.tx_capacity = 4
+        self.tx_drain_period = 512
+        self.tx_drain_counter = 0
+        # Control register: Bit 0 = RX Interrupt Enable, Bit 1 = TX Interrupt Enable
+        self.rx_tx_int_enable = 0
+        self.tx_was_full = False
 
     def reset(self):
         """Reset the UART device state."""
         self.rx_fifo = []
-        self.rx_int_enable = 0
+        self.tx_fifo = []
+        self.tx_output = []
+        self.tx_drain_counter = 0
+        self.rx_tx_int_enable = 0
+        self.tx_was_full = False
 
     def read_reg(self, offset):
         """Read a register from the UART device based on byte offset."""
@@ -33,39 +43,39 @@ class UARTDevice:
         elif offset == 4:
             # UART_STATUS:
             # Bit 0 (1): RX Ready (FIFO has data)
-            # Bit 1 (2): TX Ready (always ready to transmit)
+            # Bit 1 (2): TX Ready (TX FIFO has space)
             status = 0
             if self.rx_fifo:
                 status |= 1  # RX ready
-            status |= 2      # TX is always ready in emulator
+            if len(self.tx_fifo) < self.tx_capacity:
+                status |= 2 #good to TX
+            else:
+                self.tx_was_full = True
             return status
         elif offset == 8:
             # UART_CTRL: Return the current interrupt control mask
-            return self.rx_int_enable & 0xFF
+            return self.rx_tx_int_enable & 0xFF
         return 0
 
     def write_reg(self, offset, val):
         """Write a register to the UART device based on byte offset."""
         if offset == 0:
-            # UART_DATA: Transmit a byte
+            # UART_DATA: Queue a byte for transmit if the TX FIFO has space.
             char_val = val & 0xFF
-            # Print to stdout/terminal screen
-            try:
-                sys.stdout.write(chr(char_val))
-                sys.stdout.flush()
-            except Exception:
-                pass
-            # For loopback / easy verification, we also append it to our FIFO if it was a loopback write.
-            # However, typically write is write-only. If the guest wants loopback, it handles it.
+            if len(self.tx_fifo) < self.tx_capacity:
+                self.tx_fifo.append(char_val)
+                if len(self.tx_fifo) >= self.tx_capacity:
+                    self.tx_was_full = True
         elif offset == 8:
-            # UART_CTRL: Update interrupt mask (Bit 0 enables RX interrupts)
-            self.rx_int_enable = val & 0xFF
+            # UART_CTRL: Update interrupt mask.
+            self.rx_tx_int_enable = val & 0xFF
 
     def update(self):
-        """Non-blockingly poll standard input (sys.stdin) for incoming data.
+        """Advance UART RX/TX state.
         
-        Returns True if a new character was added to the RX FIFO, triggering an IRQ condition.
+        Returns True if an enabled UART interrupt condition was raised.
         """
+        irq = False
         try:
             # Verify stdin is a TTY and has data available to avoid blocking
             if sys.stdin.isatty():
@@ -75,7 +85,26 @@ class UARTDevice:
                     char = sys.stdin.read(1)
                     if char:
                         self.rx_fifo.append(ord(char))
-                        return True
+                        if self.rx_tx_int_enable & 1:
+                            irq = True
         except Exception:
             pass
-        return False
+
+        if self.tx_fifo:
+            self.tx_drain_counter += 1
+            if self.tx_drain_counter >= self.tx_drain_period:
+                self.tx_drain_counter = 0
+                #after drain ctr we print one lettwe
+                char_val = self.tx_fifo.pop(0)
+                self.tx_output.append(char_val)
+                try:
+                    sys.stdout.write(chr(char_val))
+                    sys.stdout.flush()
+                except Exception:
+                    pass
+                if self.tx_was_full and len(self.tx_fifo) < self.tx_capacity:
+                    self.tx_was_full = False
+                    if self.rx_tx_int_enable & 2:
+                        irq = True
+
+        return irq

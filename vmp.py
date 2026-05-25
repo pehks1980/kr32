@@ -1129,10 +1129,9 @@ class CPU:
                 self.pic.raise_irq(0)
 
             if self.uart.update():
-                if self.uart.rx_int_enable & 1:
-                    if self.trace_output:
-                        print("[UART] RX interrupt raised")
-                    self.pic.raise_irq(1)
+                if self.trace_output:
+                    print("[UART] interrupt raised")
+                self.pic.raise_irq(1)
 
             if self.interrupt_enabled and not self.in_trap_handler:
                 irq = self.pic.next_irq()
