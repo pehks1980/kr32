@@ -396,8 +396,6 @@ handle_syscall:
     LDW R5 [R3 + R4]
     JR R5
 
-    ;; no return B trap_restore
-
 syscall_unknown:
 ;================================================================
 ; For unknown syscalls, return an error code (e.g., 0xFFFFFFFF) in R1 and restore.
@@ -445,8 +443,9 @@ syscall_exit:
     MUL R4 R2 R3
     LI R5 tasks
     ADD R5 R5 R4
-    LI R6 0                     ;0 to disable this task
+    LI R6 0                     ;0 to disable this task (dead)
     STW R6 [R5 + TASK_STATE]
+
     LI R1 0
     STW R1 [SP + TF_R1]         ; r1=0 - return success
     B schedule_and_switch
@@ -471,7 +470,7 @@ syscall_debug:
     ;================================================================
     ; Placeholder debug syscall: return the first user argument unchanged.
     ; This proves argument and return-value plumbing without nested traps.
-    ;=====  
+    ;================================================================
 
     LDW R1 [SP + TF_R1]
     STW R1 [SP + TF_R1]
@@ -568,6 +567,7 @@ read_unblock_uart_rx:            ;mark current task as unblocked
     STW R10 [R5 + TASK_STATE]
     LI R10 WAIT_NONE
     STW R10 [R5 + TASK_WAIT]
+
     B read_wait_uart_rx          ;go back and read bytes
 
 read_done:
@@ -609,6 +609,7 @@ write_loop:
     CMP R6 R2
     BLT write_chunk_small
     LI R2 KBUFFER_SIZE
+    
     B write_chunk
 
 write_chunk_small:
@@ -650,7 +651,7 @@ write_chunk:
 write_wait_uart_tx:
     LI R1 0x00100000
     LDW R2 [R1 + 4]
-    AND R2 R2 2
+    AND R2 R2 2                     ;check bit 1 - TX rdy
     CMP R2 0
     BEQ write_block_uart_tx
 

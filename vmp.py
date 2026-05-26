@@ -1122,22 +1122,22 @@ class CPU:
             #if self.pc in self.device_hooks:
             #    self.device_hooks[self.pc]()
             #    return
-
+            # upon devices irg (tr/fals) raise pics irq bit 0 -timer tick bit 1 -uart event (TX/RX)
             if self.timer.tick():
                 if self.trace_output:
-                    print("[TIMER] tick")
+                    print("[TIMER tick]")
                 self.pic.raise_irq(0)
 
             if self.uart.update():
                 if self.trace_output:
-                    print("[UART] interrupt raised")
+                    print("[UART RX/TX]")
                 self.pic.raise_irq(1)
-
+        # nesting/priority?
             if self.interrupt_enabled and not self.in_trap_handler:
                 irq = self.pic.next_irq()
                 if irq is not None:
                     if self.trace_output:
-                        print(f"[IRQ] pending={irq}")
+                        print(f"[IRQ {irq}] pending..")
                     self.raise_trap(TRAP_IRQ, irq)
 
             instr = self.fetch()

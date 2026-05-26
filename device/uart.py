@@ -41,14 +41,14 @@ class UARTDevice:
                 return val & 0xFF
             return 0
         elif offset == 4:
-            # UART_STATUS:
+            # UART_STATUS: (R/O)
             # Bit 0 (1): RX Ready (FIFO has data)
             # Bit 1 (2): TX Ready (TX FIFO has space)
             status = 0
-            if self.rx_fifo:
-                status |= 1  # RX ready
-            if len(self.tx_fifo) < self.tx_capacity:
-                status |= 2 #good to TX
+            if self.rx_fifo: #if atleast one byte in rx_queue
+                status |= 1  # set RX 1 ready
+            if len(self.tx_fifo) < self.tx_capacity: #if tx_fifo has a room limit is tx_capacity
+                status |= 2 # good to TX
             else:
                 self.tx_was_full = True
             return status
@@ -65,7 +65,10 @@ class UARTDevice:
             if len(self.tx_fifo) < self.tx_capacity:
                 self.tx_fifo.append(char_val)
                 if len(self.tx_fifo) >= self.tx_capacity:
-                    self.tx_was_full = True
+
+                    # set tx full if last possible byte is written to tx_fifo
+                    self.tx_was_full = True #tx_fifo is full!
+
         elif offset == 8:
             # UART_CTRL: Update interrupt mask.
             self.rx_tx_int_enable = val & 0xFF
@@ -74,6 +77,7 @@ class UARTDevice:
         """Advance UART RX/TX state.
         
         Returns True if an enabled UART interrupt condition was raised.
+        note runs by every machine cycle in vmp
         """
         irq = False
         try:
@@ -85,6 +89,7 @@ class UARTDevice:
                     char = sys.stdin.read(1)
                     if char:
                         self.rx_fifo.append(ord(char))
+                        #if uart not masked set fire irq
                         if self.rx_tx_int_enable & 1:
                             irq = True
         except Exception:
