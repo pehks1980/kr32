@@ -5,6 +5,16 @@
 ; Example: python3 tools/preprocess_cmacros.py kernelshed.asm > kernelshed_pre.asm
 ; ================================================================
 
+; KR32 CALLING CONVENTION:
+;   R0        = hardwired ZERO
+;   R1-R4     = argument registers (arg0..arg3)
+;   R1        = return value register
+;   R5-R11    = caller-saved temporaries
+;   R12       = callee-saved temporary (optional)
+;   R13       = SP (stack pointer)
+;   R14       = FP (frame pointer)
+;   R15       = LR (return link)
+
 .org 0x0000
 B KERNEL_START
 
@@ -1360,6 +1370,7 @@ init_scheduler:
     STW R1 [R2 + TASK_PTBR]
     LI R1 fd_table
     STW R1 [R2 + TASK_FD_TABLE]
+    ;also need TASK_RESUME etc
 
     ; ------------------------------------------------
     ; Task 1 - do the same
@@ -1572,7 +1583,7 @@ do_switch:
     MOV R7 SP
     STW R7 [R5 + TASK_KSP]
 
-    LI R7 RESUME_TRAP
+    LI R7 RESUME_TRAP               ;save it as it was stopped bu usual trap/irq not in kernel's syscall
     STW R7 [R5 + TASK_RESUME]
 
     ; ------------------------------------------------
@@ -1597,7 +1608,8 @@ do_switch:
 
     LDW R7 [R5 + TASK_RESUME]
     CMP R7 RESUME_KERNEL
-    BEQ restore_kernel_context
+    BEQ restore_kernel_context  ;select how to run new task - depending where it was stopped usual
+                                ; trap or in kernel inside a syscall
 
     B trap_restore
 
@@ -1623,7 +1635,7 @@ schedule_call:
     PUSH R15
 
     LI R1 CURRENT_TASK
-    LDW R2 [R1]                ; R2 = old task index
+    LDW R2 [R1]                ; R2 = old task index (taken from this var CURRENT_TASK)
 
     ADD R3 R2 1
 
@@ -1631,53 +1643,53 @@ schedule_call_wrap_check:
     CMP R3 3
     BLT schedule_call_check_task
     LI R3 0
-
+                                ; R3 idx of next task
 schedule_call_check_task:
     LI R4 TASK_SIZE
     MUL R5 R3 R4
     LI R6 tasks
-    ADD R5 R5 R6               ; R5 = &tasks[R3]
+    ADD R5 R5 R6               ; R5 = &tasks[R3] ptr on next task 
 
     LDW R7 [R5 + TASK_STATE]
-    CMP R7 TASK_READY
+    CMP R7 TASK_READY               ; check it can be run
     BEQ schedule_call_do_switch
 
     ADD R3 R3 1
     B schedule_call_wrap_check
 
 schedule_call_do_switch:
-    STW R3 [R1]
+    STW R3 [R1]                     ; make next current (upd CURRENT_TASK)
 
     LI R4 TASK_SIZE
     MUL R5 R2 R4
     LI R6 tasks
-    ADD R5 R5 R6               ; R5 = &tasks[old]
+    ADD R5 R5 R6               ; R5 = &tasks[old] (r2 old task idx)
 
     MOV R7 SP
-    STW R7 [R5 + TASK_KSP]
+    STW R7 [R5 + TASK_KSP]      ; tasks[old].TASK_KSP = SP (when in trap)
     LI R7 RESUME_KERNEL
-    STW R7 [R5 + TASK_RESUME]
+    STW R7 [R5 + TASK_RESUME]   ; tasks[old].TASK_RESUME = RESUME_KERNEL (task stopped in trap)
 
     LI R4 TASK_SIZE
     MUL R5 R3 R4
     LI R6 tasks
-    ADD R5 R5 R6               ; R5 = &tasks[new]
+    ADD R5 R5 R6               ; R5 = &tasks[new] (r3 new task idx)
 
-    LDW R7 [R5 + TASK_PTBR]
+    LDW R7 [R5 + TASK_PTBR]     ; load new task's page table
     SETPTBR R7
 
-    LDW SP [R5 + TASK_KSP]
-    LDW R7 [R5 + TASK_RESUME]
+    LDW SP [R5 + TASK_KSP]      ;restore new task KSP
+    LDW R7 [R5 + TASK_RESUME]   ;check if where new task was stopeed before
     CMP R7 RESUME_KERNEL
     BEQ restore_kernel_context
 
-    B trap_restore
+    B trap_restore              ; if new task was not stopped in kernel side - do usual via SRET
 
-restore_kernel_context:
-    DISABLEINT
-    POP R15
-    POP R14
-    POP R12
+restore_kernel_context:         ;in case new task was stopped in kernel jump to it via RET
+    DISABLEINT                  ; RET does jump by LR(R15)
+    POP R15                     ; LR=pc of next instuction of BL shedule_call in sys_read/write eg
+    POP R14                     ; (in kernel)
+    POP R12                     ; DI - to avoid int nesting
     POP R11
     POP R10
     POP R9
