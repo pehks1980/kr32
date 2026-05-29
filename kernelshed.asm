@@ -53,13 +53,23 @@ B KERNEL_START
 .EQU USER_LIMIT,      0x000FFFFF
 
 .EQU KBUFFER_SIZE,   256
-.EQU FD_ENTRY_DEVICE, 0
-.EQU FD_ENTRY_FLAGS,  4
-.EQU FD_ENTRY_SIZE,   8
 .EQU FD_FLAG_READ,    1
 .EQU FD_FLAG_WRITE,   2
-.EQU DEV_OFF_READ,    0
-.EQU DEV_OFF_WRITE,   4
+
+.EQU FILE_OPS,      0
+.EQU FILE_PRIVATE,  4
+.EQU FILE_OFFSET,   8
+.EQU FILE_FLAGS,    12
+.EQU FILE_SIZE,     16
+
+.EQU FOPS_READ,     0
+.EQU FOPS_WRITE,    4
+.EQU FOPS_SIZE,     8
+
+.EQU UARTDEV_RX_QUEUE, 0
+.EQU UARTDEV_TX_QUEUE, 4
+.EQU UARTDEV_MMIO,     8
+.EQU UARTDEV_SIZE,     12
 
 .EQU STDIN_FD,       0
 .EQU STDOUT_FD,      1
@@ -71,8 +81,18 @@ B KERNEL_START
 ; KBUFFER
 .org 0x1000
 KBUFFER_WR:
+KBUFFER_WR_0:
         .SPACE 256              ; 256b
 KBUFFER_RD:
+KBUFFER_RD_0:
+        .SPACE 256              ; 256b
+KBUFFER_WR_1:
+        .SPACE 256              ; 256b
+KBUFFER_RD_1:
+        .SPACE 256              ; 256b
+KBUFFER_WR_2:
+        .SPACE 256              ; 256b
+KBUFFER_RD_2:
         .SPACE 256              ; 256b
 
 
@@ -447,14 +467,10 @@ syscall_exit:
     ; A later scheduler improvement should detect "no runnable tasks".
     ;================================================================
 
-    LI R1 CURRENT_TASK
-    LDW R2 [R1]
-    LI R3 TASK_SIZE
-    MUL R4 R2 R3
-    LI R5 tasks
-    ADD R5 R5 R4
-    LI R6 0                     ;0 to disable this task (dead)
-    STW R6 [R5 + TASK_STATE]
+    GET_CURR_TASK_IDX R2
+    GET_TASK_PTR R5, R2
+
+    TASK_SET_STATE R5, TASK_DEAD
 
     LI R1 0
     STW R1 [SP + TF_R1]         ; r1=0 - return success
@@ -465,13 +481,10 @@ syscall_getpid:
     ; Return the current task's PID. This proves that the task can read its own PID.
     ;================================================================
 
-    LI R1 CURRENT_TASK
-    LDW R2 [R1]
-    LI R3 TASK_SIZE
-    MUL R4 R2 R3
-    LI R5 tasks
-    ADD R5 R5 R4
-    LDW R1 [R5 + TASK_PID]        ; get pid from task scheduler data
+    GET_CURR_TASK_IDX R2
+    GET_TASK_PTR R5, R2
+    TASK_GET_PID R1, R5            ; get pid from task scheduler data
+    
     STW R1 [SP + TF_R1]           ; save it to its trapframe which goes back when it s next time this task resumes
                                   ; on resume r1 will have pid read after svc call
     B trap_restore
@@ -508,7 +521,28 @@ syscall_read:
     POP R7
     CMP R1 0
     BEQ bad_fd
-    MOV R9 R1               ; device object pointer /dev/console for example
+    MOV R9 R1               ; file object pointer
+    MOV R1 R9
+    MOV R2 R7
+    MOV R3 R6
+    BL file_read
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+con_read:
+    ;================================================================
+    ; R1 = file ptr
+    ; R2 = user buffer
+    ; R3 = length
+    ; this is specific con device read loop!
+    ;================================================================
+
+    PUSH LR
+    MOV R9 R1
+    MOV R7 R2
+    MOV R6 R3
+    LDW R9 [R9 + FILE_PRIVATE] ; console device pointer
     CMP R6 0
     BEQ read_done
 
@@ -523,46 +557,49 @@ syscall_read:
     POP R6
     POP R7
     CMP R1 1
-    BNE bad_pointer
+    BNE driver_bad_pointer
 
 read_wait_uart_rx:
-    LI R4 0x00100000            ; UART MMIO Base Address
+    LDW R4 [R9 + UARTDEV_MMIO]  ; UART MMIO Base Address
     LDW R5 [R4 + 4]             ; read UART_STATUS register
     AND R5 R5 1                 ; bit 0 = RX_READY
     CMP R5 0
     BEQ read_block_uart_rx      ; bit 0=0 no data yet in rx_queue, block this curr user task inside syscall
 
     PUSH R7
-    LI R1 KBUFFER_RD
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_RD R1, R5
     MOV R2 R6
     MOV R3 R9
     BL device_read          ;read data from rx_queue to KBUFFER_RD len=R2(<- R6) or if 0xd (enter sign)
+
     POP R7
+
     CMP R1 0
     BEQ read_done
 
     MOV R2 R1              ; actual bytes read
-    MOV R1 R7              ; user destination
-    MOV R4 KBUFFER_RD
-    BL copy_to_user        ; copy from kernel buffer to user buffer
-    STW R1 [SP + TF_R1]
 
-    B trap_restore
+    GET_CURR_TASK_IDX R5
+    GET_TASK_PTR R4, R5
+    TASK_GET_KBUF_RD R4, R4
+
+    MOV R1 R7              ; user destination
+    BL copy_to_user        ; copy from kernel buffer to user buffer
+
+    POP LR
+    RET
 
 read_block_uart_rx:
-    LI R1 CURRENT_TASK
-    LDW R2 [R1]                ; R2 = current task index
-    LI R3 TASK_SIZE
-    MUL R4 R2 R3
-    LI R5 tasks
-    ADD R5 R5 R4              ; R5 = &tasks[current]
+    GET_CURR_TASK_IDX R2       ; R2 = current task index
+    GET_TASK_PTR R5, R2        ; R5 = &tasks[current]
 
-    LI R10 TASK_BLOCKED_IO      ; curr task state set blockedio, reason wait_rx
-    STW R10 [R5 + TASK_STATE]
-    LI R10 WAIT_UART_RX
-    STW R10 [R5 + TASK_WAIT]
+    TASK_SET_STATE R5, TASK_BLOCKED_IO
+    TASK_SET_WAIT R5, WAIT_UART_RX
 
-    LI R4 0x00100000
+    LDW R4 [R9 + UARTDEV_MMIO]
     LDW R10 [R4 + 4]             ; re-check uart reg RX-ready bit 0 after marking blocked
     AND R10 R10 1
     CMP R10 0
@@ -573,22 +610,19 @@ read_block_uart_rx:
     B read_wait_uart_rx          ;repeat read uart loop
 
 read_unblock_uart_rx:            ;mark current task as unblocked
-    LI R10 TASK_READY
-    STW R10 [R5 + TASK_STATE]
-    LI R10 WAIT_NONE
-    STW R10 [R5 + TASK_WAIT]
+    TASK_SET_STATE R5, TASK_READY
+    TASK_SET_WAIT R5, WAIT_NONE
 
     B read_wait_uart_rx          ;go back and read bytes
 
 read_done:
     LI R1 0
-    STW R1 [SP + TF_R1]
-
-    B trap_restore
+    POP LR
+    RET
 
 syscall_write:
     ;================================================================
-    ; R1 = fd
+    ; R1 = fd 0-1-2
     ; R2 = user buffer
     ; R3 = length
     ;================================================================
@@ -596,27 +630,47 @@ syscall_write:
     LDW R1 [SP + TF_R1]
     LDW R2 [SP + TF_R2]
     LDW R3 [SP + TF_R3]
-
+; first fetch file from procs fd_table and check flags for match access WRITE /READ
     MOV R7 R2               ; save user buffer
     MOV R6 R3               ; save length
     PUSH R7
     PUSH R6
     LI R2 FD_FLAG_WRITE     ; pass flags in R2 per fetch_fd_entry convention
-    BL fetch_fd_entry
+    BL fetch_fd_entry       ;input R1 fd on exit R1 - file ptr  => r1=fetch_fd_entry(fd=r1)
     POP R6
     POP R7
     CMP R1 0
-    BEQ bad_fd
-    MOV R9 R1               ; device object pointer
-    ; R7 and R6 already contain user buffer and length
-    LI R8 0                ; total written
+    BEQ bad_fd              ;if flags file and in r2 dont match 
+    MOV R9 R1               ; file object pointer
+    MOV R1 R9
+    MOV R2 R7
+    MOV R3 R6
+    BL file_write           ; call file write R1 = file ptr, R2 = user buffer, R3 = len
+    STW R1 [SP + TF_R1]
 
+    B trap_restore
+
+con_write:
+    ;================================================================
+    ; R1 = file struc ptr
+    ; R2 = user buffer
+    ; R3 = length
+    ; this is specific con device write loop!
+    ;================================================================
+
+    PUSH LR
+    MOV R9 R1
+    MOV R7 R2
+    MOV R6 R3
+    LDW R9 [R9 + FILE_PRIVATE] ; console device pointer
+    LI R8 0                    ; total bytes written
+                               ;also R6-len R7-user buf ptr R9-file struc ptr
 write_loop:
     CMP R6 0
-    BEQ write_done
+    BEQ write_done             ;0 bytes
 
     LI R2 KBUFFER_SIZE
-    CMP R6 R2
+    CMP R6 R2                  ;here we write in chunks to dev, last one is small chunk (less then Kbuffer_size)
     BLT write_chunk_small
     LI R2 KBUFFER_SIZE
     
@@ -635,21 +689,28 @@ write_chunk:
     PUSH R7
     PUSH R6
     PUSH R9
+    PUSH R8
     MOV R1 R7
     MOV R2 R2
     LI R3 0                ; read access for source buffer
-    BL user_buffer_valid_range
+    BL user_buffer_valid_range ;Validate user buffer and length for this chunk
+    POP R8
     POP R9
     POP R6
     POP R7
     CMP R1 1
-    BNE bad_pointer
+    BNE driver_bad_pointer
 
     PUSH R7
     PUSH R6
+    ;=================================================
+    ; access curr task fields to get task kbuffer_wr (to avoid nasty shared buffer things)
+    ;=================================================
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R4, R5
     MOV R1 R7
-    MOV R4 KBUFFER_WR
-    BL copy_from_user
+    BL copy_from_user      ; copy chunk to tasks kbuffer_wr
     MOV R10 R1             ; bytes copied
     POP R6
     POP R7
@@ -658,63 +719,75 @@ write_chunk:
     PUSH R9
     PUSH R6
 
+; now actual send to uart chunk from  kbuffer_wr to device
 write_wait_uart_tx:
-    LI R1 0x00100000
+    LDW R1 [R9 + UARTDEV_MMIO]
     LDW R2 [R1 + 4]
-    AND R2 R2 2                     ;check bit 1 - TX rdy
+    AND R2 R2 2                     ;check bit 1 - UART_TX rdy
     CMP R2 0
-    BEQ write_block_uart_tx
+    BEQ write_block_uart_tx         ;not rdy go and block this task
 
-    MOV R1 KBUFFER_WR
+; can TX to UART!
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R1, R5
     MOV R2 R10
     MOV R3 R9
+    ;============================================================================
+    ; get R1 - kbuff_wr ptr R2 = R10 amounts to be sent (shunk/small_chunk size)
+    ; R9 - ptr to Private (con_device)
+    ; r1 - outputs number of written bytes to device
+    ;-----------------------------------------------------------------------------
+
     BL device_write
     POP R6
     POP R9
     POP R7
 
-    CMP R1 0
+    CMP R1 0        ;nothing is written - go again
     BEQ write_loop
 
-    ADD R8 R8 R1
-    ADD R7 R7 R1
-    SUB R6 R6 R1
-    B write_loop
+    ADD R8 R8 R1     ;update ptrs
+    ADD R7 R7 R1     ;R7 pointer in user buffer R8-who knows?
+    SUB R6 R6 R1     ;decrease amounts for next chunk to send
+    B write_loop     ;chunk is sent go to next one
 
 write_block_uart_tx:
-    LI R1 CURRENT_TASK
-    LDW R2 [R1]                ; R2 = current task index
-    LI R3 TASK_SIZE
-    MUL R4 R2 R3
-    LI R5 tasks
-    ADD R5 R5 R4              ; R5 = &tasks[current]
+    GET_CURR_TASK_IDX R2       ; R2 = current task index
+    GET_TASK_PTR R5, R2        ; R5 = &tasks[current]
 
-    LI R1 TASK_BLOCKED_IO
-    STW R1 [R5 + TASK_STATE]
-    LI R1 WAIT_UART_TX
-    STW R1 [R5 + TASK_WAIT]
+    TASK_SET_STATE R5, TASK_BLOCKED_IO ;set this task to block
+    TASK_SET_WAIT R5, WAIT_UART_TX
 
-    LI R1 0x00100000
+    LDW R1 [R9 + UARTDEV_MMIO]
     LDW R2 [R1 + 4]             ; re-check after marking blocked
     AND R2 R2 2
     CMP R2 0
-    BNE write_unblock_uart_tx
+    BNE write_unblock_uart_tx   ; if suddenly TX ready - unblock it
+                                ; its like to check if we have zero bytes to send at the begining
+                                ; putting on frezze task costs time and effort so we dont need to do it if tx is rdy!!!
 
-    BL schedule_call
-    B write_wait_uart_tx
+    BL schedule_call            ; if task is blocked it sleeps here inside syscall line waiting for irq UART handler ublocks it
+                                ; (when TX rdy)
+                                ; also this call saves task in trapframe and jumps to schedule and switch other tasks
+    B write_wait_uart_tx        ; task awakes here - jumps send uart again!!
 
 write_unblock_uart_tx:
-    LI R1 TASK_READY
-    STW R1 [R5 + TASK_STATE]
-    LI R1 WAIT_NONE
-    STW R1 [R5 + TASK_WAIT]
+    TASK_SET_STATE R5, TASK_READY
+    TASK_SET_WAIT R5, WAIT_NONE
+
     B write_wait_uart_tx
 
 write_done:
     MOV R1 R8
-    STW R1 [SP + TF_R1]
+    POP LR
+    RET
 
-    B trap_restore
+driver_bad_pointer:
+    LI R1 0xFFFF
+    POP LR
+    RET
 
 bad_fd:
     LI R1 0xFFFF
@@ -728,32 +801,48 @@ bad_pointer:
 
     B trap_restore
 
-device_read:
+file_read:
     ;================================================================
-    ; R1 = kernel buffer, R2 = len, R3 = device object pointer
+    ; R1 = file ptr, R2 = user buffer, R3 = len
     ;================================================================
 
-    LDW R4 [R3 + DEV_OFF_READ]  ; get device read function pointer
+    LDW R4 [R1 + FILE_OPS]
+    LDW R4 [R4 + FOPS_READ]     ; get read function xdev_read from ops
     JR R4                       ; execute it
+
+file_write:
+    ;================================================================
+    ; R1 = file ptr, R2 = user buffer, R3 = len
+    ;================================================================
+
+    LDW R4 [R1 + FILE_OPS]
+    LDW R4 [R4 + FOPS_WRITE]    ; get write function xdev_write from ops
+    JR R4                       ; execute it
+
+device_read:
+    ;================================================================
+    ; R1 = kernel buffer, R2 = len, R3 = uart device pointer
+    ;================================================================
+
+    B uart_read_kernel
 
 device_write:
     ;================================================================
-    ; R1 = kernel buffer, R2 = len, R3 = device object pointer
+    ; R1 = kernel buffer, R2 = len, R3 = uart device pointer
     ;================================================================
 
-    LDW R4 [R3 + DEV_OFF_WRITE] ; get device write function pointer
-    JR R4                       ; execute it
+    B uart_write_kernel
 
 ;================================================================
 ; read /dev/console - from MMIO UART, consuming currently available RX bytes
 ;================================================================
 
-con_rd:
+uart_read_kernel:
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
     ; Reads up to R2 bytes from the UART into kernel buffer at R1.
     ; Returns when the UART RX FIFO is empty, without spinning.
     ; Stops early when a newline '\n' (ASCII 10) is received.
-    LI R4 0x00100000            ; UART MMIO Base Address
+    LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
     LI R5 0                     ; index = 0 (bytes read so far)
 
 dr_loop:
@@ -784,7 +873,7 @@ dr_done:
 ; write /dev/con - to MMIO UART, polling TX_READY before each byte
 ;================================================================
 
-con_wr:
+uart_write_kernel:
     ;================================================================
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
     ; Transmits R2 bytes from kernel buffer at R1 through the UART.
@@ -792,7 +881,7 @@ con_wr:
     ; This is a simple synchronous write that blocks until all bytes are sent.
     ;================================================================
 
-    LI R4 0x00100000            ; UART MMIO Base Address
+    LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
     LI R5 0                     ; index = 0 (bytes written so far)
 
 dcw_loop:
@@ -829,23 +918,20 @@ fetch_fd_entry:
     CMP R1 3
     BGE fd_invalid
 
-    LI R4 CURRENT_TASK
-    LDW R4 [R4]
-    LI R5 TASK_SIZE
-    MUL R4 R4 R5
-    LI R5 tasks
-    ADD R4 R4 R5
-    LDW R4 [R4 + TASK_FD_TABLE]
+    MOV R8 R1                   ; preserve fd across task lookup macros
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R4, R4
+    TASK_GET_FD_TABLE R4, R4
 
-    SHL R5 R1 3
-    ADD R4 R4 R5
-    LDW R6 [R4 + FD_ENTRY_FLAGS]
+    SHL R5 R8 2                 
+    ADD R4 R4 R5                ;r4=fd*4+FD_TABLE = file entry according to fd
+    LDW R1 [R4]                 ; R1 = file ptr
+    LDW R6 [R1 + FILE_FLAGS]
     AND R6 R6 R2
-    CMP R6 R2
+    CMP R6 R2                   ;check file flags R2 input R6 from file 
     BNE fd_invalid
 
-    LDW R1 [R4 + FD_ENTRY_DEVICE]
-    RET
+    RET                         ;on exit R1 - has file ptr
 
 fd_invalid:
     LI R1 0
@@ -880,14 +966,11 @@ user_buffer_valid_range:
     BGT uv_invalid
     MOV R12 R5              ; save end address for page calculation
 
-    LI R6 CURRENT_TASK
-    LDW R6 [R6]
-    LI R7 TASK_SIZE
-    MUL R6 R6 R7
-    LI R7 tasks
-    ADD R6 R6 R7
-    LDW R6 [R6 + TASK_PTBR]
+    GET_CURR_TASK_IDX R6
+    GET_TASK_PTR R6, R6
+    TASK_GET_PTBR R6, R6
     LI R7 TASK0_PTBR
+
     CMP R6 R7
     BEQ uv_ptbr0
     LI R7 TASK1_PTBR
@@ -1102,26 +1185,22 @@ uart_wake_loop:
     CMP R1 3
     BGE uart_wake_done
 
-    LI R2 TASK_SIZE
-    MUL R3 R1 R2
-    LI R4 tasks
-    ADD R4 R4 R3                ; R4 = &tasks[R1]
+    GET_TASK_PTR R5, R1         ; R5 = &tasks[R1]
+    TASK_GET_STATE R4, R5
 
-    LDW R5 [R4 + TASK_STATE]
-    CMP R5 TASK_BLOCKED_IO
+    CMP R4 TASK_BLOCKED_IO
     BNE uart_wake_next
 
-    LDW R5 [R4 + TASK_WAIT]
-    CMP R5 WAIT_UART_RX
+    TASK_GET_WAIT R4, R5
+    CMP R4 WAIT_UART_RX
     BEQ uart_wake_task
-    CMP R5 WAIT_UART_TX
+
+    CMP R4 WAIT_UART_TX
     BNE uart_wake_next
 
 uart_wake_task:
-    LI R5 TASK_READY            ; restore them
-    STW R5 [R4 + TASK_STATE]
-    LI R5 WAIT_NONE
-    STW R5 [R4 + TASK_WAIT]
+    TASK_SET_STATE R5, TASK_READY
+    TASK_SET_WAIT R5, WAIT_NONE
 
 uart_wake_next:
     ADD R1 R1 1
@@ -1257,7 +1336,9 @@ trap_restore:
 .EQU TASK_FD_TABLE, 24        ; pointer to task file descriptor table
 .EQU TASK_WAIT,   28          ; WAIT_* reason when task is blocked
 .EQU TASK_RESUME, 32          ; RESUME_* mode for TASK_KSP
-.EQU TASK_SIZE,   36
+.EQU TASK_KBUF_WR_PTR, 36     ; pointer to this task's kernel write buffer
+.EQU TASK_KBUF_RD_PTR, 40     ; pointer to this task's kernel read buffer
+.EQU TASK_SIZE,   44
 
 
 ; =============================================================
@@ -1267,7 +1348,7 @@ trap_restore:
 .ORG 0x7000
 
 tasks:
-    .SPACE 108             ; 3 tasks * 36 bytes
+    .SPACE 132             ; 3 tasks * 44 bytes
 
 CURRENT_TASK:
     .WORD 0
@@ -1277,20 +1358,73 @@ CURRENT_TASK:
 ;==============================================================
 
 fd_table:
-    .WORD con_dev
+    .WORD file_stdin
+    .WORD file_stdout
+    .WORD file_stderr
+
+;==============================================================
+; File objects and console device
+;==============================================================
+
+file_stdin:
+    .WORD con_ops
+    .WORD con_device
+    .WORD 0
     .WORD FD_FLAG_READ
-    .WORD con_dev
-    .WORD FD_FLAG_WRITE
-    .WORD con_dev
+
+file_stdout:
+    .WORD con_ops
+    .WORD con_device
+    .WORD 0
     .WORD FD_FLAG_WRITE
 
-;==============================================================
-; Device con objects
-;==============================================================
+file_stderr:
+    .WORD con_ops
+    .WORD con_device
+    .WORD 0
+    .WORD FD_FLAG_WRITE
 
-con_dev:
-    .WORD con_rd
-    .WORD con_wr
+con_ops:
+    .WORD con_read
+    .WORD con_write
+
+uart_rx_queue:
+    .WORD 0
+
+uart_tx_queue:
+    .WORD 0
+
+con_device:
+    .WORD uart_rx_queue
+    .WORD uart_tx_queue
+    .WORD 0x00100000
+
+; just for info ref here actual .equ in the beginning
+; flags def
+;EQU FD_FLAG_READ,    1
+;EQU FD_FLAG_WRITE,   2
+
+; file
+;EQU FILE_OPS,      0
+;EQU FILE_PRIVATE,  4
+;EQU FILE_OFFSET,   8
+;EQU FILE_FLAGS,    12
+;EQU FILE_SIZE,     16
+
+; ops
+;EQU FOPS_READ,     0
+;EQU FOPS_WRITE,    4
+;EQU FOPS_SIZE,     8
+
+; private
+;EQU UARTDEV_RX_QUEUE, 0
+;EQU UARTDEV_TX_QUEUE, 4
+;EQU UARTDEV_MMIO,     8
+;EQU UARTDEV_SIZE,     12
+
+;EQU STDIN_FD,       0
+;EQU STDOUT_FD,      1
+;EQU STDERR_FD,      2
 
 ;==============================================================
 ; Stack tops
@@ -1370,7 +1504,10 @@ init_scheduler:
     STW R1 [R2 + TASK_PTBR]
     LI R1 fd_table
     STW R1 [R2 + TASK_FD_TABLE]
-    ;also need TASK_RESUME etc
+    TASK_SET_WAIT R2, WAIT_NONE
+    TASK_SET_RESUME R2, RESUME_TRAP
+    TASK_SET_KBUF_WR R2, KBUFFER_WR_0
+    TASK_SET_KBUF_RD R2, KBUFFER_RD_0
 
     ; ------------------------------------------------
     ; Task 1 - do the same
@@ -1426,6 +1563,10 @@ init_scheduler:
     STW R1 [R2 + TASK_PTBR]
     LI R1 fd_table
     STW R1 [R2 + TASK_FD_TABLE]
+    TASK_SET_WAIT R2, WAIT_NONE
+    TASK_SET_RESUME R2, RESUME_TRAP
+    TASK_SET_KBUF_WR R2, KBUFFER_WR_1
+    TASK_SET_KBUF_RD R2, KBUFFER_RD_1
 
     ; ------------------------------------------------
     ; Task 2 - same
@@ -1483,6 +1624,10 @@ init_scheduler:
     STW R1 [R2 + TASK_PTBR]
     LI R1 fd_table
     STW R1 [R2 + TASK_FD_TABLE]
+    TASK_SET_WAIT R2, WAIT_NONE
+    TASK_SET_RESUME R2, RESUME_TRAP
+    TASK_SET_KBUF_WR R2, KBUFFER_WR_2
+    TASK_SET_KBUF_RD R2, KBUFFER_RD_2
 
     ; ------------------------------------------------
     ; CURRENT_TASK = 0 - init 0 task to shedule first
@@ -1505,8 +1650,7 @@ schedule_and_switch:
     ; Load current task index
     ; ------------------------------------------------
 
-    LI R1 CURRENT_TASK
-    LDW R2 [R1]                ; R2 = old task index
+    GET_CURR_TASK_IDX R2       ; R2 = old task index
 
     ; ------------------------------------------------
     ; Find next task
@@ -1543,7 +1687,6 @@ check_task:
 ; R3 next task is ready - switch to it
 ; R2 current task
 ; R3 next (+1) typically
-; R1 - points to CURRENT_TASK variable (mem)
 
 ; ================================================================
 ; CONTEXT SWITCH
@@ -1558,17 +1701,15 @@ do_switch:
     ; this is used for debugging and also by user_buffer_valid_range 
     ; to find the current page table base for validation of user pointers
     ;      
-    STW R3 [R1]
+    SET_CURR_TASK_IDX R3
+    MOV R8 R3
 
     ; ------------------------------------------------
     ; Compute old task address
     ; ------------------------------------------------
     ; R2 - index of old/current task - get to its structure in mem
-    LI R4 TASK_SIZE
-    MUL R5 R2 R4
-
-    LI R6 tasks
-    ADD R5 R5 R6               ; R5 = &tasks[old]
+    GET_TASK_PTR R5, R2        ; R5 = &tasks[old], clobbers R3
+    MOV R3 R8
 
     ; ------------------------------------------------
     ; Save old task context pointers
@@ -1578,35 +1719,31 @@ do_switch:
     ; in the task table for debugging and future user/kernel separation.
 
     LDW R7 [SP + TF_USP]
-    STW R7 [R5 + TASK_USP]
+    TASK_SET_USP R5, R7
 
     MOV R7 SP
-    STW R7 [R5 + TASK_KSP]
+    TASK_SET_KSP R5, R7
 
-    LI R7 RESUME_TRAP               ;save it as it was stopped bu usual trap/irq not in kernel's syscall
-    STW R7 [R5 + TASK_RESUME]
+    TASK_SET_RESUME R5, RESUME_TRAP ;save it as it was stopped by usual trap/irq not in kernel's syscall
 
     ; ------------------------------------------------
     ; Compute new task address
     ; ------------------------------------------------
     ; now work with next task R3 - its index (+1) typic
 
-    LI R4 TASK_SIZE
-    MUL R5 R3 R4
-
-    LI R6 tasks
-    ADD R5 R5 R6               ; R5 = &tasks[new]
+    GET_TASK_PTR R5, R8        ; R5 = &tasks[new]
+    MOV R3 R8
 
     ; ------------------------------------------------
     ; Restore new task trap frame SP
     ; ------------------------------------------------
 
-    LDW R7 [R5 + TASK_PTBR]
+    TASK_GET_PTBR R7, R5
     SETPTBR R7              ; switch address space; VM flushes non-global TLB entries
 
-    LDW SP [R5 + TASK_KSP]
+    TASK_GET_KSP SP, R5
 
-    LDW R7 [R5 + TASK_RESUME]
+    TASK_GET_RESUME R7, R5
     CMP R7 RESUME_KERNEL
     BEQ restore_kernel_context  ;select how to run new task - depending where it was stopped usual
                                 ; trap or in kernel inside a syscall
@@ -1634,8 +1771,7 @@ schedule_call:
     PUSH R14
     PUSH R15
 
-    LI R1 CURRENT_TASK
-    LDW R2 [R1]                ; R2 = old task index (taken from this var CURRENT_TASK)
+    GET_CURR_TASK_IDX R2       ; R2 = old task index
 
     ADD R3 R2 1
 
@@ -1645,12 +1781,11 @@ schedule_call_wrap_check:
     LI R3 0
                                 ; R3 idx of next task
 schedule_call_check_task:
-    LI R4 TASK_SIZE
-    MUL R5 R3 R4
-    LI R6 tasks
-    ADD R5 R5 R6               ; R5 = &tasks[R3] ptr on next task 
+    MOV R8 R3
+    GET_TASK_PTR R5, R8        ; R5 = &tasks[R3] ptr on next task
+    MOV R3 R8
 
-    LDW R7 [R5 + TASK_STATE]
+    TASK_GET_STATE R7, R5
     CMP R7 TASK_READY               ; check it can be run
     BEQ schedule_call_do_switch
 
@@ -1658,28 +1793,24 @@ schedule_call_check_task:
     B schedule_call_wrap_check
 
 schedule_call_do_switch:
-    STW R3 [R1]                     ; make next current (upd CURRENT_TASK)
+    SET_CURR_TASK_IDX R3            ; make next current (upd CURRENT_TASK)
+    MOV R8 R3
 
-    LI R4 TASK_SIZE
-    MUL R5 R2 R4
-    LI R6 tasks
-    ADD R5 R5 R6               ; R5 = &tasks[old] (r2 old task idx)
+    GET_TASK_PTR R5, R2        ; R5 = &tasks[old] (r2 old task idx), clobbers R3
+    MOV R3 R8
 
     MOV R7 SP
-    STW R7 [R5 + TASK_KSP]      ; tasks[old].TASK_KSP = SP (when in trap)
-    LI R7 RESUME_KERNEL
-    STW R7 [R5 + TASK_RESUME]   ; tasks[old].TASK_RESUME = RESUME_KERNEL (task stopped in trap)
+    TASK_SET_KSP R5, R7        ; tasks[old].TASK_KSP = SP (when in trap)
+    TASK_SET_RESUME R5, RESUME_KERNEL
 
-    LI R4 TASK_SIZE
-    MUL R5 R3 R4
-    LI R6 tasks
-    ADD R5 R5 R6               ; R5 = &tasks[new] (r3 new task idx)
+    GET_TASK_PTR R5, R8        ; R5 = &tasks[new] (r3 new task idx)
+    MOV R3 R8
 
-    LDW R7 [R5 + TASK_PTBR]     ; load new task's page table
+    TASK_GET_PTBR R7, R5       ; load new task's page table
     SETPTBR R7
 
-    LDW SP [R5 + TASK_KSP]      ;restore new task KSP
-    LDW R7 [R5 + TASK_RESUME]   ;check if where new task was stopeed before
+    TASK_GET_KSP SP, R5        ;restore new task KSP
+    TASK_GET_RESUME R7, R5     ;check if where new task was stopeed before
     CMP R7 RESUME_KERNEL
     BEQ restore_kernel_context
 
@@ -1718,7 +1849,9 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    ;DEBUG 1 
+    DEBUG 1
+    LI R1 SYS_EXIT
+    SVC SYS_EXIT
     B idle_loop
 
 ; --TASK 1----------------------------------------------

@@ -12,9 +12,11 @@ Supported directives (minimal):
 - whilez/whilenz / endwhile
 - #define NAME VAL  -> .EQU
 - load8/store8 helpers
+- small explicit kernel assembly macros, e.g. GET_TASK_PTR R5, R2
 
 This is intentionally small and conservative. It emits plain assembly
 the existing assembler can consume.
+wonderfull!
 """
 import sys
 import re
@@ -27,6 +29,21 @@ def split_chunks(n, maxv=127):
         chunks.append(now)
         n -= now
     return chunks
+
+
+TASK_FIELDS = {
+    "KSP": "TASK_KSP",
+    "USP": "TASK_USP",
+    "PC": "TASK_PC",
+    "STATE": "TASK_STATE",
+    "PID": "TASK_PID",
+    "PTBR": "TASK_PTBR",
+    "FD_TABLE": "TASK_FD_TABLE",
+    "WAIT": "TASK_WAIT",
+    "RESUME": "TASK_RESUME",
+    "KBUF_WR": "TASK_KBUF_WR_PTR",
+    "KBUF_RD": "TASK_KBUF_RD_PTR",
+}
 
 
 class Preprocessor:
@@ -51,10 +68,70 @@ class Preprocessor:
     def emit(self, line):
         self.out.append(line)
 
+    def emit_task_get(self, dst, task_ptr, field):
+        self.emit(f"LDW {dst} [{task_ptr} + {field}]")
+
+    def emit_task_set(self, task_ptr, field, value):
+        if re.match(r"^(R\d+|SP|FP|LR)$", value, re.IGNORECASE):
+            self.emit(f"STW {value.upper()} [{task_ptr} + {field}]")
+        else:
+            self.emit(f"LI R1 {value}")
+            self.emit(f"STW R1 [{task_ptr} + {field}]")
+
+    def handle_kernel_macro(self, code):
+        m = re.match(r"^GET_CURR_TASK_IDX\s+(\w+)$", code, re.IGNORECASE)
+        if m:
+            dst = m.group(1).upper()
+            self.emit("LI R1 CURRENT_TASK")
+            self.emit(f"LDW {dst} [R1]")
+            return True
+
+        m = re.match(r"^SET_CURR_TASK_IDX\s+(\w+)$", code, re.IGNORECASE)
+        if m:
+            src = m.group(1).upper()
+            self.emit("LI R1 CURRENT_TASK")
+            self.emit(f"STW {src} [R1]")
+            return True
+
+        m = re.match(r"^GET_TASK_PTR\s+(\w+)\s*,\s*(\w+)$", code, re.IGNORECASE)
+        if m:
+            dst = m.group(1).upper()
+            idx = m.group(2).upper()
+            self.emit("LI R1 TASK_SIZE")
+            self.emit(f"MUL R3 {idx} R1")
+            self.emit(f"LI {dst} tasks")
+            self.emit(f"ADD {dst} {dst} R3")
+            return True
+
+        m = re.match(r"^TASK_GET_([A-Z0-9_]+)\s+(\w+)\s*,\s*(\w+)$", code, re.IGNORECASE)
+        if m:
+            name = m.group(1).upper()
+            dst = m.group(2).upper()
+            task_ptr = m.group(3).upper()
+            field = TASK_FIELDS.get(name)
+            if field:
+                self.emit_task_get(dst, task_ptr, field)
+                return True
+
+        m = re.match(r"^TASK_SET_([A-Z0-9_]+)\s+(\w+)\s*,\s*([A-Za-z0-9_]+)$", code, re.IGNORECASE)
+        if m:
+            name = m.group(1).upper()
+            task_ptr = m.group(2).upper()
+            value = m.group(3).upper()
+            field = TASK_FIELDS.get(name)
+            if field:
+                self.emit_task_set(task_ptr, field, value)
+                return True
+
+        return False
+
     def handle(self, line):
         # strip comments
         code = line.split(";", 1)[0].strip()
         if not code:
+            return
+
+        if self.handle_kernel_macro(code):
             return
 
         # simple directive matching
