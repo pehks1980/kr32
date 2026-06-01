@@ -80,10 +80,10 @@ B KERNEL_START
 
 ; KBUFFER
 .org 0x1000
-KBUFFER_WR:
+;KBUFFER_WR:
 KBUFFER_WR_0:
         .SPACE 256              ; 256b
-KBUFFER_RD:
+;KBUFFER_RD:
 KBUFFER_RD_0:
         .SPACE 256              ; 256b
 KBUFFER_WR_1:
@@ -593,25 +593,26 @@ read_wait_uart_rx:
     RET
 
 read_block_uart_rx:
-    GET_CURR_TASK_IDX R2       ; R2 = current task index
-    GET_TASK_PTR R5, R2        ; R5 = &tasks[current]
-
-    TASK_SET_STATE R5, TASK_BLOCKED_IO
-    TASK_SET_WAIT R5, WAIT_UART_RX
+    ; Put the current task on the UART RX wait queue before the re-check.
+    ; This ordering prevents a lost wakeup if an IRQ arrives between the
+    ; status check above and the actual scheduler sleep.
+    LI R1 uart_rx_waitq
+    LI R2 WAIT_UART_RX
+    BL waitq_prepare_sleep
 
     LDW R4 [R9 + UARTDEV_MMIO]
     LDW R10 [R4 + 4]             ; re-check uart reg RX-ready bit 0 after marking blocked
     AND R10 R10 1
     CMP R10 0
-    BNE read_unblock_uart_rx     ; if data in rx_queue go unblok
+    BNE read_unblock_uart_rx     ; if data arrived, cancel sleep and read it
 
-    BL schedule_call             ;save this user task as frozen in kernel space (sleeping inside sys_call)
+    BL waitq_sleep_current       ; save this user task as frozen in kernel space
 
     B read_wait_uart_rx          ;repeat read uart loop
 
 read_unblock_uart_rx:            ;mark current task as unblocked
-    TASK_SET_STATE R5, TASK_READY
-    TASK_SET_WAIT R5, WAIT_NONE
+    LI R1 uart_rx_waitq
+    BL waitq_cancel_sleep_current
 
     B read_wait_uart_rx          ;go back and read bytes
 
@@ -754,11 +755,11 @@ write_wait_uart_tx:
     B write_loop     ;chunk is sent go to next one
 
 write_block_uart_tx:
-    GET_CURR_TASK_IDX R2       ; R2 = current task index
-    GET_TASK_PTR R5, R2        ; R5 = &tasks[current]
-
-    TASK_SET_STATE R5, TASK_BLOCKED_IO ;set this task to block
-    TASK_SET_WAIT R5, WAIT_UART_TX
+    ; Queue the task on UART TX before the re-check. If TX becomes ready
+    ; immediately after this, cancel the queued sleep without scheduling.
+    LI R1 uart_tx_waitq
+    LI R2 WAIT_UART_TX
+    BL waitq_prepare_sleep
 
     LDW R1 [R9 + UARTDEV_MMIO]
     LDW R2 [R1 + 4]             ; re-check after marking blocked
@@ -768,14 +769,14 @@ write_block_uart_tx:
                                 ; its like to check if we have zero bytes to send at the begining
                                 ; putting on frezze task costs time and effort so we dont need to do it if tx is rdy!!!
 
-    BL schedule_call            ; if task is blocked it sleeps here inside syscall line waiting for irq UART handler ublocks it
+    BL waitq_sleep_current      ; if task is blocked it sleeps here inside syscall line waiting for irq UART handler ublocks it
                                 ; (when TX rdy)
                                 ; also this call saves task in trapframe and jumps to schedule and switch other tasks
     B write_wait_uart_tx        ; task awakes here - jumps send uart again!!
 
 write_unblock_uart_tx:
-    TASK_SET_STATE R5, TASK_READY
-    TASK_SET_WAIT R5, WAIT_NONE
+    LI R1 uart_tx_waitq
+    BL waitq_cancel_sleep_current
 
     B write_wait_uart_tx
 
@@ -785,18 +786,18 @@ write_done:
     RET
 
 driver_bad_pointer:
-    LI R1 0xFFFF
+    LI R1 0xFFF0
     POP LR
     RET
 
 bad_fd:
-    LI R1 0xFFFF
+    LI R1 0xFFF1
     STW R1 [SP + TF_R1]
 
     B trap_restore
 
 bad_pointer:
-    LI R1 0xFFFF
+    LI R1 0xFFF2
     STW R1 [SP + TF_R1]
 
     B trap_restore
@@ -964,7 +965,9 @@ user_buffer_valid_range:
     BLT uv_invalid
     CMP R5 R4
     BGT uv_invalid
+    MOV R11 R1              ; save start address; task macros clobber R1
     MOV R12 R5              ; save end address for page calculation
+    MOV R4 R3               ; save access type; task macros clobber R3
 
     GET_CURR_TASK_IDX R6
     GET_TASK_PTR R6, R6
@@ -991,7 +994,7 @@ uv_ptbr2:
     LI R6 PTBR2_VA
 
 uv_check_pages:
-    SHR R7 R1 12
+    SHR R7 R11 12
     SHR R8 R12 12
 uv_loop:
     ;================================================================
@@ -1005,22 +1008,22 @@ uv_loop:
     SHL R9 R7 2
     ADD R9 R9 R6
     LDW R10 [R9]
-    AND R11 R10 PTE_P
-    CMP R11 0
+    AND R5 R10 PTE_P
+    CMP R5 0
     BEQ uv_invalid
-    AND R11 R10 PTE_U
-    CMP R11 0
+    AND R5 R10 PTE_U
+    CMP R5 0
     BEQ uv_invalid
-    CMP R3 0
+    CMP R4 0
     BEQ uv_check_read
-    AND R11 R10 PTE_W
-    CMP R11 0
+    AND R5 R10 PTE_W
+    CMP R5 0
     BEQ uv_invalid
     B uv_next
 
 uv_check_read:
-    AND R11 R10 PTE_R
-    CMP R11 0
+    AND R5 R10 PTE_R
+    CMP R5 0
     BEQ uv_invalid
 
 uv_next:
@@ -1172,39 +1175,22 @@ handle_timer_irq:
 
 handle_uart_irq:
     ;================================================================
-    ; Acknowledge IRQ 1, then wake tasks blocked on UART RX/TX.
+    ; Acknowledge IRQ 1, then wake tasks blocked on UART RX/TX queues.
+    ; The wait queues contain exactly the tasks that blocked on this
+    ; device condition, so the IRQ path no longer scans every task and
+    ; decodes TASK_WAIT reasons by hand.
     ;================================================================
 
     LI R2 0x00102000
     LI R3 1
     STW R3 [R2 + 8]             ; PIC_ACK = 1
 
-    LI R1 0                     ; task index
-
-uart_wake_loop:
-    CMP R1 3
-    BGE uart_wake_done
-
-    GET_TASK_PTR R5, R1         ; R5 = &tasks[R1]
-    TASK_GET_STATE R4, R5
-
-    CMP R4 TASK_BLOCKED_IO
-    BNE uart_wake_next
-
-    TASK_GET_WAIT R4, R5
-    CMP R4 WAIT_UART_RX
-    BEQ uart_wake_task
-
-    CMP R4 WAIT_UART_TX
-    BNE uart_wake_next
-
-uart_wake_task:
-    TASK_SET_STATE R5, TASK_READY
-    TASK_SET_WAIT R5, WAIT_NONE
-
-uart_wake_next:
-    ADD R1 R1 1
-    B uart_wake_loop
+    ; Current UART interrupt source is coarse, so wake both sides.
+    ; The resumed syscall loops re-check hardware status before doing I/O.
+    LI R1 uart_rx_waitq
+    BL waitq_wake_all
+    LI R1 uart_tx_waitq
+    BL waitq_wake_all
 
 uart_wake_done:
     ; Resume the interrupted task immediately
@@ -1323,6 +1309,17 @@ trap_restore:
 .EQU RESUME_TRAP,      0
 .EQU RESUME_KERNEL,    1
 
+;=============================================================
+; Wait queue layout
+;=============================================================
+
+; A wait queue is currently a fixed-task bitmask. Bit N means task N is
+; waiting on this resource. This is intentionally simple while the kernel
+; has a fixed small task table; it can later become a linked list without
+; changing device code much.
+.EQU WQ_MASK,          0
+.EQU WQ_SIZE,          4
+
 ; =============================================================
 ; Task structure offsets
 ; =============================================================
@@ -1399,6 +1396,150 @@ con_device:
     .WORD uart_tx_queue
     .WORD 0x00100000
 
+;==============================================================
+; Wait queues owned by the UART console device
+;==============================================================
+
+; Separate queues are used for separate blocking conditions. A single UART
+; device can wake readers when RX data arrives and writers when TX becomes
+; ready, so it owns one queue for each condition.
+uart_rx_waitq:
+    .WORD 0                    ; WQ_MASK: tasks waiting for RX_READY
+
+uart_tx_waitq:
+    .WORD 0                    ; WQ_MASK: tasks waiting for TX_READY
+
+;==============================================================
+; Wait queue helpers
+;==============================================================
+
+waitq_prepare_sleep:
+    ;================================================================
+    ; R1 = wait queue pointer
+    ; R2 = WAIT_* reason for debug/task dumps
+    ;
+    ; Adds the current task to the queue bitmask and marks it blocked.
+    ; Device code must re-check hardware readiness after this call. If
+    ; the condition is already true, call waitq_cancel_sleep_current.
+    ;================================================================
+
+    PUSH R9
+    PUSH R10
+
+    MOV R9 R1                  ; preserve wait queue pointer
+    MOV R10 R2                 ; preserve debug wait reason
+
+    GET_CURR_TASK_IDX R2       ; R2 = current task index
+
+    LI R4 1
+    SHL R4 R4 R2               ; R4 = bit for current task
+    LDW R5 [R9 + WQ_MASK]
+    OR R5 R5 R4
+    STW R5 [R9 + WQ_MASK]
+
+    GET_TASK_PTR R5, R2
+    TASK_SET_STATE R5, TASK_BLOCKED_IO
+    TASK_SET_WAIT R5, R10
+
+    POP R10
+    POP R9
+    RET
+
+waitq_cancel_sleep_current:
+    ;================================================================
+    ; R1 = wait queue pointer
+    ;
+    ; Removes the current task from the queue and marks it ready again.
+    ; This is used by the device re-check path when the resource became
+    ; ready before the task actually entered schedule_call.
+    ;================================================================
+
+    PUSH R9
+
+    MOV R9 R1
+    GET_CURR_TASK_IDX R2
+
+    LDW R4 [R9 + WQ_MASK]
+    CMP R2 0
+    BEQ wq_cancel_task0
+    CMP R2 1
+    BEQ wq_cancel_task1
+
+    LI R5 3                    ; clear bit 2, keep bits 0..1
+    AND R4 R4 R5
+    B wq_cancel_store
+
+wq_cancel_task0:
+    LI R5 6                    ; clear bit 0, keep bits 1..2
+    AND R4 R4 R5
+    B wq_cancel_store
+
+wq_cancel_task1:
+    LI R5 5                    ; clear bit 1, keep bits 0 and 2
+    AND R4 R4 R5
+
+wq_cancel_store:
+    STW R4 [R9 + WQ_MASK]
+
+    GET_TASK_PTR R5, R2
+    TASK_SET_STATE R5, TASK_READY
+    TASK_SET_WAIT R5, WAIT_NONE
+
+    POP R9
+    RET
+
+waitq_sleep_current:
+    ;================================================================
+    ; Schedules away after waitq_prepare_sleep has marked this task
+    ; blocked. The task resumes here when an IRQ/device wake marks it
+    ; runnable and the scheduler switches back to it.
+    ;================================================================
+
+    PUSH LR
+    BL schedule_call
+    POP LR
+    RET
+
+waitq_wake_all:
+    ;================================================================
+    ; R1 = wait queue pointer
+    ;
+    ; Wakes every task currently recorded in the queue bitmask. The
+    ; queue is cleared before tasks are marked ready so repeated IRQs do
+    ; not keep waking stale entries.
+    ;================================================================
+
+    PUSH LR
+
+    MOV R9 R1
+    LDW R8 [R9 + WQ_MASK]      ; snapshot queued tasks
+    LI R10 0
+    STW R10 [R9 + WQ_MASK]     ; consume all queue entries
+
+    LI R2 0                    ; task index
+
+wq_wake_loop:
+    CMP R2 3
+    BGE wq_wake_done
+
+    LI R3 1
+    SHL R3 R3 R2               ; R3 = bit for task R2
+    AND R4 R8 R3
+    CMP R4 0
+    BEQ wq_wake_next
+
+    GET_TASK_PTR R5, R2
+    TASK_SET_STATE R5, TASK_READY
+    TASK_SET_WAIT R5, WAIT_NONE
+
+wq_wake_next:
+    ADD R2 R2 1
+    B wq_wake_loop
+
+wq_wake_done:
+    POP LR
+    RET
+
 ; just for info ref here actual .equ in the beginning
 ; flags def
 ;EQU FD_FLAG_READ,    1
@@ -1416,18 +1557,20 @@ con_device:
 ;EQU FOPS_WRITE,    4
 ;EQU FOPS_SIZE,     8
 
-; private
+; private con_device
 ;EQU UARTDEV_RX_QUEUE, 0
 ;EQU UARTDEV_TX_QUEUE, 4
 ;EQU UARTDEV_MMIO,     8
 ;EQU UARTDEV_SIZE,     12
 
+; fd
 ;EQU STDIN_FD,       0
 ;EQU STDOUT_FD,      1
 ;EQU STDERR_FD,      2
 
 ;==============================================================
 ; Stack tops
+; each task has 2 SP:K-when it runs in kernel space U-when in user space
 ;==============================================================
 
 .EQU TASK0_KSTACK_TOP, 0x4000
@@ -1486,28 +1629,31 @@ init_scheduler:
 
     LI R2 tasks
     MOV R1 SP
-    STW R1 [R2 + TASK_KSP]  ; save kernel trapframe SP
+    TASK_SET_KSP R2, R1     ; save kernel trapframe SP
 
     LI R1 TASK0_USTACK_TOP
-    STW R1 [R2 + TASK_USP]  ; save initial task stack SP for debug/metadata
+    TASK_SET_USP R2, R1     ; save initial task stack SP for debug/metadata
 
     LI R1 idle_task
-    STW R1 [R2 + TASK_PC]   ;start PC of the task
+    TASK_SET_PC R2, R1      ;start PC of the task
 
-    LI R1 1
-    STW R1 [R2 + TASK_STATE] ;set this task as as ready to run
+    TASK_SET_STATE R2, TASK_READY ;set this task as as ready to run
 
     LI R1 0
-    STW R1 [R2 + TASK_PID]   ;set PID=0 for this task
+    TASK_SET_PID R2, R1      ;set PID=0 for this task
 
-    LI R1 TASK0_PTBR
-    STW R1 [R2 + TASK_PTBR]
+    LI R1 TASK0_PTBR            ;set page table ptr
+    TASK_SET_PTBR R2, R1
+
     LI R1 fd_table
-    STW R1 [R2 + TASK_FD_TABLE]
-    TASK_SET_WAIT R2, WAIT_NONE
-    TASK_SET_RESUME R2, RESUME_TRAP
-    TASK_SET_KBUF_WR R2, KBUFFER_WR_0
+    TASK_SET_FD_TABLE R2, R1 ;set fd_table ptr
+
+    TASK_SET_WAIT R2, WAIT_NONE ;set wait reason field
+    TASK_SET_RESUME R2, RESUME_TRAP ;set sleep switch kernel/user depending where it z-z-z
+    TASK_SET_KBUF_WR R2, KBUFFER_WR_0 ;set this task kernel buffers rd/wr
     TASK_SET_KBUF_RD R2, KBUFFER_RD_0
+    ;when we can alloc and exec and fork
+    ;special mem subsystem will init/alloc/dealloc all that automatically
 
     ; ------------------------------------------------
     ; Task 1 - do the same
@@ -1545,24 +1691,23 @@ init_scheduler:
     ADD R2 R2 TASK_SIZE
 
     MOV R1 SP
-    STW R1 [R2 + TASK_KSP]
+    TASK_SET_KSP R2, R1
 
     LI R1 TASK1_USTACK_TOP
-    STW R1 [R2 + TASK_USP]
+    TASK_SET_USP R2, R1
 
     LI R1 TASK_A_START
-    STW R1 [R2 + TASK_PC]
+    TASK_SET_PC R2, R1
+
+    TASK_SET_STATE R2, TASK_READY
 
     LI R1 1
-    STW R1 [R2 + TASK_STATE]
-
-    LI R1 1
-    STW R1 [R2 + TASK_PID]
+    TASK_SET_PID R2, R1
 
     LI R1 TASK1_PTBR
-    STW R1 [R2 + TASK_PTBR]
+    TASK_SET_PTBR R2, R1
     LI R1 fd_table
-    STW R1 [R2 + TASK_FD_TABLE]
+    TASK_SET_FD_TABLE R2, R1
     TASK_SET_WAIT R2, WAIT_NONE
     TASK_SET_RESUME R2, RESUME_TRAP
     TASK_SET_KBUF_WR R2, KBUFFER_WR_1
@@ -1606,36 +1751,34 @@ init_scheduler:
     ADD R2 R2 R3
 
     MOV R1 SP
-    STW R1 [R2 + TASK_KSP]
+    TASK_SET_KSP R2, R1
 
     LI R1 TASK2_USTACK_TOP
-    STW R1 [R2 + TASK_USP]
+    TASK_SET_USP R2, R1
 
     LI R1 TASK_B_START
-    STW R1 [R2 + TASK_PC]
+    TASK_SET_PC R2, R1
 
-    LI R1 1
-    STW R1 [R2 + TASK_STATE]
+    TASK_SET_STATE R2, TASK_READY
 
     LI R1 2
-    STW R1 [R2 + TASK_PID]
+    TASK_SET_PID R2, R1
 
     LI R1 TASK2_PTBR
-    STW R1 [R2 + TASK_PTBR]
+    TASK_SET_PTBR R2, R1
     LI R1 fd_table
-    STW R1 [R2 + TASK_FD_TABLE]
+    TASK_SET_FD_TABLE R2, R1
     TASK_SET_WAIT R2, WAIT_NONE
     TASK_SET_RESUME R2, RESUME_TRAP
     TASK_SET_KBUF_WR R2, KBUFFER_WR_2
     TASK_SET_KBUF_RD R2, KBUFFER_RD_2
 
     ; ------------------------------------------------
-    ; CURRENT_TASK = 0 - init 0 task to shedule first
+    ; CURRENT_TASK = 0 - init 0 task idx to scheduler first
     ; ------------------------------------------------
 
-    LI R1 CURRENT_TASK
     LI R2 0
-    STW R2 [R1]
+    SET_CURR_TASK_IDX R2
 
     MOV SP R12 ;restore kernel SP after finsh dealing with tasks SPs
     RET
@@ -1850,6 +1993,7 @@ idle_task:
 idle_loop:
     ADD R1 R1 1
     DEBUG 1
+    ;trace anti-clutter sequence-)
     LI R1 SYS_EXIT
     SVC SYS_EXIT
     B idle_loop
@@ -1871,12 +2015,12 @@ TASK_A_START:
     LI R2 0x0A
     STB R2 [R1 + 13]
 
-    LI R1 1
+    LI R1 1                 ;fd
    ; DEBUG 1
-    LI R2 USER_WRITE_BUF
-    LI R3 14
+    LI R2 USER_WRITE_BUF    ; user buff
+    LI R3 14                ; len
     SVC SYS_WRITE
-    ;DEBUG 2
+    DEBUG 1
     ; Exit after the write test.
     LI R1 SYS_EXIT
     SVC SYS_EXIT
@@ -1895,9 +2039,9 @@ read_write_loop:
     LI R2 USER_READ_BUF
     LI R3 CONSOLE_INPUT_LEN
     SVC SYS_READ
-    ;DEBUG 2
+    DEBUG 1
     
-    CMP R1 0
+    ;CMP R1 0
     ;BEQ task_b_done
 
     ; Echo the data back via SYS_WRITE.
@@ -1906,7 +2050,6 @@ read_write_loop:
     LI R2 USER_READ_BUF
     MOV R3 R5
     SVC SYS_WRITE
-
     DEBUG 1
     pop R1
     sub R1 R1 1

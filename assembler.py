@@ -278,6 +278,7 @@ class Assembler:
             line = self.strip_comment(raw_line).upper()
 
             if not line:
+                self.listing.append({"type": "comment", "source": source})
                 continue
 
             try:
@@ -722,6 +723,8 @@ class Assembler:
     def print_listing(self):
         for entry in self.listing:
             if entry["type"] == "label":
+                print(entry["source"])
+            elif entry["type"] == "comment":
                 print(entry["source"])
             elif entry["type"] == "instruction":
                 addr = entry["addr"]

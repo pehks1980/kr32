@@ -68,6 +68,17 @@ class Preprocessor:
     def emit(self, line):
         self.out.append(line)
 
+    def split_code_comment(self, line):
+        code, sep, comment = line.partition(";")
+        if not sep:
+            return code.strip(), ""
+        return code.strip(), ";" + comment.rstrip()
+
+    def emit_macro_comment(self, source):
+        text = source.strip()
+        if text:
+            self.emit(f"; macro: {text}")
+
     def emit_task_get(self, dst, task_ptr, field):
         self.emit(f"LDW {dst} [{task_ptr} + {field}]")
 
@@ -78,9 +89,11 @@ class Preprocessor:
             self.emit(f"LI R1 {value}")
             self.emit(f"STW R1 [{task_ptr} + {field}]")
 
-    def handle_kernel_macro(self, code):
+    def handle_kernel_macro(self, code, source=None):
         m = re.match(r"^GET_CURR_TASK_IDX\s+(\w+)$", code, re.IGNORECASE)
         if m:
+            if source:
+                self.emit_macro_comment(source)
             dst = m.group(1).upper()
             self.emit("LI R1 CURRENT_TASK")
             self.emit(f"LDW {dst} [R1]")
@@ -88,6 +101,8 @@ class Preprocessor:
 
         m = re.match(r"^SET_CURR_TASK_IDX\s+(\w+)$", code, re.IGNORECASE)
         if m:
+            if source:
+                self.emit_macro_comment(source)
             src = m.group(1).upper()
             self.emit("LI R1 CURRENT_TASK")
             self.emit(f"STW {src} [R1]")
@@ -95,6 +110,8 @@ class Preprocessor:
 
         m = re.match(r"^GET_TASK_PTR\s+(\w+)\s*,\s*(\w+)$", code, re.IGNORECASE)
         if m:
+            if source:
+                self.emit_macro_comment(source)
             dst = m.group(1).upper()
             idx = m.group(2).upper()
             self.emit("LI R1 TASK_SIZE")
@@ -110,6 +127,8 @@ class Preprocessor:
             task_ptr = m.group(3).upper()
             field = TASK_FIELDS.get(name)
             if field:
+                if source:
+                    self.emit_macro_comment(source)
                 self.emit_task_get(dst, task_ptr, field)
                 return True
 
@@ -120,18 +139,22 @@ class Preprocessor:
             value = m.group(3).upper()
             field = TASK_FIELDS.get(name)
             if field:
+                if source:
+                    self.emit_macro_comment(source)
                 self.emit_task_set(task_ptr, field, value)
                 return True
 
         return False
 
     def handle(self, line):
-        # strip comments
-        code = line.split(";", 1)[0].strip()
+        source = line.rstrip()
+        code, comment = self.split_code_comment(line)
         if not code:
+            if comment or not source:
+                self.emit(source)
             return
 
-        if self.handle_kernel_macro(code):
+        if self.handle_kernel_macro(code, source):
             return
 
         # simple directive matching
@@ -337,7 +360,7 @@ class Preprocessor:
             return
 
         # passthrough for anything else (emit as-is)
-        self.emit(code)
+        self.emit(source)
 
     def process(self, lines):
         for l in lines:
