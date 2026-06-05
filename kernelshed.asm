@@ -15,6 +15,8 @@
 ;   R14       = FP (frame pointer)
 ;   R15       = LR (return link)
 
+#include "errno.inc"
+
 .org 0x0000
 B KERNEL_START
 
@@ -28,20 +30,24 @@ B KERNEL_START
 .EQU KERNEL_FLAGS, 0x0037       ; P|R|W|X|G, supervisor-only shared mapping
 .EQU USER_RX,      0x001D       ; P|R|X|U
 .EQU USER_RW,      0x001B       ; P|R|W|U
+.EQU KERN_USER_RX, 0x003D       ; P|R|X|U|G, shared executable (kernel can fetch user code)
 
 .EQU PAGE_SIZE,    0x1000
 .EQU PAGE_MASK,    0x0FFF
-.EQU PTBR0_VA,     0x00009000
-.EQU PTBR1_VA,     0x0000A000
-.EQU PTBR2_VA,     0x0000B000
 
-.EQU TASK0_PTBR,   0x00400000   ; one 1 MiB one-level table per address space
-.EQU TASK1_PTBR,   0x00500000
-.EQU TASK2_PTBR,   0x00600000
+.EQU PTBR0_VA,     0x00010000
+.EQU PTBR1_VA,     0x00020000
+.EQU PTBR2_VA,     0x00030000
 
+;.EQU TASK0_PTBR,   0x00010000   ; page table at 64KB (one 1 MiB one-level table per address space)
+;.EQU TASK1_PTBR,   0x00020000   ; page table at 128KB
+;done via alloc down .EQU TASK2_PTBR,   0x00030000   ; page table at 192KB
+
+;need to do via alloc 
 .EQU TASK0_USTACK_PA, 0x00005000 ; physical memory address stack and data when map pages tasks 0,1,2 in memory image
 .EQU TASK1_USTACK_PA, 0x0000B000 ; func page init makes map in page table for every task (0) runs in kernel mode
 .EQU TASK2_USTACK_PA, 0x0000C000
+
 .EQU TASK0_DATA_PA,   0x00006000
 .EQU TASK1_DATA_PA,   0x0000D000
 .EQU TASK2_DATA_PA,   0x0000E000
@@ -74,11 +80,14 @@ B KERNEL_START
 .EQU STDIN_FD,       0
 .EQU STDOUT_FD,      1
 .EQU STDERR_FD,      2
-.EQU CONSOLE_INPUT_LEN, 1
-.EQU USER_WRITE_BUF, 0x6000
-.EQU USER_READ_BUF,  0x6010
+.EQU CONSOLE_INPUT_LEN, 5
 
-; KBUFFER
+
+
+; KBUFFER for kernel<->user data transfer, one per task, mapped into each address space at 0x1000-0x1FFF 
+; for easy access by copy routines and device drivers. Each task has a separate KBUFFER_WR and KBUFFER_RD
+; to avoid shared state and synchronization issues.      
+
 .org 0x1000
 ;KBUFFER_WR:
 KBUFFER_WR_0:
@@ -95,53 +104,55 @@ KBUFFER_WR_2:
 KBUFFER_RD_2:
         .SPACE 256              ; 256b
 
+; ================================================================
+; PAGE TABLES for each task (1 KiB each, 4 entries x 1024 bytes)
+; ================================================================
+.org 0x10000
+;TASK0_PAGE_TABLE
+TASK0_PTBR:
+        .SPACE 4096             ; 1 KiB page table (1024 entries × 4 bytes)
+
+.org 0x20000
+;TASK1_PAGE_TABLE
+TASK1_PTBR:
+        .SPACE 4096             ; 1 KiB page table
+
+.org 0x30000
+;TASK2_PAGE_TABLE
+TASK2_PTBR:
+        .SPACE 4096             ; 1 KiB page table
+
 
 .org 0x2000
 
+; ================================================================
+; KERNEL CODE (starts at 0x2000)
+; ================================================================
 func KERNEL_START
         LI SP 0x0000F000
         MOV FP SP
 
         ; Initialize unified IDT (all traps go to trap_entry)
-    call init_idt
+        call init_idt
 
         ; Initialize Page Tables
         ; check memory_map.txt for current layout
-    call init_page_tables
+        call init_page_tables
 
         ; Init_task_scheduler (hard-coded)
-    call init_scheduler
+        call init_scheduler
 
-        ; ----------------------------------------------------
-        ; Setup MMIO PIC: Enable IRQ 0 (timer) and IRQ 1 (uart)
-        ; ----------------------------------------------------
-        LI R1 0x00102000
-        LI R2 3
-        STW R2 [R1 + 0]         ; PIC_MASK = 3 (INT 0 & 1 enabled)
-
-        ; ----------------------------------------------------
-        ; Setup MMIO PIT: Set period to 2000 ms and enable ticks
-        ; ----------------------------------------------------
-        LI R1 0x00101000
-        LI R2 2000
-        STW R2 [R1 + 0]         ; PIT_PERIOD = 2000 ms
-        LI R2 3
-        STW R2 [R1 + 4]         ; PIT_CTRL = 3 (PIT_ENABLE | INT_ENABLE)
-
-        ; ----------------------------------------------------
-        ; Setup MMIO UART: Enable RX/TX interrupts
-        ; ----------------------------------------------------
-        LI R1 0x00100000
-        LI R2 3
-        STW R2 [R1 + 8]         ; UART_CTRL = 3 (RX_INT_ENABLE | TX_INT_ENABLE)
+        ; Initialize MMIO devices (PIC, PIT, UART)
+        call init_mmio_devices
 
         ; Enable MMU and interrupts
-    call enable_vm
+        call enable_vm
 
         ; Start first task through the same trapframe restore path used
         ; by preemptive switches.
         LI R1 tasks
         LDW SP [R1 + TASK_KSP]
+        ; jump to task0 entry point (0x5000) through the same trap restore 
         B trap_restore
 
 ; ================================================================
@@ -162,7 +173,7 @@ init_idt:
     STW R2 [R1+12]               ; IDT[3]
     STW R2 [R1+24]               ; IDT[6]
     STW R2 [R1+64]               ; IDT[16]
-    
+    ; set IDT root register 
     SETIDTR R1
     RET
 
@@ -190,23 +201,41 @@ init_page_tables:
 
     LI R1 TASK1_PTBR             ; USER task 1 page table pointer (phys address)
     BL map_common_kernel
-    LI R2 0x00005000             ;page used for stack
-    LI R3 TASK1_USTACK_PA        ; physical address - note! in virtual space virtual address can be the same (like here x05000)
-    LI R4 USER_RW                ; so mmu does the trick and with help of tlb fast translates vpn to ppn : offset
+    ; Map user stack/data region: 0x17000-0x19000 for user code and stack space
+    LI R2 0x00017000             ;page 1: stack area
+    LI R3 0x00007000             ;allocate physical page for stack
+    LI R4 USER_RW
     BL map_page
-    LI R2 0x00006000             ;page used for data
-    LI R3 TASK1_DATA_PA
+    LI R2 0x00018000             ;page 2: stack area
+    LI R3 TASK1_DATA_PA          ;physical address
+    LI R4 USER_RW
+    BL map_page
+    LI R2 0x00005000             ;legacy: page used for stack (map for compatibility)
+    LI R3 TASK1_USTACK_PA        ; physical address
+    LI R4 USER_RW
+    BL map_page
+    LI R2 0x00006000             ;legacy: page used for data (map for compatibility)
+    LI R3 0x0000E000             ;another physical page
     LI R4 USER_RW
     BL map_page
 
     LI R1 TASK2_PTBR            ; USER task 2 - same
     BL map_common_kernel
-    LI R2 0x00005000
+    ; Map user stack/data region: 0x17000-0x19000 for user code and stack space
+    LI R2 0x00017000             ;page 1: stack area
+    LI R3 0x0000F000             ;allocate physical page for stack
+    LI R4 USER_RW
+    BL map_page
+    LI R2 0x00018000             ;page 2: stack area
+    LI R3 TASK2_DATA_PA          ;physical address
+    LI R4 USER_RW
+    BL map_page
+    LI R2 0x00005000             ;legacy: page used for stack (map for compatibility)
     LI R3 TASK2_USTACK_PA
     LI R4 USER_RW
     BL map_page
-    LI R2 0x00006000
-    LI R3 TASK2_DATA_PA
+    LI R2 0x00006000             ;legacy: page used for data (map for compatibility)
+    LI R3 TASK0_DATA_PA          ;shared user literals at 0x6000
     LI R4 USER_RW
     BL map_page
 
@@ -244,22 +273,43 @@ map_common_kernel:
     LI R3 0x00007000
     LI R4 KERNEL_FLAGS
     BL map_page
-    LI R2 0x00008000      ; page 5 text page (program) for user mode process
+    LI R2 0x00008000      ; page 4 (number is page table entry one) tasks data
     LI R3 0x00008000
-    LI R4 USER_RX
+    LI R4 KERNEL_FLAGS
+    BL map_page
+    LI R2 0x00009000      ; page 5 text page (program) for user mode process
+    LI R3 0x00009000
+    LI R4 KERN_USER_RX
     BL map_page
     LI R2 0x00019000      ; page 5 text page (program) for user mode process
     LI R3 0x00019000
-    LI R4 USER_RX
+    LI R4 KERN_USER_RX
     BL map_page
     LI R2 0x0001a000      ; page 5 text page (program) for user mode process
     LI R3 0x0001a000
-    LI R4 USER_RX
+    LI R4 KERN_USER_RX
     BL map_page
 
     ; Kernel-only helpers: copy routines and page-table inspection
     LI R2 0x00001000      ; page for kernel buffers
     LI R3 0x00001000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    ; Map page table memory pages into kernel address space so the kernel
+    ; can read/write page table entries after MMU is enabled
+    LI R2 0x00010000      ; page table for task 0
+    LI R3 0x00010000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x00020000      ; page table for task 1
+    LI R3 0x00020000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x00030000      ; page table for task 2
+    LI R3 0x00030000
     LI R4 KERNEL_FLAGS
     BL map_page
 
@@ -310,12 +360,41 @@ map_page:
     STW R6 [R1 + R5]
     RET
 
+; ================================================================
+; Initialize MMIO devices (PIC, PIT, UART)
+; ================================================================
+
+init_mmio_devices:
+    ; ----------------------------------------------------
+    ; Setup MMIO PIC: Enable IRQ 0 (timer) and IRQ 1 (uart)
+    ; ----------------------------------------------------
+    LI R1 0x00102000
+    LI R2 3                 ; IRQ 0 = bit 0, IRQ 1 = bit 1, so mask = 0b11 = 3 to enable both
+    STW R2 [R1 + 0]         ; PIC_MASK = 3 (INT 0 & 1 enabled)
+
+    ; ----------------------------------------------------
+    ; Setup MMIO PIT: Set period to 2000 ms and enable ticks
+    ; ----------------------------------------------------
+    LI R1 0x00101000
+    LI R2 2000
+    STW R2 [R1 + 0]         ; PIT_PERIOD = 2000 ms
+    LI R2 3                 ; PIT_ENABLE = bit 0, INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both 
+    STW R2 [R1 + 4]         ; PIT_CTRL = 3 (PIT_ENABLE | INT_ENABLE)
+
+    ; ----------------------------------------------------
+    ; Setup MMIO UART: Enable RX/TX interrupts
+    ; ----------------------------------------------------
+    LI R1 0x00100000
+    LI R2 3                 ; UART_RX_INT_ENABLE = bit 0, UART_TX_INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
+    STW R2 [R1 + 8]         ; UART_CTRL = 3 (RX_INT_ENABLE | TX_INT_ENABLE)
+
+    RET
 
 ; ================================================================
 ; Enable MMU and Interrupts
 ; ================================================================
 enable_vm:
-    ENABLEMMU
+    ENABLEMMU               ;enable MMU with current PTBR (set in init_page_tables)
     ; Interrupts are enabled by SRET from the first task trapframe.
     ; Keeping them disabled during boot avoids taking an IRQ before
     ; SSCRATCH contains a valid per-task kernel stack pointer.
@@ -325,7 +404,7 @@ enable_vm:
 
 
 ; ================================================================
-; UNIFIED TRAP ENTRY POINT (all traps go here)
+; UNIFIED TRAP ENTRY POINT (all traps and interrupts go here)
 ; ================================================================
 trap_entry:
     ; Switch from interrupted task stack to this task's kernel stack.
@@ -428,10 +507,10 @@ handle_syscall:
 
 syscall_unknown:
 ;================================================================
-; For unknown syscalls, return an error code (e.g., 0xFFFFFFFF) in R1 and restore.
+; For unknown syscalls, return an errno in R1 and restore.
 ;================================================================
 
-    LI R1 0xFFFFFFFF                    ; R1 has error code FFFF
+    LI R1 ERR_NOSYS
     STW R1 [SP + TF_R1]
     B trap_restore
 
@@ -446,6 +525,10 @@ syscall_table:
     .WORD syscall_debug         ; SVC 3
     .WORD syscall_write         ; SVC 4
     .WORD syscall_read          ; SVC 5
+    .WORD syscall_open          ; SVC 6
+    .WORD syscall_close         ; SVC 7
+    .WORD syscall_pipe          ; SVC 8
+
 
 syscall_yield:
 ;================================================================
@@ -499,6 +582,842 @@ syscall_debug:
     STW R1 [SP + TF_R1]
     
     B trap_restore
+
+
+syscall_open:
+
+    ;================================================================
+    ; in: R1=user pathname
+    ;     R2=flags
+    ; out: R1 = fd / err -1
+    ;================================================================
+
+    LDW R1 [SP + TF_R1]
+    LDW R2 [SP + TF_R2]
+
+    MOV R12 R2               ; save flags
+
+    BL copy_path_from_user      ; macro inside destroys R11
+    CMP R1 0
+    BEQ open_fail_fault
+
+    BL lookup_device
+    CMP R1 0
+    BEQ open_fail_noent
+
+    MOV R8 R1            ; save device descriptor
+
+    BL file_alloc        ; out: R1 = pointer to FILE object in file_pool
+    CMP R1 0
+    BEQ open_fail_nfile
+    MOV R9 R1            ;
+
+    ; initialize file object
+    MOV R1 R9                ; file*
+    MOV R2 R8                ; device*
+    MOV R3 R12               ; flags
+    BL file_init             ; ([i].device*)->([i].file*), [i].seek=0, set [i].flags in file_pool
+
+    MOV R1 R9                ; initialised file ptr (ie file instance)
+    BL fd_alloc              ; fd_table[new_fd] = file* (new_fd - idx in fd_table 4,5,6...)
+    LI  R2 ERR_MFILE
+    CMP R1 R2
+    BEQ open_fail_fd
+
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+open_fail_fd:
+    MOV R1 R9
+    BL file_free
+    LI R1 ERR_MFILE
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+open_fail_nfile:
+    LI R1 ERR_NFILE
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+open_fail_noent:
+    LI R1 ERR_NOENT
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+open_fail_fault:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+;====================================================================
+; syscall_open helpers
+;====================================================================
+
+;====================================================================
+; copy_path_from_user
+;
+;input:
+; R1 = user pointer
+;output:
+;R1 = kernel pointer to copied NUL-terminated path
+;R1 = 0 fail
+;====================================================================
+copy_path_from_user:
+    PUSH LR
+
+    MOV R8 R1                  ; current user source byte
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_RD R9, R5    ; destination kernel path buffer
+
+    PUSH R9                    ; original destination returned on success
+    LI R10 0                   ; bytes copied before NUL
+
+copy_path_loop:
+    LI R11 KBUFFER_SIZE
+    CMP R10 R11
+    BGE copy_path_fail
+
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    MOV R1 R8
+    LI R2 1
+    LI R3 0                    ; read access from user source
+    BL user_buffer_valid_range
+    POP R10
+    POP R9
+    POP R8
+    CMP R1 1
+    BNE copy_path_fail
+
+    LDB R4 [R8]
+    STB R4 [R9]
+    CMP R4 0
+    BEQ copy_path_done
+
+    ADD R8 R8 1
+    ADD R9 R9 1
+    ADD R10 R10 1
+    B copy_path_loop
+
+copy_path_done:
+    POP R1                     ; original kernel path pointer
+    POP LR
+    RET
+
+copy_path_fail:
+    POP R1                     ; discard original kernel path pointer
+    LI R1 0
+    POP LR
+    RET
+
+;====================================================================
+; lookup_device in device_table
+;
+;input:
+; R1 = user pointer to string
+;output:
+; R1 = device descriptor
+ ;R1 = 0 if not found
+;====================================================================
+lookup_device:
+
+    PUSH LR
+
+    MOV R8 R1                  ; save pathname ptr
+
+    LI R7 device_table
+    LI R9 DEVICE_COUNT
+
+lookup_loop:
+    CMP R9 0
+    BEQ lookup_fail
+
+    ; compare pathname with device name
+
+    MOV R1 R8
+    LDW R2 [R7 + DEV_NAME]
+
+    BL strcmp
+
+    CMP R1 1
+    BEQ lookup_found
+
+    ADD R7 R7 DEV_SIZE
+    SUB R9 R9 1
+    B lookup_loop
+
+lookup_found:
+
+    MOV R1 R7                  ; return device descriptor ptr
+
+    POP LR
+    RET
+
+lookup_fail:
+
+    LI R1 0
+
+    POP LR
+    RET
+
+;====================================================================
+; strcmp
+; in: R1 = str1 "dfdff"0
+;     R2 = str2
+;
+; out:R1 = 1 equal
+;     R1 = 0 not equal
+;====================================================================
+strcmp:
+
+str_loop:
+    LDB R3 [R1]
+    LDB R4 [R2]
+
+    CMP R3 R4
+    BNE str_not_equal
+
+    CMP R3 0
+    BEQ str_equal
+
+    ADD R1 R1 1
+    ADD R2 R2 1
+    B str_loop
+
+str_equal:
+    LI R1 1
+    RET
+
+str_not_equal:
+    LI R1 0
+    RET
+
+;====================================================================
+; file_init
+; in: R1 = file pointer
+      ;R2 = device descriptor pointer in file_pool
+      ;R3 = open flags
+; out:file structure initialized
+;====================================================================
+file_init:
+
+    LDW R4 [R2 + DEV_OPS]
+    STW R4 [R1 + FILE_OPS]
+
+    LDW R4 [R2 + DEV_PRIVATE]
+    STW R4 [R1 + FILE_PRIVATE]
+
+    LI R4 0
+    STW R4 [R1 + FILE_OFFSET]
+
+    STW R3 [R1 + FILE_FLAGS]
+
+    RET
+
+;====================================================================
+; fd_alloc - set initialised file to process fd_table (dynamic space )
+; in R1 = file pointer
+; out R1 = fd number / R1 = ERR_MFILE if full
+;
+;====================================================================
+
+fd_alloc:
+
+    MOV R8 R1                  ; save file pointer
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R4, R4
+    TASK_GET_FD_TABLE R4, R4   ; R4 = fd table ptr
+
+    LI R5 3                    ; start after stdin/out/err dynamic space
+
+fd_alloc_loop:
+
+    CMP R5 MAX_FDS
+    BGE fd_alloc_fail
+
+    SHL R6 R5 2                ; fd * 4
+    ADD R7 R4 R6               ; &fd_table[fd]
+
+    LDW R2 [R7]
+    CMP R2 0                   ; 0 - empty
+    BEQ fd_alloc_found
+
+    ADD R5 R5 1
+    B fd_alloc_loop
+
+fd_alloc_found:
+
+    STW R8 [R7]                ; fd_table[fd] = file*
+
+    MOV R1 R5                  ; return fd
+    RET
+
+fd_alloc_fail:
+
+    LI R1 ERR_MFILE
+    RET
+
+syscall_close:
+    ;================================================================
+    ; in R1 = fd
+    ; out R1 = 0 / err -1
+    ;================================================================
+    LDW R1 [SP + TF_R1]
+
+    BL fd_remove    ;in R1-fd out R1-file ptr for this fd
+
+    CMP R1 0
+    BEQ close_fail
+
+    BL file_free    ;in R1 file_ptr in file_pool it marks it as free (NULL)
+
+    LI R1 0
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+close_fail:
+    LI R1 ERR_BADF
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+syscall_pipe:
+    ;================================================================
+    ; create a pipe object
+    ; in R1 = &fd[2] empty array
+    ; out R1 = 0 / NULL , fd[2] populated  fd[0]-read end fd[1]-write end
+    ;     R1 = -1 err
+    ;================================================================
+
+    ; user int fd[2]
+    LDW R7 [SP + TF_R1]
+
+    BL pipe_alloc
+    CMP R1 0
+    BEQ pipe_fail_nospc
+
+    MOV R8 R1            ; new slot in pipe_pool ( pipe* )
+
+    ; [0] read end          write[1]>--pipe--->read[0]
+
+    BL file_alloc
+    CMP R1 0
+    BEQ pipe_fail_pipe_only
+
+    MOV R9 R1           ; new file for read end  in file_pool
+
+    LI R2 pipe_ops
+    STW R2 [R9 + FILE_OPS]      ; store ops (for pipe of read end) in allocated  file struc
+
+    STW R8 [R9 + FILE_PRIVATE]  ; store our slot pipe* in file
+
+    LI R2 FD_FLAG_READ
+    STW R2 [R9 + FILE_FLAGS]    ; set file mode read
+
+    MOV R1 R9
+    BL fd_alloc                 ; insert read file to fd_table of user process
+
+    LI R2 ERR_MFILE             ; check if fd_alloc problem
+    CMP R1 R2
+    BEQ pipe_fail_read_file
+
+    MOV R10 R1           ; get file read fd created to R10
+
+    ; write end
+
+    BL file_alloc
+    CMP R1 0
+    BEQ pipe_fail_read_fd
+
+    MOV R9 R1
+
+    LI R2 pipe_ops
+    STW R2 [R9 + FILE_OPS]
+
+    STW R8 [R9 + FILE_PRIVATE]
+
+    LI R2 FD_FLAG_WRITE                 ;file mode -write
+    STW R2 [R9 + FILE_FLAGS]
+
+    MOV R1 R9
+    BL fd_alloc
+
+    LI R2 ERR_MFILE             ; check if fd_alloc problem
+    CMP R1 R2
+    BEQ pipe_fail_write_file
+
+    MOV R11 R1           ; R11 write fd R10 read fd
+
+    MOV R1 R7   ; in &fd[2]
+    LI R2 8     ; len 2
+    LI R3 1     ; mem perm to write cond
+    BL user_buffer_valid_range
+    CMP R1 1
+    BNE pipe_fail_both_fds
+
+    STW R10 [R7]    ;fd[0]-rd fd[1]-wr
+    STW R11 [R7 + 4]
+
+    LI R1 0
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+pipe_fail:
+    LI R1 ERR_IO
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+pipe_fail_both_fds:
+    MOV R12 R8
+    MOV R1 R11
+    BL fd_remove
+    CMP R1 0
+    BEQ pipe_fail_both_fds_read
+    BL file_free
+
+pipe_fail_both_fds_read:
+    MOV R1 R10
+    BL fd_remove
+    CMP R1 0
+    BEQ pipe_fail_free_pipe_fault
+    BL file_free
+
+pipe_fail_free_pipe_fault:
+    MOV R1 R12
+    BL pipe_free
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+pipe_fail_write_file:
+    MOV R12 R8
+    MOV R1 R9
+    BL file_free
+    MOV R1 R10
+    BL fd_remove
+    CMP R1 0
+    BEQ pipe_fail_free_pipe_mfile
+    BL file_free
+
+pipe_fail_free_pipe_mfile:
+    MOV R1 R12
+    BL pipe_free
+    LI R1 ERR_MFILE
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+pipe_fail_read_fd:
+    MOV R12 R8
+    MOV R1 R10
+    BL fd_remove
+    CMP R1 0
+    BEQ pipe_fail_free_pipe_nfile
+    BL file_free
+
+pipe_fail_free_pipe_nfile:
+    MOV R1 R12
+    BL pipe_free
+    LI R1 ERR_NFILE
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+pipe_fail_read_file:
+    MOV R12 R8
+    MOV R1 R9
+    BL file_free
+    MOV R1 R12
+    BL pipe_free
+    LI R1 ERR_MFILE
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+pipe_fail_pipe_only:
+    MOV R1 R8
+    BL pipe_free
+    LI R1 ERR_NFILE
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+pipe_fail_nospc:
+    LI R1 ERR_NOSPC
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+pipe_read:
+;=========================================================
+; R1 = file*
+; R2 = user buffer
+; R3 = requested length
+;
+; returns:
+;   R1 = bytes read
+; this is specific pipe device read loop!
+;=========================================================
+
+    PUSH LR
+
+    MOV R9 R1              ; file*
+    MOV R7 R2              ; user buffer
+    MOV R6 R3              ; requested len
+    LDW R9 [R9 + FILE_PRIVATE]    ; our instance allocated in pipe_pool pipe*
+    CMP R6 0                ;fast clear from it if len=0
+    BEQ pipe_read_done
+;-----------------------------------------
+; validate user destination buffer
+;-----------------------------------------
+    PUSH R7
+    PUSH R6
+
+    MOV R1 R7
+    MOV R2 R6
+    LI  R3 1               ; write access
+    BL user_buffer_valid_range
+
+    POP R6
+    POP R7
+    CMP R1 1
+    BNE pipe_read_badptr
+
+pipe_read_retry:
+;-----------------------------------------
+; anything in pipe?
+;-----------------------------------------
+    LDW R4 [R9 + PIPE_COUNT]
+    CMP R4 0
+    BEQ pipe_read_sleep     ;go to sleep
+;-----------------------------------------
+; bytes_to_read=min(len (R6),count(R4)
+;-----------------------------------------
+    CMP R6 R4
+    BLT pipe_user_len
+
+    MOV R5 R4
+    B pipe_have_amount
+
+pipe_user_len:
+    MOV R5 R6
+
+pipe_have_amount:
+    LI R10 0              ; bytes copied
+
+pipe_read_loop:         ;cpy pipe_buffer to user with min(pipe_count,len) bytes
+    CMP R10 R5
+    BGE pipe_read_done
+
+;------------------------------------------
+; tail = pipe->tail (idx in PIPE_BUFFER in pipe*(R9) struc)
+;------------------------------------------
+    LDW R11 [R9 + PIPE_TAIL]
+;------------------------------------------
+; R12 addr = pipe + PIPE_BUFFER
+;------------------------------------------
+    MOV R12 R9
+    ADD R12 R12 PIPE_BUFFER
+    ADD R12 R12 R11         ; addr += tail
+
+    LDB R4 [R12]    ;read data from buffer[tail_idx]
+
+;------------------------------------------
+; useraddr=userbuf+copied
+;------------------------------------------
+    MOV R12 R7
+    ADD R12 R12 R10
+
+    STB R4 [R12]    ;copy to user side
+
+;------------------------------------------
+    ; tail=(tail+1)&255
+;------------------------------------------
+    ADD R11 R11 1   ;update tail inc idx if idx > 255 idx=0
+    LI R2 255
+    AND R11 R11 R2
+    STW R11 [R9 + PIPE_TAIL]    ;save to pipe struc updated tail_idx
+;------------------------------------------
+; count-- (update to struc)
+;------------------------------------------
+    LDW R12 [R9 + PIPE_COUNT]
+    SUB R12 R12 1
+    STW R12 [R9 + PIPE_COUNT]
+
+    ; copied++ loop counter
+    ADD R10 R10 1
+    B pipe_read_loop
+
+pipe_read_done:
+; wake blocked writers
+    MOV R1 R9
+    ADD R1 R1 PIPE_WWAIT
+    BL waitq_wake_all
+    MOV R1 R10          ; read bytes amount
+    POP LR
+    RET
+
+pipe_read_badptr:
+    LI R1 ERR_FAULT
+    POP LR
+    RET
+
+pipe_read_sleep:
+;------------------------------------------
+; prepare sleep
+;------------------------------------------
+    MOV R1 R9
+    ADD R1 R1 PIPE_RWAIT    ;ptr on wait queue read in pipe instance
+    LI R2 WAIT_PIPE_READ    ;REASON for block in process (debug)
+    BL waitq_prepare_sleep
+
+;------------------------------------------
+; race check
+;------------------------------------------
+    LDW R4 [R9 + PIPE_COUNT]
+    CMP R4 0
+    BNE pipe_read_retry
+
+    BL waitq_sleep_current  ;freesze here untill unblock
+    ;data arrived/unbloked
+    B pipe_read_retry
+
+;later sort out  issue: pipe_fail leaks objects
+;pipe_alloc OK
+;file_alloc OK
+;fd_alloc FAIL
+
+pipe_alloc:
+    ;================================================================
+    ; in nothing
+    ; out R1 ptr to new slot in pipe_pool, or R1 = 0 if no slots
+    ;================================================================
+
+    LI R2 0
+
+pipe_loop:
+    LI  R1 MAX_PIPES
+    CMP R2 R1
+    BGE pipe_alloc_fail
+
+    SHL R3 R2 2
+
+    LI R4 pipe_used
+    ADD R4 R4 R3
+
+    LDW R5 [R4]             ;R4 address in PIPE_USED LIST
+
+    CMP R5 0                ; 0 -empty
+    BEQ pipe_found
+
+    ADD R2 R2 1
+    B pipe_loop
+
+pipe_found:
+
+    LI R5 1
+    STW R5 [R4]             ; set it in PIPE_USED =1 as used
+
+    LI R4 PIPE_SIZE
+    MUL R6 R2 R4            ; r2 - is idx so get full offset = PIPE_SIZE*idx
+
+    LI R1 pipe_pool         ; R1 - is address of the to be allocated slot in pipe_pool
+    ADD R1 R1 R6
+
+    LI R7 0                 ; clean it up
+    STW R7 [R1 + PIPE_HEAD]
+    STW R7 [R1 + PIPE_TAIL]
+    STW R7 [R1 + PIPE_COUNT]
+    STW R7 [R1 + PIPE_RWAIT]
+    STW R7 [R1 + PIPE_WWAIT]
+    ; R1 - address of the slot
+    RET
+
+pipe_alloc_fail:
+    ; R1 = NULL
+    LI R1 0
+    RET
+
+pipe_free:
+    ;================================================================
+    ; in R1 = pipe pointer from pipe_pool
+    ; marks the pipe slot free
+    ;================================================================
+
+    LI R2 pipe_pool
+    SUB R3 R1 R2
+
+    LI R4 PIPE_SIZE
+    DIV R5 R3 R4
+
+    SHL R5 R5 2
+    LI R6 pipe_used
+    ADD R6 R6 R5
+
+    LI R7 0
+    STW R7 [R6]
+
+    RET
+
+pipe_write:
+;--------------------------------------------------
+; R1 = file*
+; R2 = user buffer
+; R3 = length
+;
+; return:
+;   R1 = bytes written
+;--------------------------------------------------
+    PUSH LR
+
+    MOV R8 R1
+    MOV R7 R2
+    MOV R6 R3
+
+    LDW R9 [R8 + FILE_PRIVATE]
+
+    ;---------------------------------------
+    ; validate user source buffer
+    ;---------------------------------------
+
+    PUSH R7
+    PUSH R6
+
+    MOV R1 R7
+    MOV R2 R6
+    LI  R3 0           ; READ access
+    BL user_buffer_valid_range
+
+    POP R6
+    POP R7
+
+    CMP R1 1
+    BNE pipe_write_badptr
+
+    LI R10 0               ; bytes written
+pipe_write_retry:
+    CMP R10 R6
+    BGE pipe_write_done
+;------------------------------------------
+; pipe full ?
+;------------------------------------------
+    LDW R11 [R9 + PIPE_COUNT]
+    LI R2 256
+    CMP R11 R2
+    BEQ pipe_write_sleep
+;------------------------------------------
+; head = pipe->head
+;------------------------------------------
+    LDW R12 [R9 + PIPE_HEAD]
+
+    MOV R4 R7
+    ADD R4 R4 R10
+    LDB R5 [R4]     ; read byte from user buff addr
+
+    MOV R4 R9
+    ADD R4 R4 PIPE_BUFFER
+    ADD R4 R4 R12
+    STB R5 [R4]     ; put it to pipe addr - ie write user -> pipe buff
+
+;------------------------------------------
+; head=(head+1)&255
+;------------------------------------------
+    ADD R12 R12 1
+    LI R2 255
+    AND R12 R12 R2
+    STW R12 [R9 + PIPE_HEAD]
+;------------------------------------------
+; count++
+;------------------------------------------
+    LDW R4 [R9 + PIPE_COUNT]
+    ADD R4 R4 1
+    STW R4 [R9 + PIPE_COUNT]
+
+; written++
+    ADD R10 R10 1
+    B pipe_write_retry
+
+pipe_write_done:
+; wake readers
+    MOV R1 R9
+    ADD R1 R1 PIPE_RWAIT
+    BL waitq_wake_all
+    MOV R1 R10      ;written bytes
+    POP LR
+    RET
+
+pipe_write_badptr:
+    LI R1 ERR_FAULT
+    POP LR
+    RET
+
+pipe_write_empty:
+    LI R1 0
+    POP LR
+    RET
+
+pipe_write_sleep:
+;setup tasks for block on write (pipe buffer is full)
+    MOV R1 R9
+    ADD R1 R1 PIPE_WWAIT
+    LI R2 WAIT_PIPE_WRITE
+    BL waitq_prepare_sleep
+    ; race check
+    LDW R4 [R9 + PIPE_COUNT]
+    LI R2 256
+    CMP R4 R2
+    BLT pipe_write_retry    ;if not full dont block/frezze go write
+
+    BL waitq_sleep_current  ;block anf freeze writer here until reading buffer frees room in pipe!
+
+    B pipe_write_retry      ; unblocked! go write!
+
+fd_remove:
+ ;================================================================
+ ;  frees fd_entry of this fd ; fd_table[fd] = null + gives this file_ptr for file_free
+ ;  in R1 = fd
+ ;  out R1 = file* / R1 = 0 if invalid
+ ;================================================================
+    CMP R1 3
+    BLT fd_remove_invalid
+
+    CMP R1 MAX_FDS
+    BGE fd_remove_invalid
+
+    MOV R8 R1
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R4, R4
+    TASK_GET_FD_TABLE R4, R4
+
+    SHL R5 R8 2
+    ADD R6 R4 R5
+
+    LDW R1 [R6]
+    CMP R1 0
+    BEQ fd_remove_invalid
+
+    LI R7 0
+    STW R7 [R6]
+
+    RET
+
+fd_remove_invalid:
+    LI R1 0
+    RET
+
 
 syscall_read:
     ;================================================================
@@ -786,18 +1705,18 @@ write_done:
     RET
 
 driver_bad_pointer:
-    LI R1 0xFFF0
+    LI R1 ERR_FAULT
     POP LR
     RET
 
 bad_fd:
-    LI R1 0xFFF1
+    LI R1 ERR_BADF
     STW R1 [SP + TF_R1]
 
     B trap_restore
 
 bad_pointer:
-    LI R1 0xFFF2
+    LI R1 ERR_FAULT
     STW R1 [SP + TF_R1]
 
     B trap_restore
@@ -904,6 +1823,45 @@ dcw_done:
     MOV R1 R5                   ; return number of bytes written
     RET
 
+null_read:
+    ;================================================================
+    ; R1 = file ptr, R2 = user buffer, R3 = len
+    ; /dev/null always returns EOF without touching the destination.
+    ;================================================================
+
+    LI R1 0
+    RET
+
+null_write:
+    ;================================================================
+    ; R1 = file ptr, R2 = user buffer, R3 = len
+    ; /dev/null discards valid input and reports all bytes written.
+    ;================================================================
+
+    PUSH LR
+    MOV R6 R3
+    CMP R6 0
+    BEQ null_write_done
+
+    PUSH R6
+    MOV R1 R2
+    MOV R2 R6
+    LI R3 0                    ; read access from user source
+    BL user_buffer_valid_range
+    POP R6
+    CMP R1 1
+    BNE null_write_badptr
+
+null_write_done:
+    MOV R1 R6
+    POP LR
+    RET
+
+null_write_badptr:
+    LI R1 ERR_FAULT
+    POP LR
+    RET
+
 fetch_fd_entry:
     ;================================================================
     ; R1 = fd, R2 = required flags
@@ -916,7 +1874,7 @@ fetch_fd_entry:
 
     CMP R1 0
     BLT fd_invalid
-    CMP R1 3
+    CMP R1 MAX_FDS
     BGE fd_invalid
 
     MOV R8 R1                   ; preserve fd across task lookup macros
@@ -949,6 +1907,9 @@ user_buffer_valid_range:
     ; - each page spanned by the buffer must be present (P) and user-accessible (U) in the page table
     ; - if access type is write, pages must also have the writable (W) bit set
     ;================================================================
+    PUSH R10
+    PUSH R11
+    PUSH R12
 
     LI R4 0
     CMP R2 R4
@@ -1032,10 +1993,17 @@ uv_next:
 
 uv_valid:
     LI R1 1
+    POP R12
+    POP R11
+    POP R10
     RET
 
 uv_invalid:
     LI R1 0
+
+    POP R12
+    POP R11
+    POP R10
     RET
 
 copy_from_user:
@@ -1281,7 +2249,10 @@ trap_restore:
 .EQU SYS_DEBUG,    3
 .EQU SYS_WRITE,    4
 .EQU SYS_READ,     5
-.EQU SYS_COUNT,    6
+.EQU SYS_OPEN,     6
+.EQU SYS_CLOSE,    7
+.EQU SYS_PIPE,     8
+.EQU SYS_COUNT,    9
 
 ;=============================================================
 ; Task States
@@ -1301,6 +2272,8 @@ trap_restore:
 .EQU WAIT_NONE,        0
 .EQU WAIT_UART_RX,     1
 .EQU WAIT_UART_TX,     2
+.EQU WAIT_PIPE_READ,   3
+.EQU WAIT_PIPE_WRITE,  4
 
 ;=============================================================
 ; Task resume modes
@@ -1351,13 +2324,43 @@ CURRENT_TASK:
     .WORD 0
 
 ;==============================================================
-; File descriptor table and device objects
+; kernel file pool for 32 openings open can be made for the same fd
+; FILE_SIZE = file struct size
+; holds list of file structs
 ;==============================================================
 
-fd_table:
+.EQU MAX_FILES, 32    ;max files can be opened
+
+file_pool:
+    .SPACE MAX_FILES * FILE_SIZE
+
+file_used:
+    .SPACE MAX_FILES * 4
+
+;==============================================================
+; File descriptor table per task and device objects
+;==============================================================
+
+.EQU MAX_FDS, 16
+
+task0_fd_table:
     .WORD file_stdin
     .WORD file_stdout
     .WORD file_stderr
+    .SPACE 13*4 ;MAX_FDS-3
+
+task1_fd_table:
+    .WORD file_stdin
+    .WORD file_stdout
+    .WORD file_stderr
+    .SPACE 13*4
+
+task2_fd_table:
+    .WORD file_stdin
+    .WORD file_stdout
+    .WORD file_stderr
+    .SPACE 13*4
+
 
 ;==============================================================
 ; File objects and console device
@@ -1381,6 +2384,7 @@ file_stderr:
     .WORD 0
     .WORD FD_FLAG_WRITE
 
+; special con uart related
 con_ops:
     .WORD con_read
     .WORD con_write
@@ -1395,6 +2399,67 @@ con_device:
     .WORD uart_rx_queue
     .WORD uart_tx_queue
     .WORD 0x00100000
+
+;pipe ops
+pipe_ops:
+    .WORD pipe_read
+    .WORD pipe_write
+
+
+;==============================================================
+; device registry
+; used for open lookups
+;==============================================================
+
+dev_console_name:
+    .ASCIIZ "/dev/console"
+
+dev_null_name:
+    .ASCIIZ "/dev/null"
+
+.EQU DEV_NAME,    0
+.EQU DEV_OPS,     4
+.EQU DEV_PRIVATE, 8
+.EQU DEV_SIZE,    12
+.EQU DEVICE_COUNT, 2
+
+device_table:
+
+dev_console:
+    .WORD dev_console_name
+    .WORD con_ops
+    .WORD con_device
+
+dev_null:
+    .WORD dev_null_name
+    .WORD null_ops
+    .WORD null_device
+
+; null device
+null_ops:
+    .WORD null_read
+    .WORD null_write
+
+null_device:
+    .WORD 0
+    .WORD 0
+    .WORD 0
+
+; pipe struct
+.EQU MAX_PIPES     4
+.EQU PIPE_HEAD     0        ;used for wr to pipe
+.EQU PIPE_TAIL     4        ;for rd
+.EQU PIPE_COUNT    8        ;amount of wr/rd cycle
+.EQU PIPE_RWAIT   12        ;rd waitq - processes waiting read (blocked) like uart_rx_waitq (by bits) task 0 - 1 bit and so on
+.EQU PIPE_WWAIT   16        ;wr waitq - current procs waiting for write (blocked)
+.EQU PIPE_BUFFER  20        ; curcular pipe buffer of 256 bytes if head or tail get 256 it resets this idx to zero
+.EQU PIPE_SIZE    276       ; plus 256 bytes - actual pipes buffer is in here start (ptr+20)
+
+pipe_pool:
+    .SPACE MAX_PIPES * PIPE_SIZE
+
+pipe_used:
+    .SPACE MAX_PIPES * 4
 
 ;==============================================================
 ; Wait queues owned by the UART console device
@@ -1545,7 +2610,7 @@ wq_wake_done:
 ;EQU FD_FLAG_READ,    1
 ;EQU FD_FLAG_WRITE,   2
 
-; file
+; file struc
 ;EQU FILE_OPS,      0
 ;EQU FILE_PRIVATE,  4
 ;EQU FILE_OFFSET,   8
@@ -1580,6 +2645,87 @@ wq_wake_done:
 .EQU TASK0_USTACK_TOP, 0x6000
 .EQU TASK1_USTACK_TOP, 0x6000
 .EQU TASK2_USTACK_TOP, 0x6000
+
+;=================================================================
+;FILE HELPERS
+;=================================================================
+
+;=================================================================
+; file_alloc:
+; input none
+; output:
+; R1 = pointer to FILE object in file_pool
+; R1 = 0 if no free slots
+;=================================================================
+
+file_alloc:
+
+    LI R2 0                      ; index
+
+fa_loop:
+    CMP R2 MAX_FILES
+    BGE fa_fail
+
+    SHL R3 R2 2                  ; index * 4
+    LI R4 file_used              ; look in file_used list 0 free 1 used
+    ADD R4 R4 R3
+
+    LDW R5 [R4]
+    CMP R5 0
+    BEQ fa_found
+
+    ADD R2 R2 1
+    B fa_loop
+
+fa_found:
+    LI R5 1
+    STW R5 [R4]                  ; mark slot used
+
+    LI R4 FILE_SIZE
+    MUL R6 R2 R4
+
+    LI R1 file_pool
+    ADD R1 R1 R6                 ; R1 = file object pointer
+
+    ;clean this slot
+    LI R7 0
+
+    STW R7 [R1 + FILE_OPS]
+    STW R7 [R1 + FILE_PRIVATE]
+    STW R7 [R1 + FILE_OFFSET]
+    STW R7 [R1 + FILE_FLAGS]
+
+    RET
+
+fa_fail:
+    LI R1 0
+    RET
+
+;=================================================================
+; file_free:
+; input:
+; R1 = pointer to FILE object
+; none output
+;=================================================================
+
+file_free:
+
+    LI R2 file_pool
+    SUB R3 R1 R2                 ; offset from pool base
+
+    LI R4 FILE_SIZE
+    DIV R5 R3 R4                 ; slot number
+
+    SHL R5 R5 2                  ; slot * 4
+
+    LI R6 file_used
+    ADD R6 R6 R5
+
+    LI R7 0
+    STW R7 [R6]                  ; mark free
+
+    RET
+
 
 ; ================================================================
 ; INIT SCHEDULER
@@ -1645,7 +2791,7 @@ init_scheduler:
     LI R1 TASK0_PTBR            ;set page table ptr
     TASK_SET_PTBR R2, R1
 
-    LI R1 fd_table
+    LI R1 task0_fd_table
     TASK_SET_FD_TABLE R2, R1 ;set fd_table ptr
 
     TASK_SET_WAIT R2, WAIT_NONE ;set wait reason field
@@ -1706,7 +2852,8 @@ init_scheduler:
 
     LI R1 TASK1_PTBR
     TASK_SET_PTBR R2, R1
-    LI R1 fd_table
+
+    LI R1 task1_fd_table
     TASK_SET_FD_TABLE R2, R1
     TASK_SET_WAIT R2, WAIT_NONE
     TASK_SET_RESUME R2, RESUME_TRAP
@@ -1766,7 +2913,8 @@ init_scheduler:
 
     LI R1 TASK2_PTBR
     TASK_SET_PTBR R2, R1
-    LI R1 fd_table
+
+    LI R1 task2_fd_table                ;per process fd_table
     TASK_SET_FD_TABLE R2, R1
     TASK_SET_WAIT R2, WAIT_NONE
     TASK_SET_RESUME R2, RESUME_TRAP
@@ -1977,30 +3125,49 @@ restore_kernel_context:         ;in case new task was stopped in kernel jump to 
     POP R1
     RET
 
+; need to define and allocate user stuff at user code
+.EQU USER_WRITE_BUF, 0x6000
+.EQU USER_READ_BUF,  0x6010
+; task2 daee page
+.org 0x6000
+task_b_console_path:
+    .ASCIIZ "/dev/console"
+
+task_b_msg:
+    .ASCIIZ "OPEN WRITE CLOSE\r\n"
+
+task_b_msg_len:
+    .WORD 18
+
+open_fail_msg:
+    .ASCIIZ "OPEN FAIL\r\n"
+
+open_fail_msg_len:
+    .WORD 11
+
 
 ; ================================================================
 ; TASKS
 ; ================================================================
 
-.ORG 0x8000
-
+.ORG 0x9000
 ; --TASK 0 ----------------------------------------------
-
-
 idle_task:
     ENABLEINT
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    DEBUG 1
-    ;trace anti-clutter sequence-)
-    LI R1 SYS_EXIT
-    SVC SYS_EXIT
+    ;DEBUG 3
+    ;LI R1 SYS_EXIT
+    ;SVC SYS_EXIT
     B idle_loop
 
 ; --TASK 1----------------------------------------------
 .ORG 0x19000
 TASK_A_START:
+    li R1 1
+write_loop1:
+    push R1
     ;DEBUG 2
     ; Prepare a write string in user memory.
     LI R1 USER_WRITE_BUF
@@ -2020,15 +3187,74 @@ TASK_A_START:
     LI R2 USER_WRITE_BUF    ; user buff
     LI R3 14                ; len
     SVC SYS_WRITE
-    DEBUG 1
+    ;DEBUG 1
+    pop R1
+    sub R1 R1 1
+    cmp r1 0
+    BNE write_loop1
     ; Exit after the write test.
     LI R1 SYS_EXIT
     SVC SYS_EXIT
 
 ; ---TASK 2---------------------------------------------
 
+
 .org 0x1a000
 TASK_B_START:
+
+task_b_loop:
+
+    ;=========================================
+    ; fd = open("/dev/console", WRITE)
+    ;=========================================
+
+    LI R1 task_b_console_path
+    LI R2 FD_FLAG_WRITE
+    SVC SYS_OPEN
+    ;DEBUG 1
+    MOV R8 R1                  ; save fd
+
+    ; open failed?
+    CMP R8 0
+    BLT task_b_open_fail
+
+    ;=========================================
+    ; write(fd, msg, len)
+    ;=========================================
+
+    MOV R1 R8
+    LI R2 task_b_msg
+    LI R3 18
+    SVC SYS_WRITE
+    ;DEBUG 2
+
+    ;=========================================
+    ; close(fd)
+    ;=========================================
+
+    MOV R1 R8
+    SVC SYS_CLOSE
+    DEBUG 2
+    ;=========================================
+    ; yield
+    ;=========================================
+
+    SVC SYS_YIELD
+
+    B task_b_loop
+
+task_b_open_fail:
+
+    LI R1 1
+    LI R2 open_fail_msg
+    LI R3 11
+    SVC SYS_WRITE
+    DEBUG 2
+
+    SVC SYS_YIELD
+
+    B task_b_loop
+
     li R1 10
 read_write_loop:
     push R1

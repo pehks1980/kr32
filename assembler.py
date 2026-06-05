@@ -1,4 +1,5 @@
 import argparse
+import ast
 import struct
 import sys
 
@@ -343,6 +344,15 @@ class Assembler:
                     self.listing.append({"type": "directive", **entry})
                     continue
 
+                elif tokens[0] == ".ASCIIZ":
+                    text = ast.literal_eval(source.split(None, 1)[1])
+
+                    self.lines.append(entry)
+                    self.listing.append({"type": "directive", **entry})
+
+                    self.pc += len(text) + 1
+                    continue
+
                 # instruction
                 self.lines.append(entry)
                 self.listing.append({"type": "instruction", **entry})
@@ -397,6 +407,8 @@ class Assembler:
         expr = expr.strip().upper()
 
         # parentheses later
+        if expr.startswith("-"):
+            return -self.resolve_expr(expr[1:])
 
         if "*" in expr:
             a, b = expr.split("*", 1)
@@ -461,6 +473,15 @@ class Assembler:
             return
 
         elif op == ".EQU":
+            return
+
+        elif op == ".ASCIIZ":
+            text = ast.literal_eval(entry["source"].split(None, 1)[1])
+
+            for ch in text:
+                self.emit8(ord(ch))
+
+            self.emit8(0)
             return
 
         # =================================================

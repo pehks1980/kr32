@@ -1545,7 +1545,7 @@ class CPU:
         self.running = True
 
         steps = 0
-        MAX_STEPS = 1_000_000
+        MAX_STEPS = 10_000_000
 
         while self.running:
             if self.pc in self.breakpoints:
@@ -1562,8 +1562,13 @@ class CPU:
             try:
                 self._execute_instruction(trace=trace)
             except TrapDelivery:
-                if trace and self.trace_output:
-                    print(f"PC={self.current_instr_pc:08X}  [TRAP] vector={self.trap_cause} -> handler=0x{self.pc:08X}")
+                # Trap delivery is part of normal guest execution: the trap
+                # has been vectorized into the guest kernel. Continue running
+                # until a real breakpoint/watchpoint/halt occurs.
+                if not self.running:
+                    self.stop_reason = ("trap", self.trap_cause)
+                    self.stop_info = {"cause": self.trap_cause, "pc": self.pc}
+                    break
                 continue
 
             if self._check_watchpoints():

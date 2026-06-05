@@ -20,6 +20,7 @@ wonderfull!
 """
 import sys
 import re
+from pathlib import Path
 
 
 def split_chunks(n, maxv=127):
@@ -47,8 +48,9 @@ TASK_FIELDS = {
 
 
 class Preprocessor:
-    def __init__(self):
+    def __init__(self, base_dir=None):
         self.out = []
+        self.base_dir = Path(base_dir or ".")
         self.in_func = False
         self.func = ""
         self.if_stack = []
@@ -320,6 +322,14 @@ class Preprocessor:
             self.emit(f".EQU {name} {val}")
             return
 
+        m = re.match(r'^#include\s+[<"]([^>"]+)[>"]$', code)
+        if m:
+            include_path = self.base_dir / m.group(1)
+            with include_path.open("r", encoding="utf-8") as f:
+                for included in f:
+                    self.handle(included.rstrip("\n"))
+            return
+
         # load8/store8 helpers
         m = re.match(r"^load8\s+(\w+)\s*,\s*\[(.+)\]$", code, re.IGNORECASE)
         if m:
@@ -377,7 +387,7 @@ def main(argv):
     with open(path, "r", encoding="utf-8") as f:
         src = f.readlines()
 
-    p = Preprocessor()
+    p = Preprocessor(Path(path).parent)
     out = p.process(src)
     for line in out:
         print(line)
