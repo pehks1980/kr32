@@ -201,14 +201,18 @@ class VMDbgShell(cmd.Cmd):
             return
         pc = addr
         for _ in range(count):
-            instr = self.cpu.mem_read_u32(pc, access="x")
+            instr = self.cpu.mem_peek_u32(pc, access="x")
+            if instr is None:
+                print(f"0x{pc:08X}: <unmapped>")
+                pc += 4
+                continue
             op = (instr >> 24) & 0xFF
             a = (instr >> 16) & 0xFF
             b = (instr >> 8) & 0xFF
             c = instr & 0xFF
             ext = None
             if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
-                ext = self.cpu.mem_read_u32(pc + 4, access="x")
+                ext = self.cpu.mem_peek_u32(pc + 4, access="x")
             print(f"0x{pc:08X}: {self.cpu.disasm(op, a, b, c, ext)}")
             pc += 4 + (4 if ext is not None else 0)
 

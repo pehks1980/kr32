@@ -402,19 +402,20 @@ class KM32TUI:
         lines = []
         addr = start
         while len(lines) < 30 and addr < pc + 8 * 12:
-            try:
-                instr = self.cpu.mem_read_u32(addr, access="x")
-            except Exception:
-                break
+            instr = self.cpu.mem_peek_u32(addr, access="x")
+            if instr is None:
+                # Unmapped/out-of-range: show placeholder, skip ahead.
+                lines.append((addr, f"0x{addr:08X}: <unmapped>", addr == pc))
+                addr += 4
+                continue
             op = (instr >> 24) & 0xFF
             a = (instr >> 16) & 0xFF
             b = (instr >> 8) & 0xFF
             c = instr & 0xFF
             ext = None
             if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
-                try:
-                    ext = self.cpu.mem_read_u32(addr + 4, access="x")
-                except Exception:
+                ext = self.cpu.mem_peek_u32(addr + 4, access="x")
+                if ext is None:
                     ext = 0
             try:
                 asm = self.cpu.disasm(op, a, b, c, ext)
@@ -739,12 +740,9 @@ class KM32TUI:
             chunk = []
             for i in range(16):
                 if offset + i < size:
-                    try:
-                        value = self.cpu.mem_read_u8(row + i, "r")
-                    except Exception:
-                        value = 0
+                    value = self.cpu.mem_peek_u8(row + i, "r")
                     chunk.append(value)
-            hexvals = " ".join(f"{v:02X}" for v in chunk)
+            hexvals = " ".join("--" if v is None else f"{v:02X}" for v in chunk)
             lines.append(f"0x{row:08X}: {hexvals}")
         self.status = "mem"
         self.output_lines = lines[: self.output_win.getmaxyx()[0] - 2]
@@ -753,19 +751,19 @@ class KM32TUI:
         lines = []
         pc = addr
         for _ in range(count):
-            try:
-                instr = self.cpu.mem_read_u32(pc, access="x")
-            except Exception:
-                break
+            instr = self.cpu.mem_peek_u32(pc, access="x")
+            if instr is None:
+                lines.append(f"0x{pc:08X}: <unmapped>")
+                pc += 4
+                continue
             op = (instr >> 24) & 0xFF
             a = (instr >> 16) & 0xFF
             b = (instr >> 8) & 0xFF
             c = instr & 0xFF
             ext = None
             if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
-                try:
-                    ext = self.cpu.mem_read_u32(pc + 4, access="x")
-                except Exception:
+                ext = self.cpu.mem_peek_u32(pc + 4, access="x")
+                if ext is None:
                     ext = 0
             asm = self.cpu.disasm(op, a, b, c, ext)
             lines.append(f"0x{pc:08X}: {asm}")

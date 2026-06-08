@@ -989,6 +989,40 @@ class CPU:
         self.mem_write_u8_hlp(addr + 1, val >> 8)
         self.mem_write_u8_hlp(addr + 2, val >> 16)
         self.mem_write_u8_hlp(addr + 3, val >> 24)
+
+    # -----------------------------------------------------
+    # PASSIVE MEMORY PEEKS (no traps, no tracing, no state mutation)
+    # Used by debuggers/UIs to inspect memory around the current PC without
+    # triggering raise_trap side effects when a virtual address is unmapped.
+    # -----------------------------------------------------
+    def _peek_paddr(self, vaddr, access="r"):
+        if vaddr < 0:
+            return None
+        if not self.mmu.enabled:
+            paddr = vaddr & 0xFFFFFFFF
+        else:
+            try:
+                paddr, _ = self.mmu.translate(vaddr, access, self.mode)
+            except PageFault:
+                return None
+        if 0 <= paddr < len(self.physical_memory) and not self.is_mmio(paddr):
+            return paddr
+        return None
+
+    def mem_peek_u8(self, addr, access="r"):
+        paddr = self._peek_paddr(addr, access)
+        if paddr is None:
+            return None
+        return self.physical_memory[paddr]
+
+    def mem_peek_u32(self, addr, access="r"):
+        b0 = self.mem_peek_u8(addr, access)
+        b1 = self.mem_peek_u8(addr + 1, access)
+        b2 = self.mem_peek_u8(addr + 2, access)
+        b3 = self.mem_peek_u8(addr + 3, access)
+        if b0 is None or b1 is None or b2 is None or b3 is None:
+            return None
+        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
     #-----------------------------------------------------
     # hexdump and physical_hexdump: Helpers to display memory contents in a human
     # readable format, showing both hexadecimal byte values and their ASCII representation.
@@ -1547,11 +1581,16 @@ class CPU:
         steps = 0
         MAX_STEPS = 10_000_000
 
+        # If we're resuming AT a breakpoint, skip it on the first iteration so
+        # 'continue' makes forward progress instead of immediately re-stopping.
+        skip_initial_bp = self.pc in self.breakpoints
+
         while self.running:
-            if self.pc in self.breakpoints:
+            if self.pc in self.breakpoints and not skip_initial_bp:
                 self.stop_reason = ("breakpoint", self.pc)
                 self.stop_info = {"pc": self.pc}
                 break
+            skip_initial_bp = False
 
             steps += 1
             if steps > MAX_STEPS:
