@@ -1,149 +1,88 @@
-# KR32 Memory Map (updated)
+# KR32 Memory Map
 
-Physical memory
-===============
+The active scheduler uses dynamically allocated page tables and physical
+pages. Every task sees the same user data and stack virtual addresses, while
+those addresses resolve to different physical pages.
 
-0x00000000  +-------------------------------+
-            | boot / reset vector            |
-            | mapped global supervisor       |
-0x00001000  +-------------------------------+
+User virtual layout
+===================
 
-0x00002000  +-------------------------------+
-            | kernel trap / scheduler code   |
-            | mapped global supervisor       |
-0x00003000  +-------------------------------+
+0x00005000  USER_BASE
 
-0x00003000  +-------------------------------+
-            | task0 kernel trapframe bottom  |
-            | mapped global supervisor       |
-0x00004000  +-------------------------------+
+0x00006000  USER_DATA_VA
+            One read/write user page per task.
 
-0x00004000  +-------------------------------+
-            | kernel stacks                  |
-            | task0 kstack top: 0x4000       |
-            | task1 kstack top: 0x4200       |
-            | task2 kstack top: 0x4400       |
-            | mapped global supervisor       |
-0x00005000  +-------------------------------+
+0x00009000  Current idle-task executable VA.
+0x00019000  Current task-A executable VA.
+0x0001A000  Current task-B executable VA.
+            Executable pages retain their assembled VAs for now and are
+            mapped only into the owning task.
 
-0x00005000  +-------------------------------+
-            | task0 user stack physical page |
-0x00006000  +-------------------------------+
+0x0003F000  USER_STACK_VA
+            One read/write user stack page per task.
 
-0x00006000  +-------------------------------+
-            | task0 user data physical page  |
-0x00007000  +-------------------------------+
+0x00040000  USER_STACK_TOP
+            Initial SP for every task. The stack grows down into 0x3F000.
+            This address is also one byte above USER_LIMIT.
 
-0x00007000  +-------------------------------+
-            | scheduler task table           |
-            | CURRENT_TASK                   |
-            | mapped global supervisor       |
-0x00008000  +-------------------------------+
+User pointers are valid only in:
 
-0x00008000  +-------------------------------+
-            | task user code page (TASK0)    |
-            | idle_task (user)               |
-            | mapped user RX                 |
-0x00009000  +-------------------------------+
+    USER_BASE <= address <= USER_LIMIT (0x0003FFFF)
 
-0x00009000  +-------------------------------+
-            | PTBR0_VA (virtual location where TASK0 PTBR is mapped) |
-0x0000A000  +-------------------------------+
+Every page in a syscall buffer must additionally be present, user-accessible,
+and have the requested read/write permission in the current task's page table.
 
-0x0000A000  +-------------------------------+
-            | PTBR1_VA (virtual location where TASK1 PTBR is mapped) |
-0x0000B000  +-------------------------------+
+Dynamic kernel physical pool
+============================
 
-0x0000B000  +-------------------------------+
-            | PTBR2_VA (virtual location where TASK2 PTBR is mapped) |
-0x0000C000  +-------------------------------+
+0x00040000  PAGE_ALLOC_BASE
+0x000C0000  PAGE_ALLOC_END (exclusive)
 
-0x0000B000  +-------------------------------+
-            | task1 user stack physical page  |
-0x0000C000  +-------------------------------+
+The allocator manages 128 4-KiB pages. The complete pool is identity-mapped
+in every address space with supervisor-only global permissions:
 
-0x0000C000  +-------------------------------+
-            | task2 user stack physical page  |
-0x0000D000  +-------------------------------+
+    VA physical_address -> PA physical_address [P R W X G]
 
-0x0000B000  +-------------------------------+
-            | task1 user data physical page  |
-0x0000C000  +-------------------------------+
+The pool currently contains dynamically allocated:
 
-0x0000C000  +-------------------------------+
-            | task2 user data physical page  |
-0x0000D000  +-------------------------------+
+- Page tables
+- Kernel stacks
+- Per-task file descriptor tables
+- Per-task kernel read/write buffers
+- User data backing pages
+- User stack backing pages
 
-0x00019000  +-------------------------------+
-            | task1 user code (TASK_A)       |
-0x0001A000  +-------------------------------+
-            | task2 user code (TASK_B)       |
-0x0001B000  +-------------------------------+
+Because these mappings do not have PTE_U, user mode cannot access the pool.
+Keeping the pool identity-mapped lets kernel code use the physical addresses
+stored in task structures directly.
 
-0x00200000  +-------------------------------+
-            | IDT / trap vector table        |
-            | physical only during setup now |
-            | NOTE: not mapped after MMU on  |
-0x00201000  +-------------------------------+
+Per-task mappings
+=================
 
-0x00400000  +-------------------------------+
-            | task0 page table (TASK0_PTBR)  |
-0x00500000  +-------------------------------+
-            | task1 page table (TASK1_PTBR)  |
-0x00600000  +-------------------------------+
-            | task2 page table (TASK2_PTBR)  |
-0x00700000  +-------------------------------+
+Each task owns a dynamically allocated PTBR. A typical task maps:
 
+    USER_DATA_VA  -> task-specific allocated PA [P R W U]
+    USER_STACK_VA -> task-specific allocated PA [P R W U]
+    entry page    -> current assembled executable PA [P R X U]
 
-Virtual mappings shared by all tasks
-====================================
+The idle task runs in supervisor mode, so its entry page is supervisor-only.
 
-VA 0x00000000 -> PA 0x00000000   [P R W X G] supervisor
-VA 0x00002000 -> PA 0x00002000   [P R W X G] supervisor
-VA 0x00003000 -> PA 0x00003000   [P R W X G] supervisor
-VA 0x00004000 -> PA 0x00004000   [P R W X G] supervisor
-VA 0x00007000 -> PA 0x00007000   [P R W X G] supervisor
+Common kernel mappings
+======================
 
-VA 0x00008000 -> PA 0x00008000   [P R X U]   user code (idle_task)
-VA 0x00019000 -> PA 0x00019000   [P R X U]   user code (TASK_A)
-VA 0x0001A000 -> PA 0x0001A000   [P R X U]   user code (TASK_B)
+Static kernel code/data pages and MMIO pages remain identity-mapped,
+supervisor-only, and global. The dynamic allocator pool is mapped the same
+way. User executable pages are not common/global mappings.
 
-VA 0x00009000 -> PA 0x00400000   [P R W X G] kernel-only (TASK0 page-table mapping)
-VA 0x0000A000 -> PA 0x00500000   [P R W X G] kernel-only (TASK1 page-table mapping)
-VA 0x0000B000 -> PA 0x00600000   [P R W X G] kernel-only (TASK2 page-table mapping)
+Boot sequence
+=============
 
-Task 0 address space
-====================
+1. Clear the physical-page allocator bitmap.
+2. `init_scheduler` creates tasks and their page tables dynamically.
+3. Load task zero's PTBR and kernel trapframe SP.
+4. Enable the MMU.
+5. Enter `trap_restore`.
 
-PTBR = 0x00400000
-
-VA 0x00005000 -> PA 0x00005000   [P R W U]   user stack
-VA 0x00006000 -> PA 0x00006000   [P R W U]   user data
-
-Task 1 address space
-====================
-
-PTBR = 0x00500000
-
-VA 0x00005000 -> PA 0x0000B000   [P R W U]   user stack
-VA 0x00006000 -> PA 0x0000D000   [P R W U]   user data
-
-Task 2 address space
-====================
-
-PTBR = 0x00600000
-
-VA 0x00005000 -> PA 0x0000C000   [P R W U]   user stack
-VA 0x00006000 -> PA 0x0000E000   [P R W U]   user data
-
-Important notes
-===============
-- `PTBR0_VA`, `PTBR1_VA`, `PTBR2_VA` are defined as `0x00009000`, `0x0000A000`, `0x0000B000` in `kernelshed.asm` and are mapped
-  by `map_common_kernel` to the physical page-table bases (`TASK0_PTBR`, `TASK1_PTBR`, `TASK2_PTBR`) with kernel flags.
-- User code pages for `TASK_A` and `TASK_B` were moved to physical addresses `0x00019000` and `0x0001A000` and are
-  identity-mapped in the virtual address space at the same VA (`0x00019000` and `0x0001A000`).
-- With the current page-map changes the PTBR VAs (`0x9000/0xA000/0xB000`) are distinct from user-code VAs
-  (`0x8000/0x19000/0x1A000`), so collisions are avoided. Keep PTBR VAs reserved for kernel-only mappings to
-  prevent accidental overlap with user pages.
-
-Note: `0x00200000` IDT is used physically by the VM's `raise_trap` path and does not require a virtual mapping.
+The old static `TASK0_PTBR`/`TASK1_PTBR`/`TASK2_PTBR` areas and
+`init_scheduler1` remain only as legacy reference code; the active boot path
+does not use them.

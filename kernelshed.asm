@@ -35,10 +35,6 @@ B KERNEL_START
 .EQU PAGE_SIZE,    0x1000
 .EQU PAGE_MASK,    0x0FFF
 
-.EQU PTBR0_VA,     0x00010000
-.EQU PTBR1_VA,     0x00020000
-.EQU PTBR2_VA,     0x00030000
-
 ;.EQU TASK0_PTBR,   0x00010000   ; page table at 64KB (one 1 MiB one-level table per address space)
 ;.EQU TASK1_PTBR,   0x00020000   ; page table at 128KB
 ;done via alloc down .EQU TASK2_PTBR,   0x00030000   ; page table at 192KB
@@ -54,9 +50,12 @@ B KERNEL_START
 
 ;memory map used for data validation when make syscalls which transfer data b/w kernel and user
 .EQU KERNEL_BASE,     0x0000
-.EQU KERNEL_LIMIT,    0x7FFF
+.EQU KERNEL_LIMIT,    0x000BFFFF
 .EQU USER_BASE,       0x00005000
-.EQU USER_LIMIT,      0x000FFFFF
+.EQU USER_DATA_VA,    0x00006000
+.EQU USER_STACK_VA,   0x0003F000
+.EQU USER_STACK_TOP,  0x00040000
+.EQU USER_LIMIT,      0x0003FFFF
 
 .EQU KBUFFER_SIZE,   256
 .EQU FD_FLAG_READ,    1
@@ -145,13 +144,18 @@ func KERNEL_START
         ; Initialize MMIO devices (PIC, PIT, UART)
         call init_mmio_devices
 
+        ; Activate the first dynamically created address space before
+        ; enabling translation and restoring its initial trapframe.
+        LI R1 tasks
+        LDW R2 [R1 + TASK_PTBR]
+        SETPTBR R2
+        LDW SP [R1 + TASK_KSP]
+
         ; Enable MMU and interrupts
         call enable_vm
 
         ; Start first task through the same trapframe restore path used
         ; by preemptive switches.
-        LI R1 tasks
-        LDW SP [R1 + TASK_KSP]
         ; jump to task0 entry point (0x5000) through the same trap restore 
         B trap_restore
 
@@ -185,62 +189,12 @@ init_idt:
 init_page_tables:
     PUSH LR
 
-    ; EVERY TASK owns a different PTBR. Kernel pages are mapped into ALL
-    ; address spaces as supervisor global entries; user stack/data pages are
-    ; mapped per task to prove same-VA, different-PA isolation.
-    LI R1 TASK0_PTBR            ; task 0 page table pointer (phys address)
-    BL map_common_kernel        ; map kernel page table for task 0 - a kernel process "idle loop" run in kernel mode
-    LI R2 0x00005000            ; page VA -virt addr
-    LI R3 TASK0_USTACK_PA       ; page PA -phys addr (.org one)
-    LI R4 USER_RW               ; page access matrix stored it page table entry (PTE)
-    BL map_page
-    LI R2 0x00006000
-    LI R3 TASK0_DATA_PA
-    LI R4 USER_RW
-    BL map_page
+    ; Page tables are created by task_create. Boot only initializes the
+    ; physical-page allocator before the scheduler starts allocating tasks.
+    LI R1 page_bitmap
+    LI R3 16
+    BL mem_zero
 
-    LI R1 TASK1_PTBR             ; USER task 1 page table pointer (phys address)
-    BL map_common_kernel
-    ; Map user stack/data region: 0x17000-0x19000 for user code and stack space
-    LI R2 0x00017000             ;page 1: stack area
-    LI R3 0x00007000             ;allocate physical page for stack
-    LI R4 USER_RW
-    BL map_page
-    LI R2 0x00018000             ;page 2: stack area
-    LI R3 TASK1_DATA_PA          ;physical address
-    LI R4 USER_RW
-    BL map_page
-    LI R2 0x00005000             ;legacy: page used for stack (map for compatibility)
-    LI R3 TASK1_USTACK_PA        ; physical address
-    LI R4 USER_RW
-    BL map_page
-    LI R2 0x00006000             ;legacy: page used for data (map for compatibility)
-    LI R3 0x0000E000             ;another physical page
-    LI R4 USER_RW
-    BL map_page
-
-    LI R1 TASK2_PTBR            ; USER task 2 - same
-    BL map_common_kernel
-    ; Map user stack/data region: 0x17000-0x19000 for user code and stack space
-    LI R2 0x00017000             ;page 1: stack area
-    LI R3 0x0000F000             ;allocate physical page for stack
-    LI R4 USER_RW
-    BL map_page
-    LI R2 0x00018000             ;page 2: stack area
-    LI R3 TASK2_DATA_PA          ;physical address
-    LI R4 USER_RW
-    BL map_page
-    LI R2 0x00005000             ;legacy: page used for stack (map for compatibility)
-    LI R3 TASK2_USTACK_PA
-    LI R4 USER_RW
-    BL map_page
-    LI R2 0x00006000             ;legacy: page used for data (map for compatibility)
-    LI R3 TASK0_DATA_PA          ;shared user literals at 0x6000
-    LI R4 USER_RW
-    BL map_page
-
-    LI R1 TASK0_PTBR
-    SETPTBR R1
     POP LR
     RET
 
@@ -250,9 +204,10 @@ init_page_tables:
 
 map_common_kernel:
     PUSH LR
+    PUSH R12
 
-    ; Boot page, kernel/trap code, kernel stacks, scheduler/task metadata,
-    ; and the user text page are identity-mapped into every address space.
+    ; Boot page, kernel/trap code, static kernel data, and MMIO are
+    ; identity-mapped into every address space.
     LI R2 0x00000000      ;page 0 - boot (0000)
     LI R3 0x00000000
     LI R4 KERNEL_FLAGS
@@ -306,21 +261,25 @@ map_common_kernel:
     LI R4 KERNEL_FLAGS
     BL map_page
 
-    LI R2 0x00009000      ; page 5 text page (program) for user mode process
-    LI R3 0x00009000
-    LI R4 KERN_USER_RX
+    ; Dynamically allocated page tables, kernel stacks, fd tables and
+    ; kernel buffers are addressed by their physical address in kernel
+    ; code. Keep the complete allocator pool identity-mapped and
+    ; supervisor-only in every address space.
+    LI R12 PAGE_ALLOC_BASE
+    LI R7 PAGE_ALLOC_END
+map_common_dynamic_loop:
+    CMP R12 R7
+    BGE map_common_dynamic_done
+    MOV R2 R12
+    MOV R3 R12
+    LI R4 KERNEL_FLAGS
     BL map_page
+    LI R6 PAGE_SIZE
+    ADD R12 R12 R6
+    B map_common_dynamic_loop
+map_common_dynamic_done:
 
-    LI R2 0x00019000      ; page 5 text page (program) for user mode process
-    LI R3 0x00019000
-    LI R4 KERN_USER_RX
-    BL map_page
-    
-    LI R2 0x0001a000      ; page 5 text page (program) for user mode process
-    LI R3 0x0001a000
-    LI R4 KERN_USER_RX
-    BL map_page
-
+    POP R12
     POP LR
     RET
 
@@ -1910,26 +1869,10 @@ user_buffer_valid_range:
     GET_CURR_TASK_IDX R6
     GET_TASK_PTR R6, R6
     TASK_GET_PTBR R6, R6
-    LI R7 TASK0_PTBR
-
-    CMP R6 R7
-    BEQ uv_ptbr0
-    LI R7 TASK1_PTBR
-    CMP R6 R7
-    BEQ uv_ptbr1
-    LI R7 TASK2_PTBR
-    CMP R6 R7
-    BEQ uv_ptbr2
-    B uv_invalid
-
-uv_ptbr0:
-    LI R6 PTBR0_VA
-    B uv_check_pages
-uv_ptbr1:
-    LI R6 PTBR1_VA
-    B uv_check_pages
-uv_ptbr2:
-    LI R6 PTBR2_VA
+    ; Dynamic page tables live in the supervisor-only allocator pool,
+    ; which is identity-mapped into every task address space.
+    CMP R6 0
+    BEQ uv_invalid
 
 uv_check_pages:
     SHR R7 R11 12
@@ -2286,7 +2229,9 @@ trap_restore:
 .EQU TASK_KBUF_WR_PTR, 36     ; pointer to this task's kernel write buffer
 .EQU TASK_KBUF_RD_PTR, 40     ; pointer to this task's kernel read buffer
 .EQU TASK_DATA_PAGE, 44       ; pointer to this task's data page (for exec/args)
-.EQU TASK_SIZE       48
+.EQU TASK_USTACK_PAGE, 48     ; physical page backing fixed USER_STACK_VA
+.EQU TASK_KSTACK_PAGE, 52     ; identity-mapped physical kernel stack page
+.EQU TASK_SIZE       56
 
 
 
@@ -2722,7 +2667,7 @@ init_scheduler:
     LI  R2 TASK_SIZE
     LI  R3 MAX_TASKS
     MUL R3 R2 R3
-    ;BL  mem_zero          ;zero (bytes) the whole task table for clean slate
+    BL  mem_zero          ;zero (bytes) the whole task table for clean slate
 
     ; ----------------------------------
     ; idle task
@@ -3182,6 +3127,7 @@ restore_kernel_context:         ;in case new task was stopped in kernel jump to 
 .EQU PAGE_ALLOC_BASE 0x00040000
 
 .EQU MAX_PHYS_PAGES 128
+.EQU PAGE_ALLOC_END  0x000C0000
 
 
 ; 0 = free
@@ -3373,6 +3319,7 @@ task_create:
 
     MOV R8 R1          ; entry
     MOV R9 R2          ; pid
+    LI R10 0           ; task pointer, kept zero until task_alloc succeeds
 
     ; ----------------------------------
     ; allocate task slot
@@ -3384,6 +3331,14 @@ task_create:
     BEQ task_create_fail
 
     MOV R10 R1         ; R10 = task pointer
+
+    ; A recycled slot may still contain pointers from its previous owner.
+    ; Clear it before recording resources so failure cleanup is reliable.
+    MOV R1 R10
+    LI R3 TASK_SIZE
+    BL mem_zero
+    TASK_SET_PC R10, R8
+    TASK_SET_PID R10, R9
 
     ; ----------------------------------
     ; allocate PTBR page
@@ -3405,6 +3360,24 @@ task_create:
     BL map_common_kernel        ; map kernel space into new page table so task can run in it 
         ;and call kernel functions and access kernel data structures when needed
 
+    ; Map only this task's executable page. User programs currently retain
+    ; their assembled entry VAs; data and stack VAs are common to all tasks.
+    TASK_GET_PC R8, R10
+    TASK_GET_PID R9, R10
+    TASK_GET_PTBR R1, R10
+    MOV R2 R8
+    LI R3 0xFFFFF000
+    AND R2 R2 R3
+    MOV R3 R2
+    CMP R9 0
+    BEQ task_create_map_kernel_entry
+    LI R4 USER_RX
+    B task_create_map_entry
+task_create_map_kernel_entry:
+    LI R4 KERNEL_FLAGS
+task_create_map_entry:
+    BL map_page
+
     ; ----------------------------------
     ; allocate user stack page
     ; ----------------------------------
@@ -3412,17 +3385,16 @@ task_create:
     BL page_alloc
     CMP R1 0
     BEQ task_create_fail
-    LI R2, PAGE_SIZE
-
-    ADD R11 R1 R2            ; last address of the new page for user stack top
-
-    TASK_SET_USP R10, R11           ; set user stack pointer to the top of the new page (stacks grow down)
 
     MOV R12 R1
+    TASK_SET_USTACK_PAGE R10, R12
+
+    LI R11 USER_STACK_TOP
+    TASK_SET_USP R10, R11           ; all tasks use the same virtual stack top
 
     TASK_GET_PTBR R1, R10       ; get task page table base to map user stack page into it
 
-    LI  R2 R3               ; user stack page va = pa
+    LI  R2 USER_STACK_VA
     MOV R3 R12
     LI  R4 USER_RW
     ;R1 = page table base R2=va to map R3=pa of page to map R4=permissions
@@ -3435,12 +3407,17 @@ task_create:
     BL page_alloc
     CMP R1 0
     BEQ task_create_fail
-    LI R2, PAGE_SIZE
+
+    TASK_SET_KSTACK_PAGE R10, R1
+    LI R2 PAGE_SIZE
 
     MOV R12 SP             ; save kernel SP before we mess with it for stack frame setup
 
     ADD SP R1 R2           ; last address of the new allocated physical 
                            ; page for kernel stack top
+
+    TASK_GET_PC R8, R10
+    TASK_GET_PID R9, R10
 
     ; ----------------------------------
     ; build initial trap frame
@@ -3473,7 +3450,13 @@ task_create:
     LI R1 0
     PUSH R1            ; sflags
 
+    CMP R9 0
+    BEQ task_create_kernel_status
     LI R1 0x20
+    B task_create_status_ready
+task_create_kernel_status:
+    LI R1 0x120
+task_create_status_ready:
     PUSH R1            ; sstatus
 
     LI R1 0
@@ -3488,12 +3471,6 @@ task_create:
     TASK_SET_KSP R10, R1                    ; save kernel trapframe SP in task struct
 
     MOV SP R12         ; restore kernel SP after stack frame setup
-
-    TASK_SET_PC R10, R8                     ; set task entry point as start PC debug/metadata
-
-    TASK_SET_STATE R10, TASK_READY          ; set task state to ready
-
-    TASK_SET_PID R10, R9                    ; set task PID
 
     TASK_SET_WAIT R10, WAIT_NONE            ; set wait reason to none (not sleeping)
 
@@ -3514,8 +3491,8 @@ task_create:
 
     MOV R12 R1
 
-    LI  R2 0
     LI  R3 PAGE_SIZE
+    MOV R1 R12
     BL  mem_zero
 
     ; stdin
@@ -3558,10 +3535,13 @@ task_create:
 
     TASK_GET_PTBR R1, R10
 
-    LI  R2 0x6000               ; data page va - we can make it dynamic later but for now it's fixed and same for all tasks since they can't run at the same time and we have only 1 data page per task
+    LI  R2 USER_DATA_VA
     MOV R3 R12
     LI  R4 USER_RW
     BL map_page                 ; map task data page into task page table with RW permissions for user
+
+    ; Publish the task only after every required resource and mapping exists.
+    TASK_SET_STATE R10, TASK_READY
 
     MOV R1 R10                              ; return created task pointer
 
@@ -3571,6 +3551,58 @@ task_create:
 
 task_create_fail:
 
+    ; task_alloc can fail before R10 is assigned.
+    CMP R10 0
+    BEQ task_create_fail_return
+
+    ; Release every resource already attached to the unpublished task.
+    TASK_GET_PTBR R1, R10
+    CMP R1 0
+    BEQ task_create_free_ustack
+    BL page_free
+
+task_create_free_ustack:
+    TASK_GET_USTACK_PAGE R1, R10
+    CMP R1 0
+    BEQ task_create_free_kstack
+    BL page_free
+
+task_create_free_kstack:
+    TASK_GET_KSTACK_PAGE R1, R10
+    CMP R1 0
+    BEQ task_create_free_fd
+    BL page_free
+
+task_create_free_fd:
+    TASK_GET_FD_TABLE R1, R10
+    CMP R1 0
+    BEQ task_create_free_kwr
+    BL page_free
+
+task_create_free_kwr:
+    TASK_GET_KBUF_WR R1, R10
+    CMP R1 0
+    BEQ task_create_free_krd
+    BL page_free
+
+task_create_free_krd:
+    TASK_GET_KBUF_RD R1, R10
+    CMP R1 0
+    BEQ task_create_free_data
+    BL page_free
+
+task_create_free_data:
+    TASK_GET_DATA_PAGE R1, R10
+    CMP R1 0
+    BEQ task_create_clear_slot
+    BL page_free
+
+task_create_clear_slot:
+    MOV R1 R10
+    LI R3 TASK_SIZE
+    BL mem_zero
+
+task_create_fail_return:
     LI R1 0
 
     POP LR
@@ -3773,4 +3805,3 @@ open_fail_msg:
 
 open_fail_msg_len:
     .WORD 11
-
