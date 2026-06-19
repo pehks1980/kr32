@@ -48,6 +48,7 @@ OP = {
     "STW":  0x25,
     "LDBS": 0x26, #load byte signed
     "LDHS": 0x27,
+    "NOT":  0x28, # bitwise NOT
 
     "BL":   0x30,   # branch link lr
     "RET":  0x31,   # return from subroutine pc from lr 
@@ -523,6 +524,14 @@ class Assembler:
                     raise ValueError(f"{op} immediate out of range (0..127): {imm}")
                 self.emit32(self.encode(OP[op], rd, rs1, 0x80 | imm))
 
+        elif op == "NOT":
+            rd = reg(p[1])
+            rs = reg(p[2])
+
+            self.emit32(
+                self.encode(OP["NOT"], rd, rs, 0)
+            )
+
         elif op in ("MUL", "DIV", "MOD", "DIVU", "MODU"):
             rd = reg(p[1])
             rs1 = reg(p[2])
@@ -728,7 +737,7 @@ class Assembler:
 
         elif op == "SRET":
             self.emit32(self.encode(OP[op]))
-
+    
         elif op == "CSRRW":
             self.emit32(self.encode(OP[op], reg(p[1]), csr(p[2]), reg(p[3])))
 

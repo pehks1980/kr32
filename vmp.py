@@ -487,20 +487,30 @@ class CPU:
             return f"MUL {self.reg_name(a)}, {self.reg_name(b)}, {self.reg_name(c)}"
         if op in (0x16, 0x17, 0x18, 0x19):
             return f"{op_name} {self.reg_name(a)}, {self.reg_name(b)}, {self.reg_name(c)}"
+        
         if op == 0x0F:
             return f"LI {self.reg_name(a)}, 0x{target:08X}"
+        
         if op == 0x04:
             rhs = f"#{c & 0x7F}" if c & 0x80 else self.reg_name(b)
             return f"CMP {self.reg_name(a)}, {rhs}"
+        
         if op in (0x05, 0x06, 0x07, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
             return f"{op_name} 0x{target:08X}"
+        
         if op == 0x10:
             return f"PUSH {self.reg_name(a)}"
+        
         if op == 0x11:
             return f"POP {self.reg_name(a)}"
+        
         if op in (0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27):
             offset = self.reg_name(c) if c & 0x80 else f"#{c}"
             return f"{op_name} {self.reg_name(a)}, [{self.reg_name(b)} + {offset}]"
+        
+        if op == 0x28:
+            return f"NOT {self.reg_name(a)}; {self.reg_name(b)}"
+
         if op == 0x31:
             return "RET"
 
@@ -1367,6 +1377,9 @@ class CPU:
                 else:
                     self.mem_write_u32(addr, self.r(rs))
                     mem_write = (addr, self.r(rs), 4)
+            
+            elif op == 0x28:
+                self.setr(a, ~self.r(b))
 
             elif op == 0x30:
                 self.setr(self.LR_REG, self.pc)

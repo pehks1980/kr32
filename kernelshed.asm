@@ -256,39 +256,7 @@ map_common_kernel:
     LI R2 0x00000000      ;page 0 - boot (0000)
     LI R3 0x00000000
     LI R4 KERNEL_FLAGS
-    BL map_page
-    LI R2 0x00002000      ;page 1,2,3 = kernel code (2000,3000,4000)
-    LI R3 0x00002000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-    LI R2 0x00003000
-    LI R3 0x00003000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-    LI R2 0x00004000
-    LI R3 0x00004000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-    LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
-    LI R3 0x00007000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-    LI R2 0x00008000      ; page 4 (number is page table entry one) tasks data
-    LI R3 0x00008000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-    LI R2 0x00009000      ; page 5 text page (program) for user mode process
-    LI R3 0x00009000
-    LI R4 KERN_USER_RX
-    BL map_page
-    LI R2 0x00019000      ; page 5 text page (program) for user mode process
-    LI R3 0x00019000
-    LI R4 KERN_USER_RX
-    BL map_page
-    LI R2 0x0001a000      ; page 5 text page (program) for user mode process
-    LI R3 0x0001a000
-    LI R4 KERN_USER_RX
-    BL map_page
+    bl map_page
 
     ; Kernel-only helpers: copy routines and page-table inspection
     LI R2 0x00001000      ; page for kernel buffers
@@ -296,37 +264,31 @@ map_common_kernel:
     LI R4 KERNEL_FLAGS
     BL map_page
 
-    ; Map page table memory pages into kernel address space so the kernel
-    ; can read/write page table entries after MMU is enabled
-    LI R2 0x00010000      ; page table for task 0
-    LI R3 0x00010000
+    LI R2 0x00002000      ;page 1,2,3 = kernel code (2000,3000,4000)
+    LI R3 0x00002000
     LI R4 KERNEL_FLAGS
     BL map_page
 
-    LI R2 0x00020000      ; page table for task 1
-    LI R3 0x00020000
+    LI R2 0x00003000
+    LI R3 0x00003000
     LI R4 KERNEL_FLAGS
     BL map_page
 
-    LI R2 0x00030000      ; page table for task 2
-    LI R3 0x00030000
+    LI R2 0x00004000
+    LI R3 0x00004000
     LI R4 KERNEL_FLAGS
     BL map_page
 
-    LI R2 PTBR0_VA
-    LI R3 TASK0_PTBR
+    LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
+    LI R3 0x00007000
     LI R4 KERNEL_FLAGS
     BL map_page
 
-    LI R2 PTBR1_VA
-    LI R3 TASK1_PTBR
+    LI R2 0x00008000      ; page 4 (number is page table entry one) tasks data
+    LI R3 0x00008000
     LI R4 KERNEL_FLAGS
     BL map_page
 
-    LI R2 PTBR2_VA
-    LI R3 TASK2_PTBR
-    LI R4 KERNEL_FLAGS
-    BL map_page
 
     ; Map MMIO pages (UART, Timer/PIT, and PIC) into kernel address space
     LI R2 0x00100000      ; UART physical and virtual base
@@ -342,6 +304,21 @@ map_common_kernel:
     LI R2 0x00102000      ; PIC physical and virtual base
     LI R3 0x00102000
     LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x00009000      ; page 5 text page (program) for user mode process
+    LI R3 0x00009000
+    LI R4 KERN_USER_RX
+    BL map_page
+
+    LI R2 0x00019000      ; page 5 text page (program) for user mode process
+    LI R3 0x00019000
+    LI R4 KERN_USER_RX
+    BL map_page
+    
+    LI R2 0x0001a000      ; page 5 text page (program) for user mode process
+    LI R3 0x0001a000
+    LI R4 KERN_USER_RX
     BL map_page
 
     POP LR
@@ -2308,7 +2285,9 @@ trap_restore:
 .EQU TASK_RESUME, 32          ; RESUME_* mode for TASK_KSP
 .EQU TASK_KBUF_WR_PTR, 36     ; pointer to this task's kernel write buffer
 .EQU TASK_KBUF_RD_PTR, 40     ; pointer to this task's kernel read buffer
-.EQU TASK_SIZE,   44
+.EQU TASK_DATA_PAGE, 44       ; pointer to this task's data page (for exec/args)
+.EQU TASK_SIZE       48
+
 
 
 ; =============================================================
@@ -2316,9 +2295,6 @@ trap_restore:
 ; =============================================================
 
 .ORG 0x7000
-
-tasks:
-    .SPACE 132             ; 3 tasks * 44 bytes
 
 CURRENT_TASK:
     .WORD 0
@@ -2341,9 +2317,9 @@ file_used:
 ; File descriptor table per task and device objects
 ;==============================================================
 
-.EQU MAX_FDS, 16
+.EQU MAX_FDS, 120   ;up to a page of 4k for fd tables per task, each entry is 4 bytes (file ptr) so 512 entries
 
-task0_fd_table:
+task0_fd_table: ; absolete minimum for stdin/stdout/stderr, can be extended with more files if needed
     .WORD file_stdin
     .WORD file_stdout
     .WORD file_stderr
@@ -2522,33 +2498,24 @@ waitq_cancel_sleep_current:
     PUSH R9
 
     MOV R9 R1
+
     GET_CURR_TASK_IDX R2
 
     LDW R4 [R9 + WQ_MASK]
-    CMP R2 0
-    BEQ wq_cancel_task0
-    CMP R2 1
-    BEQ wq_cancel_task1
 
-    LI R5 3                    ; clear bit 2, keep bits 0..1
-    AND R4 R4 R5
-    B wq_cancel_store
+    LI  R5 1
+    SHL R5 R5 R2        ;shift to position of current task bit
 
-wq_cancel_task0:
-    LI R5 6                    ; clear bit 0, keep bits 1..2
-    AND R4 R4 R5
-    B wq_cancel_store
+    NOT R5 R5           ; invert to get mask for clearing this bit
 
-wq_cancel_task1:
-    LI R5 5                    ; clear bit 1, keep bits 0 and 2
-    AND R4 R4 R5
+    AND R4 R4 R5        ; clear current task bit
 
-wq_cancel_store:
-    STW R4 [R9 + WQ_MASK]
+    STW R4 [R9 + WQ_MASK]   ; store back updated bitmask
 
     GET_TASK_PTR R5, R2
-    TASK_SET_STATE R5, TASK_READY
-    TASK_SET_WAIT R5, WAIT_NONE
+
+    TASK_SET_STATE R5, TASK_READY   ;update task state to ready
+    TASK_SET_WAIT  R5, WAIT_NONE    ;clear wait reason
 
     POP R9
     RET
@@ -2584,10 +2551,10 @@ waitq_wake_all:
     LI R2 0                    ; task index
 
 wq_wake_loop:
-    CMP R2 3
+    CMP R2 MAX_TASKS           ;check if we processed all tasks in bitmask
     BGE wq_wake_done
 
-    LI R3 1
+    LI R3 1 
     SHL R3 R3 R2               ; R3 = bit for task R2
     AND R4 R8 R3
     CMP R4 0
@@ -2731,7 +2698,88 @@ file_free:
 ; INIT SCHEDULER
 ; ================================================================
 
+; --------------------------------------------------
+; init_scheduler
+; cleans task table,
+; Creates:
+;   PID 0 = idle
+;   PID 1 = task A
+;   PID 2 = task B
+; Sets CURRENT_TASK=0 to start with the idle task.
+; --------------------------------------------------
+
 init_scheduler:
+
+    ;MOV R12 SP ;important we save kernel sp becuse we form stack frame at tasks SPs
+
+    PUSH LR
+
+    ;---------------------------------
+    ;init task table - we can do it with mem_zero since it's all zeros and we want it clean slate
+    ;---------------------------------
+    
+    LI  R1 tasks
+    LI  R2 TASK_SIZE
+    LI  R3 MAX_TASKS
+    MUL R3 R2 R3
+    ;BL  mem_zero          ;zero (bytes) the whole task table for clean slate
+
+    ; ----------------------------------
+    ; idle task
+    ; ----------------------------------
+
+    LI R1 idle_task
+    LI R2 0
+    BL task_create
+
+    CMP R1 0
+    BEQ init_scheduler_fail
+
+    ; ----------------------------------
+    ; task A
+    ; ----------------------------------
+
+    LI R1 TASK_A_START
+    LI R2 1
+    BL task_create
+
+    CMP R1 0
+    BEQ init_scheduler_fail
+
+    ; ----------------------------------
+    ; task B
+    ; ----------------------------------
+
+    LI R1 TASK_B_START
+    LI R2 2
+    BL task_create
+
+    CMP R1 0
+    BEQ init_scheduler_fail
+
+    ; ------------------------------------------------
+    ; CURRENT_TASK = 0 - init 0 task idx to scheduler first
+    ; ------------------------------------------------
+
+    LI R2 0
+    SET_CURR_TASK_IDX R2
+
+    POP LR
+
+    ;MOV SP R12 ;restore kernel SP after finsh dealing with tasks SPs
+    RET
+
+
+init_scheduler_fail:
+
+    DEBUG 99
+
+halt:
+    B halt
+
+;old init scheduler with manual trapframe setup - we can use it for debug and reference when we implement task_create and task_exit and later fork and exec
+
+init_scheduler1:
     MOV R12 SP ;important we save kernel sp becuse we form stack frame at tasks SPs
 
     ; ------------------------------------------------
@@ -2951,7 +2999,7 @@ schedule_and_switch:
 
 wrap_check:
 
-    CMP R3 3
+    CMP R3 MAX_TASKS     ;check if we processed all tasks in list - i
     BLT check_task
     LI R3 0              ;R3 next task (1) ;R2 current task (0) for eg
 check_task:
@@ -3067,7 +3115,7 @@ schedule_call:
     ADD R3 R2 1
 
 schedule_call_wrap_check:
-    CMP R3 3
+    CMP R3 MAX_TASKS
     BLT schedule_call_check_task
     LI R3 0
                                 ; R3 idx of next task
@@ -3124,27 +3172,448 @@ restore_kernel_context:         ;in case new task was stopped in kernel jump to 
     POP R2
     POP R1
     RET
+; ================================================================
+; Memory and user space layout  
+; ================================================================
+
+.EQU PAGE_SIZE      4096
+.EQU PAGE_SHIFT     12
+
+.EQU PAGE_ALLOC_BASE 0x00040000
+
+.EQU MAX_PHYS_PAGES 128
+
+
+; 0 = free
+; 1 = allocated
+
+page_bitmap:
+    .SPACE 16      ; 128 bits = 16 bytes
+
+;================================================================
+; Page allocation routines
+; This loop implements a linear search through a bitmap to find a free memory page:
+
+; Initialization: Start checking from page 0 (R2 = 0)
+
+;Bounds check: Stop if we've checked all 128 pages
+
+;Bitmap calculation: For each page index, compute:
+
+;Which byte contains the page's status (divide by 8)
+
+;Which bit within that byte represents the page (modulo 8)
+
+;Status test: Extract the bit to see if it's 0 (free) or 1 (allocated)
+
+;Found condition: When a free page is found (bit = 0):
+
+;Set the bit to 1 (mark as allocated)
+
+;Calculate and return the physical address
+
+;Continue: If page is allocated, increment index and repeat
+
+;The loop will continue until it either finds a free page or exhausts all 128 pages.
+
+
+;================================================================
+
+page_alloc:
+
+    LI R2 0                  ; page index
+
+pa_loop:
+    LI R1 MAX_PHYS_PAGES
+
+    CMP R2 R1
+    BGE pa_fail                 ; if we've checked all pages, fail
+
+    ; byte = index / 8
+
+    MOV R3 R2
+    SHR R3 R3 3                 ; divide by 8 to get byte index in bitmap
+
+    ; bit = index & 7
+
+    MOV R4 R2
+    AND R4 R4 7                 ; modulo 8 to get bit index within the byte
+
+    ; load bitmap byte
+
+    LI R5 page_bitmap
+    ADD R5 R5 R3                ; r3 is byte index, add to bitmap base 
+                                ; to get address of byte containing this page's bit
+
+    LDB R6 [R5]                 ; load the byte containing the bit for this page
+
+    ; mask = 1 << bit
+
+    LI R7 1
+    SHL R7 R7 R4                ; create a mask with a 1 in the position of the bit for this page
+
+    ; allocated ?
+
+    AND R8 R6 R7                ; R8 = R6 & R7, will be 0 if the bit is not set (page is free), 
+                                ; non-zero if allocated
+    CMP R8 0
+    BEQ pa_found                ; if bit is 0, page is free
+
+    ADD R2 R2 1                 ; increment page index and check next page
+    B pa_loop
+
+pa_found:
+
+    ; mark page allocated
+
+    OR  R6 R6 R7
+    STB R6 [R5]
+
+    ; physical address = PAGE_ALLOC_BASE + page_index * PAGE_SIZE
+
+    LI  R9 PAGE_ALLOC_BASE
+
+    MOV R1 R2
+    SHL R1 R1 12          ; page_index * 4096
+
+    ADD R1 R1 R9
+
+    RET
+
+pa_fail:
+
+    LI R1 0                     ; no free pages
+    RET
+
+;================================================================
+; Page deallocation routines
+; in R1 = physical page address to free
+; index = (addr - BASE)/4096
+;================================================================
+
+page_free:
+
+    LI R2 PAGE_ALLOC_BASE
+    SUB R3 R1 R2         ; calculate offset from base
+
+    SHR R3 R3 12         ; page index = (addr - BASE)/4096
+
+    MOV R4 R3
+    SHR R4 R4 3          ; byte index in bitmap = page index / 8
+
+    MOV R5 R3
+    AND R5 R5 7          ; bit index in byte = page index % 8
+
+    LI R6 page_bitmap
+    ADD R6 R6 R4         ; address of byte in bitmap containing this page's bit
+
+    LDB R7 [R6]
+
+    LI R8 1
+    SHL R8 R8 R5         ; mask for this page's bit
+
+    NOT R8 R8            ; invert mask to have 0 in the page's bit position and 1s elsewhere
+
+    AND R7 R7 R8         ; clear the bit to mark the page as free by ANDing with the inverted mask 
+                         ; which has a 0 in the position of the page's bit
+
+
+    STB R7 [R6]          ; store the updated byte with the cleared bit back to the bitmap
+
+    RET
+
+;=================================================================
+; Zero out a page of memory at the given address (R1) R3 = PAGE_SIZE / amount to zero out
+;=================================================================
+
+mem_zero:
+
+    LI R2 0
+
+pz_loop:
+
+    CMP R3 0
+    BEQ pz_done
+
+    STB R2 [R1]
+
+    ADD R1 R1 1
+    SUB R3 R3 1
+
+    B pz_loop
+
+pz_done:
+    RET
+
+; ================================================================
+; Task management
+; ================================================================
+
+.EQU MAX_TASKS 16
+
+tasks:
+    .SPACE TASK_SIZE * MAX_TASKS
+
+task_count:
+    .WORD 0
+; --------------------------------------------------
+; task_create
+;
+; R1 = entry point
+; R2 = pid
+;
+; returns:
+;   R1 = task*
+;   R1 = 0 on failure
+; --------------------------------------------------
+
+task_create:
+
+    PUSH LR
+
+    MOV R8 R1          ; entry
+    MOV R9 R2          ; pid
+
+    ; ----------------------------------
+    ; allocate task slot
+    ; ----------------------------------
+
+    BL task_alloc       ; R1 = task pointer or 0 if no free slots
+
+    CMP R1 0
+    BEQ task_create_fail
+
+    MOV R10 R1         ; R10 = task pointer
+
+    ; ----------------------------------
+    ; allocate PTBR page
+    ; ----------------------------------
+
+    BL page_alloc
+    CMP R1 0
+    BEQ task_create_fail
+    
+    MOV R12 R1
+
+    TASK_SET_PTBR R10, R1          ; set task page table base
+
+    MOV R1 R12
+    LI  R3 PAGE_SIZE
+    BL  mem_zero                   ; zero out the sensitive new page table  
+
+    MOV R1 R12
+    BL map_common_kernel        ; map kernel space into new page table so task can run in it 
+        ;and call kernel functions and access kernel data structures when needed
+
+    ; ----------------------------------
+    ; allocate user stack page
+    ; ----------------------------------
+
+    BL page_alloc
+    CMP R1 0
+    BEQ task_create_fail
+    LI R2, PAGE_SIZE
+
+    ADD R11 R1 R2            ; last address of the new page for user stack top
+
+    TASK_SET_USP R10, R11           ; set user stack pointer to the top of the new page (stacks grow down)
+
+    MOV R12 R1
+
+    TASK_GET_PTBR R1, R10       ; get task page table base to map user stack page into it
+
+    LI  R2 R3               ; user stack page va = pa
+    MOV R3 R12
+    LI  R4 USER_RW
+    ;R1 = page table base R2=va to map R3=pa of page to map R4=permissions
+    BL map_page                 ; map user stack page into task page table with RW permissions for user
+
+    ; ----------------------------------
+    ; allocate kernel stack page
+    ; ----------------------------------
+
+    BL page_alloc
+    CMP R1 0
+    BEQ task_create_fail
+    LI R2, PAGE_SIZE
+
+    MOV R12 SP             ; save kernel SP before we mess with it for stack frame setup
+
+    ADD SP R1 R2           ; last address of the new allocated physical 
+                           ; page for kernel stack top
+
+    ; ----------------------------------
+    ; build initial trap frame
+    ; identical to static task init
+    ; into that new page 
+    ; ----------------------------------
+
+    LI R1 0
+
+    PUSH R1            ; R1
+    PUSH R1            ; R2
+    PUSH R1            ; R3
+    PUSH R1            ; R4
+    PUSH R1            ; R5
+    PUSH R1            ; R6
+    PUSH R1            ; R7
+    PUSH R1            ; R8
+    PUSH R1            ; R9
+    PUSH R1            ; R10
+    PUSH R1            ; R11
+    PUSH R1            ; R12
+    PUSH R1            ; R14 (FP)
+    PUSH R1            ; R15 (LR)
+
+    PUSH R11           ; R11 - user SP top
+
+    MOV R1 R8
+    PUSH R1            ; sepc = entry
+
+    LI R1 0
+    PUSH R1            ; sflags
+
+    LI R1 0x20
+    PUSH R1            ; sstatus
+
+    LI R1 0
+    PUSH R1            ; scause
+    PUSH R1            ; stval
+
+    ; ----------------------------------
+    ; task structure
+    ; ----------------------------------
+    
+    MOV R1 SP
+    TASK_SET_KSP R10, R1                    ; save kernel trapframe SP in task struct
+
+    MOV SP R12         ; restore kernel SP after stack frame setup
+
+    TASK_SET_PC R10, R8                     ; set task entry point as start PC debug/metadata
+
+    TASK_SET_STATE R10, TASK_READY          ; set task state to ready
+
+    TASK_SET_PID R10, R9                    ; set task PID
+
+    TASK_SET_WAIT R10, WAIT_NONE            ; set wait reason to none (not sleeping)
+
+    TASK_SET_RESUME R10, RESUME_TRAP        ; set resume switch to trap - this means 
+    ;when we schedule to this task it will run via trap restore path (usual case)
+
+    ; ----------------------------------
+    ; fd table
+    ; ----------------------------------
+
+    BL page_alloc
+    CMP R1 0
+    BEQ task_create_fail
+
+    ; set task fd_table ptr to new page
+
+    ; R1 = newly allocated fd table page
+
+    MOV R12 R1
+
+    LI  R2 0
+    LI  R3 PAGE_SIZE
+    BL  mem_zero
+
+    ; stdin
+    LI  R2 file_stdin
+    STW R2 [R12 + 0]
+
+    ; stdout
+    LI  R2 file_stdout
+    STW R2 [R12 + 4]
+
+    ; stderr
+    LI  R2 file_stderr
+    STW R2 [R12 + 8]
+
+    TASK_SET_FD_TABLE R10, R12
+
+    ; ----------------------------------
+    ; kernel buffers
+    ; ----------------------------------
+
+    BL page_alloc
+    CMP R1 0
+    BEQ task_create_fail
+
+    TASK_SET_KBUF_WR R10, R1                ; set task kernel write buffer (upto whole page for now)
+
+    BL page_alloc
+    CMP R1 0
+    BEQ task_create_fail
+
+    TASK_SET_KBUF_RD R10, R1                ; set task kernel read buffer
+
+    BL page_alloc
+    CMP R1 0
+    BEQ task_create_fail
+
+    TASK_SET_DATA_PAGE R10, R1              ; set task data page
+
+    MOV R12 R1
+
+    TASK_GET_PTBR R1, R10
+
+    LI  R2 0x6000               ; data page va - we can make it dynamic later but for now it's fixed and same for all tasks since they can't run at the same time and we have only 1 data page per task
+    MOV R3 R12
+    LI  R4 USER_RW
+    BL map_page                 ; map task data page into task page table with RW permissions for user
+
+    MOV R1 R10                              ; return created task pointer
+
+    POP LR
+    RET
+
+
+task_create_fail:
+
+    LI R1 0
+
+    POP LR
+    RET
+
+; ----------------------------------
+; task_alloc
+;
+; returns:
+;   R1 = task*
+;   R1 = 0 if full
+; ----------------------------------
+
+task_alloc:
+
+    LI R1 tasks
+    LI R2 MAX_TASKS
+
+task_alloc_loop:
+
+    TASK_GET_STATE R3, R1                   ; load task state into R3
+
+    CMP R3 TASK_DEAD                        ; check if this slot is free (0-dead)
+    BEQ task_alloc_found
+
+    ADD R1 R1 TASK_SIZE                     ; move to next task slot
+
+    SUB R2 R2 1
+    BNE task_alloc_loop
+
+; no free tasks slots
+
+    LI R1 0
+    RET
+
+task_alloc_found:                           ;R1 points to free task slot
+
+    RET
+
 
 ; need to define and allocate user stuff at user code
 .EQU USER_WRITE_BUF, 0x6000
 .EQU USER_READ_BUF,  0x6010
-; task2 daee page
-.org 0x6000
-task_b_console_path:
-    .ASCIIZ "/dev/console"
-
-task_b_msg:
-    .ASCIIZ "OPEN WRITE CLOSE\r\n"
-
-task_b_msg_len:
-    .WORD 18
-
-open_fail_msg:
-    .ASCIIZ "OPEN FAIL\r\n"
-
-open_fail_msg_len:
-    .WORD 11
-
 
 ; ================================================================
 ; TASKS
@@ -3287,3 +3756,21 @@ task_b_done:
     DEBUG 1
     LI R1 SYS_EXIT
     SVC SYS_EXIT
+
+; task2 date page
+.org 0x1A100
+task_b_console_path:
+    .ASCIIZ "/dev/console"
+
+task_b_msg:
+    .ASCIIZ "OPEN WRITE CLOSE\r\n"
+
+task_b_msg_len:
+    .WORD 18
+
+open_fail_msg:
+    .ASCIIZ "OPEN FAIL\r\n"
+
+open_fail_msg_len:
+    .WORD 11
+
