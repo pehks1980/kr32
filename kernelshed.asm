@@ -489,7 +489,14 @@ syscall_exit:
     GET_CURR_TASK_IDX R2
     GET_TASK_PTR R5, R2
 
-    TASK_SET_STATE R5, TASK_DEAD
+    MOV R1 R5
+    BL task_close_fds      ; close all open file descriptors of this task (if any) to free file_pool resources
+
+    MOV R1 R5
+    BL task_destroy
+
+    ;todo
+    ;pipe_free()
 
     LI R1 0
     STW R1 [SP + TF_R1]         ; r1=0 - return success
@@ -1327,28 +1334,28 @@ fd_remove:
  ;  out R1 = file* / R1 = 0 if invalid
  ;================================================================
     CMP R1 3
-    BLT fd_remove_invalid
+    BLT fd_remove_invalid       ; fd 0-1-2 are stdio, not closeable by user
 
     CMP R1 MAX_FDS
-    BGE fd_remove_invalid
+    BGE fd_remove_invalid       ; fd is out of bounds
 
     MOV R8 R1
 
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R4, R4
-    TASK_GET_FD_TABLE R4, R4
+    TASK_GET_FD_TABLE R4, R4    ; R4 = fd table ptr of current task
 
     SHL R5 R8 2
-    ADD R6 R4 R5
+    ADD R6 R4 R5                ; &fd_table[fd]
 
     LDW R1 [R6]
     CMP R1 0
-    BEQ fd_remove_invalid
+    BEQ fd_remove_invalid       ; if fd_table[fd] is null, invalid fd
 
     LI R7 0
-    STW R7 [R6]
+    STW R7 [R6]                 ; fd_table[fd] = null
 
-    RET
+    RET                     ; return file* in R1 for file_free
 
 fd_remove_invalid:
     LI R1 0
@@ -2395,6 +2402,307 @@ uart_rx_waitq:
 uart_tx_waitq:
     .WORD 0                    ; WQ_MASK: tasks waiting for TX_READY
 
+
+; ==================================================
+; TARFS - first fs 
+; ==================================================
+
+.EQU MAX_TAR_FILES, 64
+
+
+tar_index:          ; the tar index is a simple array of fixed-size entries, 
+                    ; each containing the file name, size, and offset in the tarfs image. 
+                    ; The index is populated at boot time by scanning the tarfs image 
+                    ; and extracting this metadata for each file. 
+                    ; This allows for O(n) lookups by name without 
+                    ; parsing the entire tar header on each access.
+
+    .SPACE TAR_IDX_SIZEOF * MAX_TAR_FILES
+
+tar_count:          ; number of files in the tarfs image, 
+                    ; set at boot time when the index is populated
+
+    .WORD 0
+
+;==============================================================
+; TARFS file header layout and constants
+;==============================================================
+
+.EQU TAR_NAME_OFF,      0
+.EQU TAR_SIZE_OFF,    124
+.EQU TAR_TYPE_OFF,    156
+
+.EQU TAR_HEADER_SIZE, 512
+
+; ==================================================
+; TAR index entry layout
+; ==================================================
+
+.EQU TAR_IDX_NAME,   0     ; ptr to filename string
+.EQU TAR_IDX_DATA,   4     ; ptr to file data
+.EQU TAR_IDX_SIZE,   8     ; file size
+.EQU TAR_IDX_TYPE,  12     ; file or directory
+
+.EQU TAR_IDX_SIZEOF, 16
+
+
+; --------------------------------------------------
+; tarfs_lookup
+;
+; R1 = pathname
+;
+; returns:
+;   R1 = tar_index entry
+;   R1 = 0 if not found
+; --------------------------------------------------
+
+tarfs_lookup:
+
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
+    MOV R8 R1              ; pathname
+
+    LI R9 0                ; index
+
+    LI R10 tar_count
+    LDW R10 [R10]
+
+lookup_loop:
+
+    CMP R9 R10
+    BGE lookup_not_found
+
+    ; entry address
+
+    LI R1 tar_index
+
+    LI R2 TAR_IDX_SIZEOF
+    MUL R3 R9 R2
+
+    ADD R1 R1 R3
+
+    ; compare names
+
+    MOV R2 R8
+
+    LDW R1 [R1 + TAR_IDX_NAME]
+
+    BL strcmp   ;R1 is tar name, R2 is pathname, returns 1 if match
+
+    CMP R1 1
+    BEQ lookup_found
+
+    ADD R9 R9 1
+    B lookup_loop
+
+lookup_found:
+
+    LI R1 tar_index
+
+    LI R2 TAR_IDX_SIZEOF
+    MUL R3 R9 R2
+
+    ADD R1 R1 R3        ; R1 = &tar_index[R9]
+
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+lookup_not_found:
+
+    LI R1 0             ; R1 = NULL
+
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+
+; --------------------------------------------------
+; tarfs_init
+;
+; R1 = tar archive base
+; --------------------------------------------------
+
+tarfs_init:
+
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R1                  ; current tar header
+
+    LI R9 tar_index            ; current index entry
+
+    LI R10 0                   ; file count
+
+tar_scan_loop:
+
+    ; ------------------------------------
+    ; end of archive?
+    ; ------------------------------------
+
+    LDB R11 [R8 + TAR_NAME_OFF]
+
+    CMP R11 0                   ; if name[0] == 0, this is the end of the archive 
+                                ; (two consecutive zero 512-byte blocks)
+    BEQ tar_done
+
+    ; ------------------------------------
+    ; name pointer
+    ; ------------------------------------
+
+    MOV R11 R8
+
+    STW R11 [R9 + TAR_IDX_NAME]
+
+    ; ------------------------------------
+    ; size
+    ; ------------------------------------
+
+    MOV R1 R8
+    ADD R1 R1 TAR_SIZE_OFF
+
+    BL tar_parse_octal          ; parse octal size from tar header field to binary integer
+
+    MOV R12 R1                 ; save file size
+
+    STW R12 [R9 + TAR_IDX_SIZE]
+
+    ; ------------------------------------
+    ; data pointer
+    ; ------------------------------------
+
+    MOV R11 R8
+    ADD R11 R11 TAR_HEADER_SIZE
+
+    STW R11 [R9 + TAR_IDX_DATA]
+
+    ; ------------------------------------
+    ; type
+    ; ------------------------------------
+
+    LI R11 0
+
+    STW R11 [R9 + TAR_IDX_TYPE]
+
+    ; ------------------------------------
+    ; next index entry
+    ; ------------------------------------
+
+    ADD R10 R10 1
+
+    ADD R9 R9 TAR_IDX_SIZEOF
+
+    ; ------------------------------------
+    ; advance to next tar header
+    ; ------------------------------------
+
+    MOV R11 R12
+
+    ; round up to 512 boundary
+
+    ADD R11 R11 511
+
+    SHR R11 R11 9
+    SHL R11 R11 9
+
+    ADD R8 R8 TAR_HEADER_SIZE
+
+    ADD R8 R8 R11
+
+    B tar_scan_loop
+
+tar_done:
+
+    LI R11 tar_count
+
+    STW R10 [R11]
+
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+
+    RET
+
+; --------------------------------------------------
+; tar_parse_octal - a history of bit of unix code now in our kenrel!
+;
+; R1 = ptr to TAR size field
+;
+; TAR stores size as ASCII octal:
+;
+;   "144" -> 100 decimal
+;
+; returns:
+;   R1 = binary value
+; --------------------------------------------------
+
+tar_parse_octal:
+
+    PUSH R2
+    PUSH R3
+    PUSH R4
+
+    LI   R2 0                  ; result
+
+octal_loop:
+
+    LDB  R3 [R1]
+
+    ; end of field?
+    ;
+    ; ASCII NUL = 0
+    ; ASCII SPACE = 32
+
+    CMP  R3 0
+    BEQ  octal_done
+
+    LI   R4 32                 ; ' '
+    CMP  R3 R4
+    BEQ  octal_done
+
+    ; digit = ascii - '0'
+    ;
+    ; ASCII '0' = 48
+
+    LI   R4 48
+    SUB  R3 R3 R4
+
+    ; result = result * 8 + digit
+
+    SHL  R2 R2 3               ; multiply by 8
+
+    ADD  R2 R2 R3
+
+    ADD  R1 R1 1
+
+    B    octal_loop
+
+octal_done:
+
+    MOV  R1 R2
+
+    POP  R4
+    POP  R3
+    POP  R2
+
+    RET
+
+
+
 ;==============================================================
 ; Wait queue helpers
 ;==============================================================
@@ -2631,7 +2939,7 @@ file_free:
     SHL R5 R5 2                  ; slot * 4
 
     LI R6 file_used
-    ADD R6 R6 R5
+    ADD R6 R6 R5                 ; address of slot in file_used
 
     LI R7 0
     STW R7 [R6]                  ; mark free
@@ -2721,208 +3029,6 @@ init_scheduler_fail:
 
 halt:
     B halt
-
-;old init scheduler with manual trapframe setup - we can use it for debug and reference when we implement task_create and task_exit and later fork and exec
-
-init_scheduler1:
-    MOV R12 SP ;important we save kernel sp becuse we form stack frame at tasks SPs
-
-    ; ------------------------------------------------
-    ; Task 0
-    ; ------------------------------------------------
-
-    ;================================================================
-    ; Build the initial trapframe on the task's kernel stack. It has
-    ; the same shape as an IRQ-created trapframe, so first dispatch and
-    ; later preemptive resumes use the exact same restore path.
-    ;================================================================
-
-    LI SP TASK0_KSTACK_TOP
-    
-    LI R1 0
-    PUSH R1                  ; R1
-    PUSH R1                  ; R2
-    PUSH R1                  ; R3
-    PUSH R1                  ; R4
-    PUSH R1                  ; R5
-    PUSH R1                  ; R6
-    PUSH R1                  ; R7
-    PUSH R1                  ; R8
-    PUSH R1                  ; R9
-    PUSH R1                  ; R10
-    PUSH R1                  ; R11
-    PUSH R1                  ; R12
-    PUSH R1                  ; R14
-    PUSH R1                  ; R15
-    LI R1 TASK0_USTACK_TOP
-    PUSH R1                  ; interrupted task SP restored by CSRRW before SRET
-    LI R1 idle_task
-    PUSH R1                  ; sepc - this is new place of PC in trap frame
-    LI R1 0
-    PUSH R1                  ; sflags
-    LI R1 0x120
-    PUSH R1                  ; sstatus.SPIE|SPP: idle resumes as supervisor task
-    LI R1 0
-    PUSH R1                  ; scause
-    PUSH R1                  ; stval - other valuable s-data on top (or bottom-)
-
-    LI R2 tasks
-    MOV R1 SP
-    TASK_SET_KSP R2, R1     ; save kernel trapframe SP
-
-    LI R1 TASK0_USTACK_TOP
-    TASK_SET_USP R2, R1     ; save initial task stack SP for debug/metadata
-
-    LI R1 idle_task
-    TASK_SET_PC R2, R1      ;start PC of the task
-
-    TASK_SET_STATE R2, TASK_READY ;set this task as as ready to run
-
-    LI R1 0
-    TASK_SET_PID R2, R1      ;set PID=0 for this task
-
-    LI R1 TASK0_PTBR            ;set page table ptr
-    TASK_SET_PTBR R2, R1
-
-    LI R1 task0_fd_table
-    TASK_SET_FD_TABLE R2, R1 ;set fd_table ptr
-
-    TASK_SET_WAIT R2, WAIT_NONE ;set wait reason field
-    TASK_SET_RESUME R2, RESUME_TRAP ;set sleep switch kernel/user depending where it z-z-z
-    TASK_SET_KBUF_WR R2, KBUFFER_WR_0 ;set this task kernel buffers rd/wr
-    TASK_SET_KBUF_RD R2, KBUFFER_RD_0
-    ;when we can alloc and exec and fork
-    ;special mem subsystem will init/alloc/dealloc all that automatically
-
-    ; ------------------------------------------------
-    ; Task 1 - do the same
-    ; ------------------------------------------------
-
-    LI SP TASK1_KSTACK_TOP
-    LI R1 0
-    PUSH R1                  ; R1
-    PUSH R1                  ; R2
-    PUSH R1                  ; R3
-    PUSH R1                  ; R4
-    PUSH R1                  ; R5
-    PUSH R1                  ; R6
-    PUSH R1                  ; R7
-    PUSH R1                  ; R8
-    PUSH R1                  ; R9
-    PUSH R1                  ; R10
-    PUSH R1                  ; R11
-    PUSH R1                  ; R12
-    PUSH R1                  ; R14
-    PUSH R1                  ; R15
-    LI R1 TASK1_USTACK_TOP
-    PUSH R1                  ; interrupted task SP
-    LI R1 TASK_A_START
-    PUSH R1                  ; sepc
-    LI R1 0
-    PUSH R1                  ; sflags
-    LI R1 0x20
-    PUSH R1                  ; sstatus.SPIE
-    LI R1 0
-    PUSH R1                  ; scause
-    PUSH R1                  ; stval
-
-    LI R2 tasks
-    ADD R2 R2 TASK_SIZE
-
-    MOV R1 SP
-    TASK_SET_KSP R2, R1
-
-    LI R1 TASK1_USTACK_TOP
-    TASK_SET_USP R2, R1
-
-    LI R1 TASK_A_START
-    TASK_SET_PC R2, R1
-
-    TASK_SET_STATE R2, TASK_READY
-
-    LI R1 1
-    TASK_SET_PID R2, R1
-
-    LI R1 TASK1_PTBR
-    TASK_SET_PTBR R2, R1
-
-    LI R1 task1_fd_table
-    TASK_SET_FD_TABLE R2, R1
-    TASK_SET_WAIT R2, WAIT_NONE
-    TASK_SET_RESUME R2, RESUME_TRAP
-    TASK_SET_KBUF_WR R2, KBUFFER_WR_1
-    TASK_SET_KBUF_RD R2, KBUFFER_RD_1
-
-    ; ------------------------------------------------
-    ; Task 2 - same
-    ; ------------------------------------------------
-
-    LI SP TASK2_KSTACK_TOP
-    LI R1 0
-    PUSH R1                  ; R1
-    PUSH R1                  ; R2
-    PUSH R1                  ; R3
-    PUSH R1                  ; R4
-    PUSH R1                  ; R5
-    PUSH R1                  ; R6
-    PUSH R1                  ; R7
-    PUSH R1                  ; R8
-    PUSH R1                  ; R9
-    PUSH R1                  ; R10
-    PUSH R1                  ; R11
-    PUSH R1                  ; R12
-    PUSH R1                  ; R14
-    PUSH R1                  ; R15
-    LI R1 TASK2_USTACK_TOP
-    PUSH R1                  ; interrupted task SP
-    LI R1 TASK_B_START
-    PUSH R1                  ; sepc
-    LI R1 0
-    PUSH R1                  ; sflags
-    LI R1 0x20
-    PUSH R1                  ; sstatus.SPIE
-    LI R1 0
-    PUSH R1                  ; scause
-    PUSH R1                  ; stval
-
-    LI R2 tasks
-    LI R3 TASK_SIZE
-    ADD R2 R2 R3
-    ADD R2 R2 R3
-
-    MOV R1 SP
-    TASK_SET_KSP R2, R1
-
-    LI R1 TASK2_USTACK_TOP
-    TASK_SET_USP R2, R1
-
-    LI R1 TASK_B_START
-    TASK_SET_PC R2, R1
-
-    TASK_SET_STATE R2, TASK_READY
-
-    LI R1 2
-    TASK_SET_PID R2, R1
-
-    LI R1 TASK2_PTBR
-    TASK_SET_PTBR R2, R1
-
-    LI R1 task2_fd_table                ;per process fd_table
-    TASK_SET_FD_TABLE R2, R1
-    TASK_SET_WAIT R2, WAIT_NONE
-    TASK_SET_RESUME R2, RESUME_TRAP
-    TASK_SET_KBUF_WR R2, KBUFFER_WR_2
-    TASK_SET_KBUF_RD R2, KBUFFER_RD_2
-
-    ; ------------------------------------------------
-    ; CURRENT_TASK = 0 - init 0 task idx to scheduler first
-    ; ------------------------------------------------
-
-    LI R2 0
-    SET_CURR_TASK_IDX R2
-
-    MOV SP R12 ;restore kernel SP after finsh dealing with tasks SPs
-    RET
 
 ; ================================================================
 ; SCHEDULE + SWITCH
@@ -3550,6 +3656,8 @@ task_create_status_ready:
 
 
 task_create_fail:
+    ; If any step of task creation fails, we must clean up all resources allocated 
+    ; so far and return 0.
 
     ; task_alloc can fail before R10 is assigned.
     CMP R10 0
@@ -3608,6 +3716,130 @@ task_create_fail_return:
     POP LR
     RET
 
+;================================================================
+; task_destroy - free all resources of a task and clear its slot in task table
+; in R1 = task*
+; output none
+; note it zeroes the whole slot at the end of func 
+; in task table at the end to make sure scheduler won't schedule 
+; this task anymore and also to make sure task_create can reuse 
+; this slot for a new task in the future
+;================================================================
+task_destroy:
+
+    PUSH LR
+    push R12 ; preserve R12 which we use for temporary storage in this function
+    mov  R12 R1 ; R12 = task pointer
+
+    TASK_GET_PTBR R2, R1
+    CMP R2 0
+    BEQ td_skip_ptbr    ; if task has no page table, it also has no resources to free, so skip to clearing slot and returning
+    
+    MOV R1 R2
+    BL page_free        ; free process page table 
+
+td_skip_ptbr:
+
+    TASK_GET_USTACK_PAGE R2, R12
+    CMP R2 0
+    BEQ td_skip_ustack  ; if task has no user stack page, it also has no kernel stack page, fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
+    MOV R1 R2
+    BL page_free
+
+td_skip_ustack:
+
+    TASK_GET_KSTACK_PAGE R2, R12
+    CMP R2 0
+    BEQ td_skip_kstack  ; if task has no kernel stack page, it also has no fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
+    MOV R1 R2
+    BL page_free
+
+td_skip_kstack:
+
+    TASK_GET_FD_TABLE R2, R12
+    CMP R2 0
+    BEQ td_skip_fd    ; if task has no fd table page, it also has no user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning   
+    MOV R1 R2
+    BL page_free
+
+td_skip_fd:
+
+    TASK_GET_KBUF_WR R2, R12
+    CMP R2 0
+    BEQ td_skip_kwr   ; if task has no kernel write buffer page, it may still have kernel read buffer and user data page to free, but it has no user buffers to free because user buffers are allocated and mapped together in one page and there is no way to have user buffers without having kernel write buffer because we allocate kernel write buffer first before allocating and mapping user buffers in task_create, so if there is no kernel write buffer we can skip freeing user buffers and just move to checking and freeing kernel read buffer and user data page if they exist and then move to clearing slot and returning
+    MOV R1 R2
+    BL page_free
+
+td_skip_kwr:
+
+    TASK_GET_KBUF_RD R2, R12
+    CMP R2 0
+    BEQ td_skip_krd  ; if task has no kernel read buffer page, it may still have user data page to free, but it has no user buffers to free for the same reason as in td_skip_kwr, so if there is no kernel read buffer we can skip freeing user buffers and just move to checking and freeing user data page if it exists and then move to clearing slot and returning
+    MOV R1 R2
+    BL page_free
+
+td_skip_krd:
+
+    TASK_GET_DATA_PAGE R2, R12
+    CMP R2 0
+    BEQ td_done     ; if task has no user data page, it also has no user buffers to free, so skip freeing user buffers and move to clearing slot and returning
+    MOV R1 R2
+    BL page_free
+
+td_done:
+
+    MOV R1 R12
+    LI  R3 TASK_SIZE
+    BL  mem_zero    ; clear the whole task slot for clean slate, 
+                    ;this also clears the state to TASK_DEAD which 
+                    ; is important to make sure scheduler won't schedule 
+                    ; this slot anymore and also to make sure task_create 
+                    ; can reuse this slot for a new task in the future
+    
+    POP R12         ; restore R12
+    POP LR
+    RET
+
+;================================================================
+; Closes all open file descriptors of a task by calling file_free on each of them.
+; in R1 = task*
+; output none    
+;================================================================
+
+task_close_fds:
+
+    PUSH LR
+
+    TASK_GET_FD_TABLE R4, R1
+
+    LI R5 3              ; skip stdin/out/err
+
+fd_loop:
+
+    CMP R5 MAX_FDS
+    BGE fd_done         ; if we processed all fd slots, we are done
+
+    SHL R6 R5 2
+    ADD R7 R4 R6        ; R7 = &fd_table[fd]
+
+    LDW R8 [R7]
+    CMP R8 0
+    BEQ fd_next         ; if fd slot is empty, skip to next
+
+    MOV R1 R8
+    BL file_free        ; free the file associated with this fd in the file pool, 
+                        ; this also marks the fd slot as free in the task's fd table
+    LI R9 0
+    STW R9 [R7]         ; mark fd slot as free in task's fd table
+
+fd_next:
+    ADD R5 R5 1
+    B fd_loop
+
+fd_done:
+    POP LR
+    RET
+
 ; ----------------------------------
 ; task_alloc
 ;
@@ -3642,6 +3874,19 @@ task_alloc_found:                           ;R1 points to free task slot
 
     RET
 
+; ==================================================
+; TAR index entry
+; ==================================================
+
+.EQU TAR_IDX_NAME,     0      ; ptr to filename
+.EQU TAR_IDX_DATA,     4      ; ptr to file data
+.EQU TAR_IDX_SIZE,     8      ; file size
+.EQU TAR_IDX_TYPE,    12      ; file/dir
+
+.EQU TAR_IDX_SIZEOF,  16
+
+
+
 
 ; need to define and allocate user stuff at user code
 .EQU USER_WRITE_BUF, 0x6000
@@ -3652,7 +3897,8 @@ task_alloc_found:                           ;R1 points to free task slot
 ; ================================================================
 
 .ORG 0x9000
-; --TASK 0 ----------------------------------------------
+; --TASK 0 -------System idle task, runs on kernel space with kernel privs, when no other task is ready. 
+; Should never exit.
 idle_task:
     ENABLEINT
     LI R1 0
