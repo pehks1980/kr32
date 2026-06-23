@@ -622,7 +622,7 @@ syscall_debug:
 syscall_open:
 
     ;================================================================
-    ; in: R1=user pathname
+    ; in: R1=user pathname (user space)
     ;     R2=flags
     ; out: R1 = fd / err -1
     ;================================================================
@@ -632,13 +632,15 @@ syscall_open:
 
 0x000024CC       MOV R12 R2               ; save flags
 
-0x000024D0       BL copy_path_from_user      ; macro inside destroys R11
+0x000024D0       BL copy_path_from_user     ; macro inside destroys R11, copy pathname
+                               ; to tasks Kbuf_RD buffer
+                               ; R1 - pathname str ptr in the bufer
 0x000024D8       CMP R1 0
 0x000024DC       BEQ open_fail_fault
-
+    ; R1 - str pathname in kbuf_rd checking if this is device? in dev registry table(has /dev/....)
 0x000024E4       BL lookup_device
 0x000024EC       CMP R1 0
-0x000024F0       BEQ open_try_tarfs
+0x000024F0       BEQ open_try_tarfs   ; lookup in TARFS if R1=0 - fails to find device in device table
 
 0x000024F8       MOV R8 R1            ; save device descriptor
 
@@ -675,20 +677,24 @@ open_try_tarfs:
 0x00002574   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_RD R1, R5
 0x00002578   LDW R1 [R5 + TASK_KBUF_RD_PTR]
+    ;check file in TARFS R1=pathname ptr
 0x0000257C       BL tarfs_lookup
 0x00002584       CMP R1 0
 0x00002588       BEQ open_fail_noent
 
     ; TARFS is read-only and directories cannot be opened as byte streams.
+    ; found pathname: R1 = tar_index entry
 0x00002590       MOV R8 R1
 0x00002594       AND R2 R12 FD_FLAG_WRITE
 0x00002598       CMP R2 0
-0x0000259C       BNE open_fail_acces
+0x0000259C       BNE open_fail_acces              ; RW - not
 
 0x000025A4       LDW R2 [R8 + TAR_IDX_TYPE]
 0x000025A8       LI R3 53                         ; ASCII '5' = directory
 0x000025B0       CMP R2 R3
-0x000025B4       BEQ open_fail_isdir
+0x000025B4       BEQ open_fail_isdir              ; DIR - not
+
+    ; do file in file_pool
 
 0x000025BC       BL file_alloc
 0x000025C4       CMP R1 0
@@ -709,7 +715,7 @@ open_try_tarfs:
 0x00002610       CMP R1 R2
 0x00002614       BEQ open_fail_fd
 
-0x0000261C       STW R1 [SP + TF_R1]
+0x0000261C       STW R1 [SP + TF_R1]             ;file opened if fd on exit!
 0x00002620       B trap_restore
 
 open_fail_acces:
@@ -3078,8 +3084,13 @@ tarfs_ops:
     .WORD tarfs_read
     .WORD tarfs_write
 
+;==============================================================
+; TARFS tarfs_read:
+; R1=file*, R2=user destination, R3=requested length
+;==============================================================
+
 tarfs_read:
-    ; R1=file*, R2=user destination, R3=requested length
+
 0x00007F7C       PUSH LR
 0x00007F80       PUSH R8
 0x00007F84       PUSH R9

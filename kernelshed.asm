@@ -536,7 +536,7 @@ syscall_debug:
 syscall_open:
 
     ;================================================================
-    ; in: R1=user pathname
+    ; in: R1=user pathname (user space)
     ;     R2=flags
     ; out: R1 = fd / err -1
     ;================================================================
@@ -546,13 +546,15 @@ syscall_open:
 
     MOV R12 R2               ; save flags
 
-    BL copy_path_from_user      ; macro inside destroys R11
+    BL copy_path_from_user     ; macro inside destroys R11, copy pathname 
+                               ; to tasks Kbuf_RD buffer
+                               ; R1 - pathname str ptr in the bufer
     CMP R1 0
     BEQ open_fail_fault
-
+    ; R1 - str pathname in kbuf_rd checking if this is device? in dev registry table(has /dev/....)
     BL lookup_device
     CMP R1 0
-    BEQ open_try_tarfs   ; lookup in TARFS if R1=0 - fail to find device in device table
+    BEQ open_try_tarfs   ; lookup in TARFS if R1=0 - fails to find device in device table
 
     MOV R8 R1            ; save device descriptor
 
@@ -582,21 +584,24 @@ open_try_tarfs:
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     TASK_GET_KBUF_RD R1, R5
-    ;check file in TARFS
+    ;check file in TARFS R1=pathname ptr
     BL tarfs_lookup
     CMP R1 0
     BEQ open_fail_noent
 
     ; TARFS is read-only and directories cannot be opened as byte streams.
+    ; found pathname: R1 = tar_index entry
     MOV R8 R1
     AND R2 R12 FD_FLAG_WRITE
     CMP R2 0
-    BNE open_fail_acces
+    BNE open_fail_acces              ; RW - not
 
     LDW R2 [R8 + TAR_IDX_TYPE]
     LI R3 53                         ; ASCII '5' = directory
     CMP R2 R3
-    BEQ open_fail_isdir
+    BEQ open_fail_isdir              ; DIR - not
+
+    ; do file in file_pool
 
     BL file_alloc
     CMP R1 0
@@ -617,7 +622,7 @@ open_try_tarfs:
     CMP R1 R2
     BEQ open_fail_fd
 
-    STW R1 [SP + TF_R1]
+    STW R1 [SP + TF_R1]             ;file opened if fd on exit!
     B trap_restore
 
 open_fail_acces:
@@ -2923,8 +2928,13 @@ tarfs_ops:
     .WORD tarfs_read
     .WORD tarfs_write
 
+;==============================================================
+; TARFS tarfs_read:
+; R1=file*, R2=user destination, R3=requested length
+;==============================================================
+
 tarfs_read:
-    ; R1=file*, R2=user destination, R3=requested length
+    
     PUSH LR
     PUSH R8
     PUSH R9
@@ -4463,19 +4473,34 @@ open_fail_msg_len:
 ; fields. These test headers intentionally leave checksum/owner fields
 ; zero until the build grows a general binary-asset inclusion step.
 ; ================================================================
+; in 512-byte header:
+;TAR_NAME_OFF = 0
+;TAR_SIZE_OFF = 124
+;TAR_TYPE_OFF = 156
+;TAR_HEADER_SIZE = 512
+
+;+-------------------+
+;| 512-byte header   |
+;+-------------------+
+;| file data         |
+;+-------------------+
+;| padding to 512    |
+;+-------------------+
+;| next header       |
+;+-------------------+
 
 .ORG 0xA0000
 tarfs_start:
 
 ; etc/motd, 16 bytes
-    .ASCIIZ "etc/motd"
-    .SPACE 115
-    .ASCIIZ "00000000020"
-    .SPACE 20
-    .ASCIIZ "0"
-    .SPACE 354
-    .ASCIIZ "Welcome to KR32\n"
-    .SPACE 495
+    .ASCIIZ "etc/motd"      ; filename (offset 0)
+    .SPACE 115              ; max filename is 124-1 bytes (0)
+    .ASCIIZ "00000000020"   ; at offset 124  - size in octal text format
+    .SPACE 20               ; unused
+    .ASCIIZ "0"             ; at offset 156 type '0' for file
+    .SPACE 354              ; header remainder till 512
+    .ASCIIZ "Welcome to KR32\n" ; file data 513th byte and so on.... file datain bytes (data starts  - header + 512)
+    .SPACE 495              ;padding till 512 - data comes in block chunks of 512 bytes each so if data is less then 512 last small remainder chunk padds till 512 block
 
 ; bin/sh, 10 bytes
     .ASCIIZ "bin/sh"
@@ -4495,7 +4520,7 @@ tarfs_start:
     .ASCIIZ "0"
     .SPACE 354
 
-; TAR end marker: two zero headers
+; TAR end marker: two zero headers by the tar file standart if tape head reads 2 zero blocks here then its the end of tar archive!
     .SPACE 1024
 
 tarfs_end:
