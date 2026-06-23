@@ -144,6 +144,13 @@ func KERNEL_START
         ; Initialize MMIO devices (PIC, PIT, UART)
         call init_mmio_devices
 
+        ; Mount the built-in read-only TAR archive and show its index.
+        LI R1 tarfs_start
+        LI R2 tarfs_end
+        SUB R2 R2 R1
+        call tarfs_init
+        call tarfs_dump_index
+
         ; Activate the first dynamically created address space before
         ; enabling translation and restoring its initial trapframe.
         LI R1 tasks
@@ -489,17 +496,16 @@ syscall_exit:
     GET_CURR_TASK_IDX R2
     GET_TASK_PTR R5, R2
 
+    PUSH R5
     MOV R1 R5
     BL task_close_fds      ; close all open file descriptors of this task (if any) to free file_pool resources
+    POP R5
 
-    MOV R1 R5
-    BL task_destroy
-
-    ;todo
-    ;pipe_free()
-
-    LI R1 0
-    STW R1 [SP + TF_R1]         ; r1=0 - return success
+    ; Do not destroy the current task here: SP still points into its kernel
+    ; stack. Mark it unrecoverable and let idle_task reclaim it later while
+    ; running on a different stack.
+    TASK_SET_STATE R5, TASK_ZOMBIE
+    TASK_SET_WAIT R5, WAIT_NONE
     B schedule_and_switch
 
 syscall_getpid:
@@ -546,7 +552,7 @@ syscall_open:
 
     BL lookup_device
     CMP R1 0
-    BEQ open_fail_noent
+    BEQ open_try_tarfs   ; lookup in TARFS if R1=0 - fail to find device in device table
 
     MOV R8 R1            ; save device descriptor
 
@@ -569,6 +575,59 @@ syscall_open:
 
     STW R1 [SP + TF_R1]
 
+    B trap_restore
+
+open_try_tarfs:
+    ; copy_path_from_user returned the current task's kernel read buffer.
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_RD R1, R5
+    ;check file in TARFS
+    BL tarfs_lookup
+    CMP R1 0
+    BEQ open_fail_noent
+
+    ; TARFS is read-only and directories cannot be opened as byte streams.
+    MOV R8 R1
+    AND R2 R12 FD_FLAG_WRITE
+    CMP R2 0
+    BNE open_fail_acces
+
+    LDW R2 [R8 + TAR_IDX_TYPE]
+    LI R3 53                         ; ASCII '5' = directory
+    CMP R2 R3
+    BEQ open_fail_isdir
+
+    BL file_alloc
+    CMP R1 0
+    BEQ open_fail_nfile
+    MOV R9 R1
+
+    LI R2 tarfs_ops
+    STW R2 [R9 + FILE_OPS]
+    STW R8 [R9 + FILE_PRIVATE]
+    LI R2 0
+    STW R2 [R9 + FILE_OFFSET]
+    LI R2 FD_FLAG_READ
+    STW R2 [R9 + FILE_FLAGS]
+
+    MOV R1 R9
+    BL fd_alloc
+    LI R2 ERR_MFILE
+    CMP R1 R2
+    BEQ open_fail_fd
+
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+open_fail_acces:
+    LI R1 ERR_ACCES
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+open_fail_isdir:
+    LI R1 ERR_ISDIR
+    STW R1 [SP + TF_R1]
     B trap_restore
 
 open_fail_fd:
@@ -1401,9 +1460,15 @@ con_read:
     ;================================================================
 
     PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
     MOV R9 R1
     MOV R7 R2
     MOV R6 R3
+    LI R8 0                    ; total bytes collected
     LDW R9 [R9 + FILE_PRIVATE] ; console device pointer
     CMP R6 0
     BEQ read_done
@@ -1419,7 +1484,7 @@ con_read:
     POP R6
     POP R7
     CMP R1 1
-    BNE driver_bad_pointer
+    BNE con_read_fault
 
 read_wait_uart_rx:
     LDW R4 [R9 + UARTDEV_MMIO]  ; UART MMIO Base Address
@@ -1428,31 +1493,69 @@ read_wait_uart_rx:
     CMP R5 0
     BEQ read_block_uart_rx      ; bit 0=0 no data yet in rx_queue, block this curr user task inside syscall
 
-    PUSH R7
-
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     TASK_GET_KBUF_RD R1, R5
     MOV R2 R6
     MOV R3 R9
+    PUSH R6
+    PUSH R7
+    PUSH R8
+    PUSH R9
     BL device_read          ;read data from rx_queue to KBUFFER_RD len=R2(<- R6) or if 0xd (enter sign)
-
+    POP R9
+    POP R8
     POP R7
+    POP R6
 
     CMP R1 0
-    BEQ read_done
+    BEQ read_wait_uart_rx
 
-    MOV R2 R1              ; actual bytes read
+    MOV R10 R1             ; actual bytes read
 
     GET_CURR_TASK_IDX R5
     GET_TASK_PTR R4, R5
     TASK_GET_KBUF_RD R4, R4
 
-    MOV R1 R7              ; user destination
-    BL copy_to_user        ; copy from kernel buffer to user buffer
+    ; Remember whether this chunk ended with newline before copy_to_user
+    ; clobbers temporary registers.
+    LI R11 0
+    SUB R5 R10 1
+    ADD R5 R4 R5
+    LDB R5 [R5]
+    CMP R5 10
+    BNE read_chunk_not_newline
+    LI R11 1
 
-    POP LR
-    RET
+read_chunk_not_newline:
+    PUSH R6
+    PUSH R7
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    MOV R1 R7              ; user destination
+    MOV R2 R10
+    BL copy_to_user        ; copy from kernel buffer to user buffer
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+
+    ADD R7 R7 R10
+    ADD R8 R8 R10
+    SUB R6 R6 R10
+
+    CMP R11 1
+    BEQ read_complete
+    CMP R6 0
+    BGT read_wait_uart_rx
+
+read_complete:
+    MOV R1 R8
+    B read_return
 
 read_block_uart_rx:
     ; Put the current task on the UART RX wait queue before the re-check.
@@ -1480,6 +1583,17 @@ read_unblock_uart_rx:            ;mark current task as unblocked
 
 read_done:
     LI R1 0
+    B read_return
+
+con_read_fault:
+    LI R1 ERR_FAULT
+
+read_return:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
     POP LR
     RET
 
@@ -2409,6 +2523,12 @@ uart_tx_waitq:
 
 .EQU MAX_TAR_FILES, 64
 
+; TAR index entry layout
+.EQU TAR_IDX_NAME,   0     ; ptr to filename string
+.EQU TAR_IDX_DATA,   4     ; ptr to file data
+.EQU TAR_IDX_SIZE,   8     ; file size
+.EQU TAR_IDX_TYPE,  12     ; file or directory
+.EQU TAR_IDX_SIZEOF, 16
 
 tar_index:          ; the tar index is a simple array of fixed-size entries, 
                     ; each containing the file name, size, and offset in the tarfs image. 
@@ -2424,6 +2544,9 @@ tar_count:          ; number of files in the tarfs image,
 
     .WORD 0
 
+tar_limit:
+    .WORD 0
+
 ;==============================================================
 ; TARFS file header layout and constants
 ;==============================================================
@@ -2434,22 +2557,10 @@ tar_count:          ; number of files in the tarfs image,
 
 .EQU TAR_HEADER_SIZE, 512
 
-; ==================================================
-; TAR index entry layout
-; ==================================================
-
-.EQU TAR_IDX_NAME,   0     ; ptr to filename string
-.EQU TAR_IDX_DATA,   4     ; ptr to file data
-.EQU TAR_IDX_SIZE,   8     ; file size
-.EQU TAR_IDX_TYPE,  12     ; file or directory
-
-.EQU TAR_IDX_SIZEOF, 16
-
-
 ; --------------------------------------------------
-; tarfs_lookup
+; tarfs_lookup - lookup a file in the tar index by name, for open and read operations
 ;
-; R1 = pathname
+; in R1 = pathname input (e.g. "/file.txt")
 ;
 ; returns:
 ;   R1 = tar_index entry
@@ -2464,16 +2575,23 @@ tarfs_lookup:
     PUSH R10
 
     MOV R8 R1              ; pathname
+    LDB R2 [R8]
+    LI R3 47               ; accept normal absolute paths: "/etc/motd"
+    CMP R2 R3
+    BNE lookup_path_ready
+    ADD R8 R8 1
+
+lookup_path_ready:
 
     LI R9 0                ; index
 
     LI R10 tar_count
     LDW R10 [R10]
 
-lookup_loop:
+tar_lookup_loop:
 
     CMP R9 R10
-    BGE lookup_not_found
+    BGE tar_lookup_not_found
 
     ; entry address
 
@@ -2493,12 +2611,12 @@ lookup_loop:
     BL strcmp   ;R1 is tar name, R2 is pathname, returns 1 if match
 
     CMP R1 1
-    BEQ lookup_found
+    BEQ tar_lookup_found
 
     ADD R9 R9 1
-    B lookup_loop
+    B tar_lookup_loop
 
-lookup_found:
+tar_lookup_found:
 
     LI R1 tar_index
 
@@ -2513,7 +2631,7 @@ lookup_found:
     POP LR
     RET
 
-lookup_not_found:
+tar_lookup_not_found:
 
     LI R1 0             ; R1 = NULL
 
@@ -2525,9 +2643,13 @@ lookup_not_found:
 
 
 ; --------------------------------------------------
-; tarfs_init
+; tarfs_init - initialize the tarfs by scanning the tar archive and populating the index
 ;
-; R1 = tar archive base
+; in R1 = tar archive base
+; outputs:
+; global structs and variables:
+;   tar_index - populated with file metadata for lookups
+;   tar_count - set to number of files in the archive
 ; --------------------------------------------------
 
 tarfs_init:
@@ -2540,12 +2662,25 @@ tarfs_init:
     PUSH R12
 
     MOV R8 R1                  ; current tar header
+    LI R11 tar_limit
+    ADD R2 R1 R2
+    STW R2 [R11]               ; exclusive end of archive
 
     LI R9 tar_index            ; current index entry
 
     LI R10 0                   ; file count
 
 tar_scan_loop:
+
+    CMP R10 MAX_TAR_FILES
+    BGE tar_done                ; check before writing the next index entry
+
+    LI R11 tar_limit
+    LDW R11 [R11]
+    LI R12 TAR_HEADER_SIZE
+    ADD R12 R8 R12
+    CMP R12 R11
+    BGTU tar_done               ; truncated/corrupt header
 
     ; ------------------------------------
     ; end of archive?
@@ -2563,6 +2698,8 @@ tar_scan_loop:
 
     MOV R11 R8
 
+    ADD R11 R11 TAR_NAME_OFF
+
     STW R11 [R9 + TAR_IDX_NAME]
 
     ; ------------------------------------
@@ -2572,9 +2709,11 @@ tar_scan_loop:
     MOV R1 R8
     ADD R1 R1 TAR_SIZE_OFF
 
-    BL tar_parse_octal          ; parse octal size from tar header field to binary integer
+    ;R1 = ptr to TAR size field
 
-    MOV R12 R1                 ; save file size
+    BL tar_parse_octal         ; parse octal size from tar header field to binary integer
+
+    MOV R12 R1                 ; save file resulted binary size
 
     STW R12 [R9 + TAR_IDX_SIZE]
 
@@ -2583,23 +2722,25 @@ tar_scan_loop:
     ; ------------------------------------
 
     MOV R11 R8
-    ADD R11 R11 TAR_HEADER_SIZE
+    LI R2 TAR_HEADER_SIZE
+    ADD R11 R11 R2
 
     STW R11 [R9 + TAR_IDX_DATA]
 
     ; ------------------------------------
-    ; type
+    ; type - file or directory 0 for file, 5 for directory
     ; ------------------------------------
 
-    LI R11 0
-
+    LI R2 TAR_TYPE_OFF
+    ADD R2 R8 R2
+    LDB R11 [R2]
     STW R11 [R9 + TAR_IDX_TYPE]
 
     ; ------------------------------------
     ; next index entry
     ; ------------------------------------
 
-    ADD R10 R10 1
+    ADD R10 R10 1               ; othewise go to next file count
 
     ADD R9 R9 TAR_IDX_SIZEOF
 
@@ -2611,20 +2752,27 @@ tar_scan_loop:
 
     ; round up to 512 boundary
 
-    ADD R11 R11 511
+    LI R2 511
+    ADD R11 R11 R2
 
     SHR R11 R11 9
-    SHL R11 R11 9
+    SHL R11 R11 9           ; R11 = size rounded up to next 512 multiple
 
-    ADD R8 R8 TAR_HEADER_SIZE
+    LI R2 TAR_HEADER_SIZE
+    ADD R8 R8 R2
 
-    ADD R8 R8 R11
+    ADD R8 R8 R11           ; advance to next tar header
+
+    LI R12 tar_limit
+    LDW R12 [R12]
+    CMP R8 R12
+    BGTU tar_done            ; file data/padding extends beyond archive
 
     B tar_scan_loop
 
 tar_done:
 
-    LI R11 tar_count
+    LI R11 tar_count        ; store total file count for this tar archive in global variable
 
     STW R10 [R11]
 
@@ -2647,7 +2795,7 @@ tar_done:
 ;   "144" -> 100 decimal
 ;
 ; returns:
-;   R1 = binary value
+;   R1 = binary value (converted from octal string)
 ; --------------------------------------------------
 
 tar_parse_octal:
@@ -2685,20 +2833,208 @@ octal_loop:
 
     SHL  R2 R2 3               ; multiply by 8
 
-    ADD  R2 R2 R3
+    ADD  R2 R2 R3              ; add digit
 
-    ADD  R1 R1 1
+    ADD  R1 R1 1               ; advance to next octal character
 
     B    octal_loop
 
 octal_done:
 
-    MOV  R1 R2
+    MOV  R1 R2                 ; return binary result in R1
 
     POP  R4
     POP  R3
     POP  R2
+    RET
+    
+; for kputs
+newline:
+    .ASCIIZ "\r\n"
 
+tarfs_banner:
+    .ASCIIZ "[TARFS]\r\n"
+
+;==============================================================
+; tarfs_dump_index - a simple debug function to print the contents of the tar index
+; for each file, it prints the filename and size. This can be called from a debug
+; syscall or from the kernel initialization code after tarfs_init to verify the 
+; index was populated correctly.
+;==============================================================
+tarfs_dump_index:
+
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
+    LI R8 0
+
+    LI R10 tar_count
+    LDW R10 [R10]
+
+    LI R1 tarfs_banner
+    BL kputs
+
+dump_loop:
+
+    CMP R8 R10
+    BGE dump_done
+
+    ; entry = tar_index + i*sizeof(entry)
+
+    LI R1 tar_index
+
+    LI R2 TAR_IDX_SIZEOF
+    MUL R3 R8 R2
+
+    ADD R9 R1 R3
+
+    ; filename
+
+    LDW R2 [R9 + TAR_IDX_NAME]
+
+    ; print string somehow
+
+    MOV R1 R2
+    BL kputs
+
+    ; newline
+
+    LI R1 newline
+    BL kputs
+
+    ADD R8 R8 1
+    B dump_loop
+
+dump_done:
+
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET    
+
+;==============================================================
+; TARFS file operations
+;==============================================================
+
+tarfs_ops:
+    .WORD tarfs_read
+    .WORD tarfs_write
+
+tarfs_read:
+    ; R1=file*, R2=user destination, R3=requested length
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R1
+    MOV R9 R2
+    MOV R10 R3
+
+    CMP R10 0
+    BEQ tarfs_read_eof
+
+    PUSH R8
+    PUSH R9
+    MOV R1 R9
+    MOV R2 R10
+    LI R3 1                    ; destination must be user-writable
+    BL user_buffer_valid_range
+    POP R9
+    POP R8
+    CMP R1 1
+    BNE tarfs_read_fault
+
+    LDW R11 [R8 + FILE_PRIVATE]
+    LDW R12 [R8 + FILE_OFFSET]
+    LDW R4 [R11 + TAR_IDX_SIZE]
+
+    CMP R12 R4
+    BGEU tarfs_read_eof
+
+    SUB R4 R4 R12             ; bytes remaining
+    CMP R10 R4
+    BLEU tarfs_read_count_ready
+    MOV R10 R4
+
+tarfs_read_count_ready:
+    LDW R4 [R11 + TAR_IDX_DATA]
+    ADD R4 R4 R12             ; kernel source
+    MOV R1 R9                 ; user destination
+    MOV R2 R10
+    BL copy_to_user
+
+    ADD R12 R12 R1
+    STW R12 [R8 + FILE_OFFSET]
+    B tarfs_read_done
+
+tarfs_read_fault:
+    LI R1 ERR_FAULT
+    B tarfs_read_done
+
+tarfs_read_eof:
+    LI R1 0
+
+tarfs_read_done:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+tarfs_write:
+    LI R1 ERR_ACCES
+    RET
+
+;==============================================================
+; kputs - Simple kernel printf for debugging - prints a zero-terminated string 
+; to the console using uart_put
+; R1 = zero terminated string
+;==============================================================
+
+kputs:
+
+    PUSH LR
+    PUSH R8
+    MOV R8 R1
+
+kputs_loop:
+    LDB R1 [R8]
+
+    CMP R1 0
+    BEQ kputs_done
+
+    BL uart_putc
+
+    ADD R8 R8 1
+
+    B kputs_loop
+
+kputs_done:
+    POP R8
+    POP LR
+    RET
+
+;=====================================    
+; debug put char to uart from kernel
+;=====================================
+uart_putc:
+
+    LI R3 0x00100000  ; UART MMIO Base Address
+poll:
+    LDW R2 [R3 + 4]   ; read UART status register
+    AND R2 R2 2       ; check if TX ready (bit 1)
+    CMP R2 0
+    BEQ poll
+
+    STW R1 [R3 + 0]   ; R1 is the character value
     RET
 
 
@@ -3100,6 +3436,7 @@ do_switch:
     ; R2 - index of old/current task - get to its structure in mem
     GET_TASK_PTR R5, R2        ; R5 = &tasks[old], clobbers R3
     MOV R3 R8
+    MOV R9 R5                  ; preserve old task pointer for deferred reap
 
     ; ------------------------------------------------
     ; Save old task context pointers
@@ -3133,6 +3470,17 @@ do_switch:
 
     TASK_GET_KSP SP, R5
 
+    ; SP now belongs to the new task, so it is safe to release an exiting
+    ; old task's kernel stack and remaining address-space resources.
+    TASK_GET_STATE R7, R9
+    CMP R7 TASK_ZOMBIE
+    BNE switch_old_reaped
+    PUSH R5
+    MOV R1 R9
+    BL task_destroy
+    POP R5
+
+switch_old_reaped:
     TASK_GET_RESUME R7, R5
     CMP R7 RESUME_KERNEL
     BEQ restore_kernel_context  ;select how to run new task - depending where it was stopped usual
@@ -3240,7 +3588,8 @@ restore_kernel_context:         ;in case new task was stopped in kernel jump to 
 ; 1 = allocated
 
 page_bitmap:
-    .SPACE 16      ; 128 bits = 16 bytes
+    .SPACE 12
+    .WORD 1        ; reserve physical page 0xA0000 for the built-in TAR image
 
 ;================================================================
 ; Page allocation routines
@@ -3809,34 +4158,86 @@ td_done:
 task_close_fds:
 
     PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
 
     TASK_GET_FD_TABLE R4, R1
+    MOV R12 R4
 
     LI R5 3              ; skip stdin/out/err
+    MOV R11 R5
 
 fd_loop:
 
-    CMP R5 MAX_FDS
+    CMP R11 MAX_FDS
     BGE fd_done         ; if we processed all fd slots, we are done
 
-    SHL R6 R5 2
-    ADD R7 R4 R6        ; R7 = &fd_table[fd]
+    SHL R6 R11 2
+    ADD R10 R12 R6      ; R10 = &fd_table[fd]
 
-    LDW R8 [R7]
+    LDW R8 [R10]
     CMP R8 0
     BEQ fd_next         ; if fd slot is empty, skip to next
 
     MOV R1 R8
-    BL file_free        ; free the file associated with this fd in the file pool, 
-                        ; this also marks the fd slot as free in the task's fd table
+    BL file_free
     LI R9 0
-    STW R9 [R7]         ; mark fd slot as free in task's fd table
+    STW R9 [R10]        ; mark fd slot as free in task's fd table
 
 fd_next:
-    ADD R5 R5 1
+    ADD R11 R11 1
     B fd_loop
 
 fd_done:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;================================================================
+; Reclaim zombie tasks from a safe stack.
+; Must only be called by a live task; it never destroys CURRENT_TASK.
+;================================================================
+task_reap_zombies:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
+    GET_CURR_TASK_IDX R10
+    LI R8 0
+
+task_reap_loop:
+    CMP R8 MAX_TASKS
+    BGE task_reap_done
+
+    CMP R8 R10
+    BEQ task_reap_next
+
+    GET_TASK_PTR R9, R8
+    TASK_GET_STATE R1, R9
+    CMP R1 TASK_ZOMBIE
+    BNE task_reap_next
+
+    PUSH R8
+    MOV R1 R9
+    BL task_destroy
+    POP R8
+
+task_reap_next:
+    ADD R8 R8 1
+    B task_reap_loop
+
+task_reap_done:
+    POP R10
+    POP R9
+    POP R8
     POP LR
     RET
 
@@ -3904,7 +4305,7 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    ;DEBUG 3
+    ;DEBUG 2
     ;LI R1 SYS_EXIT
     ;SVC SYS_EXIT
     B idle_loop
@@ -3949,6 +4350,28 @@ write_loop1:
 .org 0x1a000
 TASK_B_START:
 
+    ; Read the built-in TARFS message through open/read/close.
+    LI R1 task_b_motd_path
+    LI R2 FD_FLAG_READ
+    SVC SYS_OPEN
+    MOV R8 R1
+    CMP R8 0
+    BLT task_b_open_fail
+
+    MOV R1 R8
+    LI R2 USER_READ_BUF
+    LI R3 32
+    SVC SYS_READ
+    MOV R9 R1
+
+    LI R1 STDOUT_FD
+    LI R2 USER_READ_BUF
+    MOV R3 R9
+    SVC SYS_WRITE
+
+    MOV R1 R8
+    SVC SYS_CLOSE
+
 task_b_loop:
 
     ;=========================================
@@ -3981,13 +4404,25 @@ task_b_loop:
 
     MOV R1 R8
     SVC SYS_CLOSE
-    DEBUG 2
-    ;=========================================
-    ; yield
-    ;=========================================
 
+    ; Block until console input is available, then echo exactly the number
+    ; of bytes returned by read(). The UART driver stops at newline or after
+    ; CONSOLE_INPUT_LEN bytes.
+    LI R1 STDIN_FD
+    LI R2 USER_READ_BUF
+    LI R3 CONSOLE_INPUT_LEN
+    SVC SYS_READ
+    CMP R1 0
+    BLE task_b_yield
+
+    MOV R5 R1
+    LI R1 STDOUT_FD
+    LI R2 USER_READ_BUF
+    MOV R3 R5
+    SVC SYS_WRITE
+
+task_b_yield:
     SVC SYS_YIELD
-
     B task_b_loop
 
 task_b_open_fail:
@@ -3996,49 +4431,18 @@ task_b_open_fail:
     LI R2 open_fail_msg
     LI R3 11
     SVC SYS_WRITE
-    DEBUG 2
 
     SVC SYS_YIELD
 
     B task_b_loop
 
-    li R1 10
-read_write_loop:
-    push R1
-    ; Perform a read from stdin into a user buffer.
-    ;TRACE 1
-    LI R1 0
-    ;DEBUG 2
-    LI R2 USER_READ_BUF
-    LI R3 CONSOLE_INPUT_LEN
-    SVC SYS_READ
-    DEBUG 1
-    
-    ;CMP R1 0
-    ;BEQ task_b_done
-
-    ; Echo the data back via SYS_WRITE.
-    MOV R5 R1              ; save length returned by SYS_READ
-    LI R1 1                ; stdout file descriptor
-    LI R2 USER_READ_BUF
-    MOV R3 R5
-    SVC SYS_WRITE
-    DEBUG 1
-    pop R1
-    sub R1 R1 1
-    cmp r1 0
-    BNE read_write_loop
-    ;TRACE 0
-task_b_done:
-    ; Exit after the read/write test.
-    DEBUG 1
-    LI R1 SYS_EXIT
-    SVC SYS_EXIT
-
 ; task2 date page
 .org 0x1A100
 task_b_console_path:
     .ASCIIZ "/dev/console"
+
+task_b_motd_path:
+    .ASCIIZ "/etc/motd"
 
 task_b_msg:
     .ASCIIZ "OPEN WRITE CLOSE\r\n"
@@ -4051,3 +4455,47 @@ open_fail_msg:
 
 open_fail_msg_len:
     .WORD 11
+
+; ================================================================
+; Built-in read-only TARFS image
+;
+; The current TAR scanner only needs the POSIX name, size, and type
+; fields. These test headers intentionally leave checksum/owner fields
+; zero until the build grows a general binary-asset inclusion step.
+; ================================================================
+
+.ORG 0xA0000
+tarfs_start:
+
+; etc/motd, 16 bytes
+    .ASCIIZ "etc/motd"
+    .SPACE 115
+    .ASCIIZ "00000000020"
+    .SPACE 20
+    .ASCIIZ "0"
+    .SPACE 354
+    .ASCIIZ "Welcome to KR32\n"
+    .SPACE 495
+
+; bin/sh, 10 bytes
+    .ASCIIZ "bin/sh"
+    .SPACE 117
+    .ASCIIZ "00000000012"
+    .SPACE 20
+    .ASCIIZ "0"
+    .SPACE 354
+    .ASCIIZ "#!/bin/sh\n"
+    .SPACE 501
+
+; bin/ls, empty placeholder executable
+    .ASCIIZ "bin/ls"
+    .SPACE 117
+    .ASCIIZ "00000000000"
+    .SPACE 20
+    .ASCIIZ "0"
+    .SPACE 354
+
+; TAR end marker: two zero headers
+    .SPACE 1024
+
+tarfs_end:

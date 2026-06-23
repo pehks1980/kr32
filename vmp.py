@@ -128,6 +128,7 @@ class CPU:
         self.debug_dump_range = None
         self.current_instr_pc = None
         self.trace_output = True
+        self.trace_events = False
         self.quiet = False
         self.current_instr = None
         self.trap_return_pc = 0
@@ -1168,19 +1169,19 @@ class CPU:
             #    return
             # upon devices irg (tr/fals) raise pics irq bit 0 -timer tick bit 1 -uart event (TX/RX)
             if self.timer.tick():
-                if self.trace_output:
+                if self.trace_output and self.trace_events:
                     print("[TIMER tick]")
                 self.pic.raise_irq(0)
 
             if self.uart.update():
-                if self.trace_output:
+                if self.trace_output and self.trace_events:
                     print("[UART RX/TX]")
                 self.pic.raise_irq(1)
         # nesting/priority?
             if self.interrupt_enabled and not self.in_trap_handler:
                 irq = self.pic.next_irq()
                 if irq is not None:
-                    if self.trace_output:
+                    if self.trace_output and self.trace_events:
                         print(f"[IRQ {irq}] pending..")
                     self.raise_trap(TRAP_IRQ, irq)
 
@@ -1663,6 +1664,16 @@ def main():
         action="store_true",
         help="trace instructions only while inside trap/interrupt handlers"
     )
+    parser.add_argument(
+        "--traceevents",
+        action="store_true",
+        help="print timer, UART, and pending IRQ event messages"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print VM boot and halt status messages"
+    )
 
     parser.add_argument(
         "--debug",
@@ -1671,8 +1682,6 @@ def main():
         help="enable debug dumps: 0=short, 1=full, 2=MMU/process view"
     )
     args = parser.parse_args()
-
-    print("=== KR32 BOOT ===")
 
     cpu = CPU(
         mem_size=int(args.mem_size, 0),
@@ -1687,6 +1696,8 @@ def main():
     cpu.traceint = args.traceint
     cpu.trace_fault = args.tracefault
     cpu.trace_handler = args.tracehandler
+    cpu.trace_events = args.traceevents
+    cpu.quiet = not args.verbose
     if args.dump and args.debug == 2:
         cpu.debug_dump_range = (int(args.dump[0], 0), int(args.dump[1], 0))
     if args.no_mmu:
@@ -1694,9 +1705,11 @@ def main():
 
     cpu.load_image("memory.img")
 
-    print("[BOOT] Image loaded")
-    print("[BOOT] Reset CPU state")
-    print("[BOOT] Starting execution")
+    if args.verbose:
+        print("=== KR32 BOOT ===")
+        print("[BOOT] Image loaded")
+        print("[BOOT] Reset CPU state")
+        print("[BOOT] Starting execution")
 
     cpu.run(0)
 
@@ -1712,7 +1725,8 @@ def main():
         print(f"[PHYS MEM DUMP] paddr=0x{paddr:08X} size={size}")
         cpu.physical_hexdump(paddr, size)
 
-    print("[BOOT] Done")
+    if args.verbose:
+        print("[BOOT] Done")
 
 
 if __name__ == "__main__":
