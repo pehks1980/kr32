@@ -69,6 +69,39 @@ B KERNEL_START
 .EQU STDERR_FD,      2
 .EQU CONSOLE_INPUT_LEN, 5
 
+; =============================================================
+; FILE struc - current with inodes
+; =============================================================
+
+.EQU FD_FLAG_READ,    1
+.EQU FD_FLAG_WRITE,   2
+
+;FILE struc uses inode
+.EQU FILE_INODE,    0
+.EQU FILE_OFFSET,   4
+.EQU FILE_FLAGS,    8
+.EQU FILE_SIZE,    12
+
+.EQU FOPS_READ,     0
+.EQU FOPS_WRITE,    4
+.EQU FOPS_SIZE,     8
+
+; ==================================================
+; VFS inode table struc
+; ==================================================
+
+; ==================================================
+; inode struc
+; ==================================================
+
+.EQU INODE_OPS,      0
+.EQU INODE_PRIVATE,  4
+.EQU INODE_TYPE,     8
+.EQU INODE_SIZE,    12
+.EQU INODE_REFCNT,  16
+
+.EQU INODE_SIZEOF,  20
+
 
 
 ; KBUFFER for kernel<->user data transfer, one per task, mapped into each address space at 0x1000-0x1FFF 
@@ -538,8 +571,6 @@ syscall_open:
     LDW R1 [SP + TF_R1]
     LDW R2 [SP + TF_R2]
 
-    MOV R12 R2               ; save flags
-
     BL copy_path_from_user     ; macro inside destroys R11, copy pathname 
                                ; to tasks Kbuf_RD buffer
                                ; R1 - pathname str ptr in the bufer
@@ -550,74 +581,18 @@ syscall_open:
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     TASK_GET_KBUF_RD R1, R5
-    ;check file R1=pathname ptr in kernel space
-    BL vfs_lookup        ; sys uses inides! vfs
-    CMP R1 0
-    BEQ open_fail_noent
-    ;out: R1 new inited inode ptr
-    MOV R8 R1            ; save inode ptr
-    BL file_alloc        ; out: R1 = pointer to new FILE object in file_pool
-    CMP R1 0
-    BEQ open_fail_nfile
-    MOV R9 R1                ; save file*
-    ; initialize file object ; R1 file*
-    MOV R1 R9
-    MOV R2 R8                ; inode*
-    MOV R3 R12               ; flags
-    BL file_init             ; ([i].inode*)->([i].file*), [i].seek=0, set [i].flags in file_pool
-    
-    MOV R1 R9
-    BL fd_alloc             ; R1 inited file ptr 
-    LI R2 ERR_MFILE
-    CMP R1 R2
-    BEQ open_fail_fd
+
+    BL vfs_open
 
     STW R1 [SP + TF_R1]     ;file opened if fd on exit!
     B trap_restore
 
-open_fail_acces:
-    LI R1 ERR_ACCES
-    STW R1 [SP + TF_R1]
-    B trap_restore
-
-open_fail_isdir:
-    LI R1 ERR_ISDIR
-    STW R1 [SP + TF_R1]
-    B trap_restore
-
-open_fail_fd:
-    MOV R1 R9
-    ; FILE_GET_INODE R2, R1    ; 
-    ; R2 = [R1 file->inode] = inode
-    LDW R2 [R1 + FILE_INODE]
-
-    MOV R1 R2
-    BL inode_put             ; close inode refcnt--
-
-    MOV R1 R9
-    BL file_free
-    LI R1 ERR_MFILE
-    STW R1 [SP + TF_R1]
-
-    B trap_restore
-
-open_fail_nfile:
-    LI R1 ERR_NFILE
-    STW R1 [SP + TF_R1]
-
-    B trap_restore
-
-open_fail_noent:
-    LI R1 ERR_NOENT
-    STW R1 [SP + TF_R1]
-
-    B trap_restore
-
 open_fail_fault:
     LI R1 ERR_FAULT
-    STW R1 [SP + TF_R1]
-
+    STW R1 [SP + TF_R1]     ;file not opened ERR
     B trap_restore
+
+
 ;====================================================================
 ; syscall_open helpers
 ;====================================================================
@@ -700,7 +675,7 @@ devfs_lookup:
     LI R7 device_table
     LI R9 DEVICE_COUNT
 
-defs_loop:
+devfs_loop:
     CMP R9 0
     BEQ lookup_fail
 
@@ -729,7 +704,7 @@ devfs_found:
     LI  R5 0                ; size =0
     BL inode_init
 
-    MOV R1 R110         ; 3 return new inited inode ptr for this dev
+    MOV R1 R10         ; 3 return new inited inode ptr for this dev
     POP LR
     RET
 
@@ -951,28 +926,6 @@ file_init:
     RET
 
 ;====================================================================
-; file_init1
-; in: R1 = file pointer
-      ;R2 = device descriptor pointer in file_pool
-      ;R3 = open flags
-; out:file structure initialized
-;====================================================================
-file_init1:
-
-    LDW R4 [R2 + DEV_OPS]
-    STW R4 [R1 + FILE_OPS]
-
-    LDW R4 [R2 + DEV_PRIVATE]
-    STW R4 [R1 + FILE_PRIVATE]
-
-    LI R4 0
-    STW R4 [R1 + FILE_OFFSET]
-
-    STW R3 [R1 + FILE_FLAGS]
-
-    RET
-
-;====================================================================
 ; fd_alloc - set initialised file to process fd_table (dynamic space )
 ; in R1 = file pointer
 ; out R1 = fd number / R1 = ERR_MFILE if full
@@ -1023,20 +976,9 @@ syscall_close:
     ;================================================================
     LDW R1 [SP + TF_R1]
 
-    BL fd_remove    ;in R1-fd out R1-file ptr for this fd
-
-    CMP R1 0
-    BEQ close_fail
-
-    BL file_free    ;in R1 file_ptr in file_pool it marks it as free (NULL)
+    BL vfs_close
 
     LI R1 0
-    STW R1 [SP + TF_R1]
-
-    B trap_restore
-
-close_fail:
-    LI R1 ERR_BADF
     STW R1 [SP + TF_R1]
 
     B trap_restore
@@ -1067,9 +1009,9 @@ syscall_pipe:
     MOV R9 R1           ; new file for read end  in file_pool
 
     LI R2 pipe_ops
-    STW R2 [R9 + FILE_OPS]      ; store ops (for pipe of read end) in allocated  file struc
+  ;  STW R2 [R9 + FILE_OPS]      ; store ops (for pipe of read end) in allocated  file struc needs to be adapted for inode
 
-    STW R8 [R9 + FILE_PRIVATE]  ; store our slot pipe* in file
+  ;  STW R8 [R9 + FILE_PRIVATE]  ; store our slot pipe* in file
 
     LI R2 FD_FLAG_READ
     STW R2 [R9 + FILE_FLAGS]    ; set file mode read
@@ -1092,9 +1034,9 @@ syscall_pipe:
     MOV R9 R1
 
     LI R2 pipe_ops
-    STW R2 [R9 + FILE_OPS]
+  ;  STW R2 [R9 + FILE_OPS]
 
-    STW R8 [R9 + FILE_PRIVATE]
+  ;  STW R8 [R9 + FILE_PRIVATE]
 
     LI R2 FD_FLAG_WRITE                 ;file mode -write
     STW R2 [R9 + FILE_FLAGS]
@@ -1227,7 +1169,7 @@ pipe_read:
     MOV R9 R1              ; file*
     MOV R7 R2              ; user buffer
     MOV R6 R3              ; requested len
-    LDW R9 [R9 + FILE_PRIVATE]    ; our instance allocated in pipe_pool pipe*
+   ;  LDW R9 [R9 + FILE_PRIVATE]    ; our instance allocated in pipe_pool pipe* needs to be adapted for inode
     CMP R6 0                ;fast clear from it if len=0
     BEQ pipe_read_done
 ;-----------------------------------------
@@ -1437,7 +1379,7 @@ pipe_write:
     MOV R7 R2
     MOV R6 R3
 
-    LDW R9 [R8 + FILE_PRIVATE]
+  ;  LDW R9 [R8 + FILE_PRIVATE]
 
     ;---------------------------------------
     ; validate user source buffer
@@ -1931,17 +1873,22 @@ file_read:
     ;================================================================
     ; R1 = file ptr, R2 = user buffer, R3 = len
     ;================================================================
+    LDW R4 [R1 + FILE_INODE]
+    LDW R4 [R4 + INODE_OPS]
+    LDW R4 [R4 + FSOPS_READ]
+    JR R4
 
-    LDW R4 [R1 + FILE_OPS]
-    LDW R4 [R4 + FOPS_READ]     ; get read function xdev_read from ops
-    JR R4                       ; execute it
+   ; LDW R4 [R1 + FILE_OPS]
+   ; LDW R4 [R4 + FOPS_READ]     ; get read function xdev_read from ops
+   ; JR R4                       ; execute it
 
 file_write:
     ;================================================================
     ; R1 = file ptr, R2 = user buffer, R3 = len
     ;================================================================
 
-    LDW R4 [R1 + FILE_OPS]
+    LDW R4 [R1 + FILE_INODE]
+    LDW R4 [R4 + INODE_OPS]
     LDW R4 [R4 + FOPS_WRITE]    ; get write function xdev_write from ops
     JR R4                       ; execute it
 
@@ -2612,6 +2559,7 @@ dev_null_name:
 .EQU DEV_OPS,     4
 .EQU DEV_PRIVATE, 8
 .EQU DEV_SIZE,    12
+
 .EQU DEVICE_COUNT, 2
 
 device_table:
@@ -2696,21 +2644,7 @@ tarfs_ops:
     .WORD 0
     .WORD 0
 
-; ==================================================
-; VFS inode table struc
-; ==================================================
 
-; ==================================================
-; inode struc
-; ==================================================
-
-.EQU INODE_OPS,      0
-.EQU INODE_PRIVATE,  4
-.EQU INODE_TYPE,     8
-.EQU INODE_SIZE,    12
-.EQU INODE_REFCNT,  16
-
-.EQU INODE_SIZEOF,  20
 
 ;VFS inode inst for tarfs
 tarfs_inode:
@@ -2718,24 +2652,7 @@ tarfs_inode:
     .WORD tar_index
 
 
-.EQU FD_FLAG_READ,    1
-.EQU FD_FLAG_WRITE,   2
 
-;FILE struc uses inode
-.EQU FILE_INODE,    0
-.EQU FILE_OFFSET,   4
-.EQU FILE_FLAGS,    8
-.EQU FILE_SIZE,    12
-
-;.EQU FILE_OPS,      0
-;.EQU FILE_PRIVATE,  4
-;.EQU FILE_OFFSET,   8
-;.EQU FILE_FLAGS,    12
-;.EQU FILE_SIZE,     16
-
-.EQU FOPS_READ,     0
-.EQU FOPS_WRITE,    4
-.EQU FOPS_SIZE,     8
 
 
 ; ==================================================
@@ -3161,9 +3078,9 @@ dump_done:
 ; TARFS file operations
 ;==============================================================
 
-tarfs_ops:
-    .WORD tarfs_read
-    .WORD tarfs_write
+;tarfs_ops:
+;    .WORD tarfs_read
+;    .WORD tarfs_write
 
 ;==============================================================
 ; TARFS tarfs_read:
@@ -3588,8 +3505,36 @@ inode_used:
 ;      R1 = 0 if none
 ;=================================================================
 inode_alloc:
-;to do as in file_alloc
+    LI R2 0                      ; index
 
+ia_loop:
+    CMP R2 MAX_INODES
+    BGE ia_fail
+
+    SHL R3 R2 2                   ; index * 4 (inode_used is u32 array)
+    LI R4 inode_used
+    ADD R4 R4 R3                  ; &inode_used[index]
+
+    LDW R5 [R4]                   ; load used marker
+    CMP R5 0
+    BEQ ia_found
+
+    ADD R2 R2 1
+    B ia_loop
+
+ia_found:
+    LI R5 1
+    STW R5 [R4]                  ; mark used
+
+    LI R3 INODE_SIZEOF
+    MUL R6 R2 R3                 ; offset bytes into inode_pool
+
+    LI R1 inode_pool
+    ADD R1 R1 R6                 ; return inode ptr
+    RET
+
+ia_fail:
+    LI R1 0
     RET
 
 ;=================================================================
@@ -3612,7 +3557,20 @@ inode_alloc:
 ;
 ;=================================================================
 inode_free:
-;todo as file_free
+    ; in R1 = inode ptr
+
+    LI R2 inode_pool
+    SUB R3 R1 R2                  ; offset from pool base
+
+    LI R4 INODE_SIZEOF
+    DIV R5 R3 R4                 ; index
+
+    SHL R5 R5 2                  ; index * 4 (u32 array)
+    LI R6 inode_used
+    ADD R6 R6 R5                 ; &inode_used[index]
+
+    LI R7 0
+    STW R7 [R6]                  ; mark free
 
     RET
 
@@ -3712,6 +3670,110 @@ vfs_not_found:
     POP LR          ;or R1 - Nul
     RET
 
+;=================================================================
+; vfs_open - open pathname file 
+;
+; in R1 - pathname ptr R2 - flags
+; or R1 - fd of the file
+;=================================================================
+
+vfs_open:
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    MOV R10 R2      ; flags
+
+    ;check file R1=pathname ptr in kernel space
+    BL vfs_lookup        ; vfs lookup (selects fs finds file/device and creates inited inode to put in file object)
+    CMP R1 0
+    BEQ fail_noent
+    ;out: R1 new inited inode ptr
+    MOV R8 R1            ; save inode ptr
+
+    LDW R2 [R8 + INODE_TYPE]
+    LI R3 INODE_DIR
+    CMP R2 R3
+    BEQ fail_isdir            ; if pathname is a dir
+
+    BL file_alloc        ; out: R1 = pointer to new FILE object in file_pool
+    CMP R1 0
+    BEQ fail_nfile
+
+    MOV R9 R1                ; save file*
+
+    ; initialize file object ; 
+    MOV R1 R9                ; R1 file*
+    MOV R2 R8                ; inode*
+    MOV R3 R10               ; flags
+    BL file_init
+    
+    MOV R1 R9
+    BL fd_alloc             ; R1 inited file ptr 
+    LI R2 ERR_MFILE
+    CMP R1 R2
+    BEQ fail_fd
+                            ; R1 - holds fd
+    POP R10
+    POP R9
+    POP R8
+    RET
+
+fail_fd:
+    MOV R1 R9
+    ; FILE_GET_INODE R2, R1    ; 
+    ; R2 = [R1 file->inode] = inode
+    LDW R2 [R1 + FILE_INODE]
+
+    MOV R1 R2
+    BL inode_put             ; close inode refcnt--
+
+    MOV R1 R9
+    BL file_free
+    LI R1 ERR_MFILE
+    B  vfs_exit
+
+fail_noent:
+    LI R1 ERR_NOENT
+    B  vfs_exit
+fail_nfile:
+    LI R1 ERR_NFILE
+    B  vfs_exit
+fail_isdir:
+    LI R1 ERR_ISDIR
+    B  vfs_exit
+fail_acces:
+    LI R1 ERR_ACCES
+vfs_exit:
+    POP R10
+    POP R9
+    POP R8
+    RET
+
+;================================================================
+; vfs_close - close opened file
+; in R1 = fd
+; out R1 = 0 / ERR_BADF
+;================================================================
+vfs_close:
+    PUSH LR   
+    BL fd_remove    ;in: R1-fd out: R1-file ptr for this fd
+
+    CMP R1 0
+    BEQ badf_fail
+
+    MOV R8 R1          ; save file*
+
+    LDW R1 [R8 + FILE_INODE]
+    BL inode_put       ;decrement refcnt (release inode automatically if refcnt=0)
+
+    MOV R1 R8
+    BL file_free    ;in R1 file_ptr in file_pool it marks it as free (NULL)
+    POP LR
+    RET
+badf_fail:
+    LI R1 ERR_BADF
+    POP LR
+    RET
 
 
 ;=================================================================
