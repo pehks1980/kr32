@@ -1523,24 +1523,11 @@ syscall_read:
     LDW R2 [SP + TF_R2]
     LDW R3 [SP + TF_R3]
 
-    MOV R7 R2               ; save user buffer
-    MOV R6 R3               ; save length
-    PUSH R7
-    PUSH R6
-    LI R2 FD_FLAG_READ      ; pass flags in R2 per fetch_fd_entry convention
-    BL fetch_fd_entry
-    POP R6
-    POP R7
-    CMP R1 0
-    BEQ bad_fd
-    MOV R9 R1               ; file object pointer
-    MOV R1 R9
-    MOV R2 R7
-    MOV R3 R6
-    BL file_read
-    STW R1 [SP + TF_R1]
+    BL vfs_read
 
+    STW R1 [SP + TF_R1]
     B trap_restore
+
 
 con_read:
     ;================================================================
@@ -1560,7 +1547,8 @@ con_read:
     MOV R7 R2
     MOV R6 R3
     LI R8 0                    ; total bytes collected
-    LDW R9 [R9 + FILE_PRIVATE] ; console device pointer
+    LDW R9 [R9 + FILE_INODE]
+    LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
     CMP R6 0
     BEQ read_done
 
@@ -1698,25 +1686,12 @@ syscall_write:
     LDW R1 [SP + TF_R1]
     LDW R2 [SP + TF_R2]
     LDW R3 [SP + TF_R3]
-; first fetch file from procs fd_table and check flags for match access WRITE /READ
-    MOV R7 R2               ; save user buffer
-    MOV R6 R3               ; save length
-    PUSH R7
-    PUSH R6
-    LI R2 FD_FLAG_WRITE     ; pass flags in R2 per fetch_fd_entry convention
-    BL fetch_fd_entry       ;input R1 fd on exit R1 - file ptr  => r1=fetch_fd_entry(fd=r1)
-    POP R6
-    POP R7
-    CMP R1 0
-    BEQ bad_fd              ;if flags file and in r2 dont match 
-    MOV R9 R1               ; file object pointer
-    MOV R1 R9
-    MOV R2 R7
-    MOV R3 R6
-    BL file_write           ; call file write R1 = file ptr, R2 = user buffer, R3 = len
-    STW R1 [SP + TF_R1]
 
+    BL vfs_write
+
+    STW R1 [SP + TF_R1]
     B trap_restore
+
 
 con_write:
     ;================================================================
@@ -1730,7 +1705,8 @@ con_write:
     MOV R9 R1
     MOV R7 R2
     MOV R6 R3
-    LDW R9 [R9 + FILE_PRIVATE] ; console device pointer
+    LDW R9 [R9 + FILE_INODE]
+    LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
     LI R8 0                    ; total bytes written
                                ;also R6-len R7-user buf ptr R9-file struc ptr
 write_loop:
@@ -2020,7 +1996,7 @@ fetch_fd_entry:
     ; R1 = fd, R2 = required flags
     ; Returns device object pointer in R1 if valid, or 0 if invalid.
     ; Validity checks:
-    ; - fd must be in range [0, 3)
+    ; - fd must be in range [0, MAX_FDS)
     ; - fd table entry must have at least the required flags set
     ;
     ;================================================================
@@ -2035,12 +2011,12 @@ fetch_fd_entry:
     GET_TASK_PTR R4, R4
     TASK_GET_FD_TABLE R4, R4
 
-    SHL R5 R8 2                 
-    ADD R4 R4 R5                ;r4=fd*4+FD_TABLE = file entry according to fd
+    SHL R5 R8 2
+    ADD R4 R4 R5                ; r4=fd*4+FD_TABLE
     LDW R1 [R4]                 ; R1 = file ptr
     LDW R6 [R1 + FILE_FLAGS]
     AND R6 R6 R2
-    CMP R6 R2                   ;check file flags R2 input R6 from file 
+    CMP R6 R2
     BNE fd_invalid
 
     RET                         ;on exit R1 - has file ptr
@@ -2048,6 +2024,70 @@ fetch_fd_entry:
 fd_invalid:
     LI R1 0
     RET
+
+vfs_read:
+
+    ;================================================================
+    ; R1 = fd, R2 = user buffer, R3 = length
+    ; out: R1 = bytes read or errno
+    ;================================================================
+
+    PUSH LR
+    MOV R7 R2
+    MOV R6 R3
+
+    LI R2 FD_FLAG_READ
+    BL fetch_fd_entry
+
+    CMP R1 0
+    BEQ vfs_read_badfd
+
+    MOV R9 R1
+    MOV R1 R9
+    MOV R2 R7
+    MOV R3 R6
+    BL file_read
+    POP LR
+    RET
+
+vfs_read_badfd:
+    LI R1 ERR_BADF
+    POP LR
+    RET
+
+vfs_write:
+    ;================================================================
+    ; R1 = fd, R2 = user buffer, R3 = length
+    ; out: R1 = bytes written or errno
+    ;================================================================
+
+    PUSH LR
+    MOV R7 R2
+    MOV R6 R3
+
+    LI R2 FD_FLAG_WRITE
+    BL fetch_fd_entry
+
+    CMP R1 0
+    BEQ vfs_write_badfd
+
+    MOV R9 R1
+    MOV R1 R9
+    MOV R2 R7
+    MOV R3 R6
+    BL file_write
+    POP LR
+    RET
+
+vfs_write_badfd:
+    LI R1 ERR_BADF
+    POP LR
+    RET
+
+
+
+
+
 
 user_buffer_valid_range:
     ;================================================================
