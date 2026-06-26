@@ -58,18 +58,6 @@ B KERNEL_START
 .EQU USER_LIMIT,      0x0003FFFF
 
 .EQU KBUFFER_SIZE,   256
-.EQU FD_FLAG_READ,    1
-.EQU FD_FLAG_WRITE,   2
-
-.EQU FILE_OPS,      0
-.EQU FILE_PRIVATE,  4
-.EQU FILE_OFFSET,   8
-.EQU FILE_FLAGS,    12
-.EQU FILE_SIZE,     16
-
-.EQU FOPS_READ,     0
-.EQU FOPS_WRITE,    4
-.EQU FOPS_SIZE,     8
 
 .EQU UARTDEV_RX_QUEUE, 0
 .EQU UARTDEV_TX_QUEUE, 4
@@ -150,6 +138,12 @@ func KERNEL_START
         SUB R2 R2 R1
         call tarfs_init
         call tarfs_dump_index
+
+        LI R1 etc_path
+        call tarfs_readdir
+
+        LI R1 bin_path
+        call tarfs_readdir
 
         ; Activate the first dynamically created address space before
         ; enabling translation and restoring its initial trapframe.
@@ -551,78 +545,34 @@ syscall_open:
                                ; R1 - pathname str ptr in the bufer
     CMP R1 0
     BEQ open_fail_fault
-    ; R1 - str pathname in kbuf_rd checking if this is device? in dev registry table(has /dev/....)
-    BL lookup_device
-    CMP R1 0
-    BEQ open_try_tarfs   ; lookup in TARFS if R1=0 - fails to find device in device table
 
-    MOV R8 R1            ; save device descriptor
-
-    BL file_alloc        ; out: R1 = pointer to FILE object in file_pool
-    CMP R1 0
-    BEQ open_fail_nfile
-    MOV R9 R1            ;
-
-    ; initialize file object
-    MOV R1 R9                ; file*
-    MOV R2 R8                ; device*
-    MOV R3 R12               ; flags
-    BL file_init             ; ([i].device*)->([i].file*), [i].seek=0, set [i].flags in file_pool
-
-    MOV R1 R9                ; initialised file ptr (ie file instance)
-    BL fd_alloc              ; fd_table[new_fd] = file* (new_fd - idx in fd_table 4,5,6...)
-    LI  R2 ERR_MFILE
-    CMP R1 R2
-    BEQ open_fail_fd
-
-    STW R1 [SP + TF_R1]
-
-    B trap_restore
-
-open_try_tarfs:
     ; copy_path_from_user returned the current task's kernel read buffer.
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     TASK_GET_KBUF_RD R1, R5
-    ;check file in TARFS R1=pathname ptr
-    BL tarfs_lookup
+    ;check file R1=pathname ptr in kernel space
+    BL vfs_lookup        ; sys uses inides! vfs
     CMP R1 0
     BEQ open_fail_noent
-
-    ; TARFS is read-only and directories cannot be opened as byte streams.
-    ; found pathname: R1 = tar_index entry
-    MOV R8 R1
-    AND R2 R12 FD_FLAG_WRITE
-    CMP R2 0
-    BNE open_fail_acces              ; RW - not
-
-    LDW R2 [R8 + TAR_IDX_TYPE]
-    LI R3 53                         ; ASCII '5' = directory
-    CMP R2 R3
-    BEQ open_fail_isdir              ; DIR - not
-
-    ; do file in file_pool
-
-    BL file_alloc
+    ;out: R1 new inited inode ptr
+    MOV R8 R1            ; save inode ptr
+    BL file_alloc        ; out: R1 = pointer to new FILE object in file_pool
     CMP R1 0
     BEQ open_fail_nfile
-    MOV R9 R1
-
-    LI R2 tarfs_ops
-    STW R2 [R9 + FILE_OPS]
-    STW R8 [R9 + FILE_PRIVATE]
-    LI R2 0
-    STW R2 [R9 + FILE_OFFSET]
-    LI R2 FD_FLAG_READ
-    STW R2 [R9 + FILE_FLAGS]
-
+    MOV R9 R1                ; save file*
+    ; initialize file object ; R1 file*
     MOV R1 R9
-    BL fd_alloc
+    MOV R2 R8                ; inode*
+    MOV R3 R12               ; flags
+    BL file_init             ; ([i].inode*)->([i].file*), [i].seek=0, set [i].flags in file_pool
+    
+    MOV R1 R9
+    BL fd_alloc             ; R1 inited file ptr 
     LI R2 ERR_MFILE
     CMP R1 R2
     BEQ open_fail_fd
 
-    STW R1 [SP + TF_R1]             ;file opened if fd on exit!
+    STW R1 [SP + TF_R1]     ;file opened if fd on exit!
     B trap_restore
 
 open_fail_acces:
@@ -636,6 +586,14 @@ open_fail_isdir:
     B trap_restore
 
 open_fail_fd:
+    MOV R1 R9
+    ; FILE_GET_INODE R2, R1    ; 
+    ; R2 = [R1 file->inode] = inode
+    LDW R2 [R1 + FILE_INODE]
+
+    MOV R1 R2
+    BL inode_put             ; close inode refcnt--
+
     MOV R1 R9
     BL file_free
     LI R1 ERR_MFILE
@@ -725,7 +683,63 @@ copy_path_fail:
     RET
 
 ;====================================================================
-; lookup_device in device_table
+; devfs_lookup - lookup device files registry
+;
+; input:
+;   R1 = pathname /dev/....
+;
+; output:
+;   R1 = inode for the device 
+;   R1 = 0 if not found
+;====================================================================
+
+devfs_lookup:
+    PUSH LR
+    MOV R8 R1                  ; save pathname ptr
+
+    LI R7 device_table
+    LI R9 DEVICE_COUNT
+
+defs_loop:
+    CMP R9 0
+    BEQ lookup_fail
+
+    ; compare pathname with device name
+    MOV R1 R8
+    LDW R2 [R7 + DEV_NAME]
+    BL strcmp
+    CMP R1 1
+    BEQ devfs_found
+
+    ADD R7 R7 DEV_SIZE
+    SUB R9 R9 1
+    B devfs_loop
+
+devfs_found:
+    ; 1 allocate inode
+    BL inode_alloc
+    CMP R1 0
+    BEQ devfs_fail
+
+    MOV R10 R1         ; inode
+    ; 2 init inode
+    LDW R2 [R7 + DEV_OPS]
+    LDW R3 [R7 + DEV_PRIVATE]
+    LI  R4 INODE_CHAR       ; inode type for dev - char
+    LI  R5 0                ; size =0
+    BL inode_init
+
+    MOV R1 R110         ; 3 return new inited inode ptr for this dev
+    POP LR
+    RET
+
+devfs_fail:
+    LI R1 0
+    POP LR
+    RET
+
+;====================================================================
+; lookup_device in device_table - obsolete replaced by devfs_lookup
 ;
 ;input:
 ; R1 = user pointer to string
@@ -774,6 +788,10 @@ lookup_fail:
     POP LR
     RET
 
+;================
+; string helpers lib
+;================
+
 ;====================================================================
 ; strcmp
 ; in: R1 = str1 "dfdff"0
@@ -806,14 +824,140 @@ str_not_equal:
     LI R1 0
     RET
 
+; --------------------------------------------------
+; str_prefix
+;
+; R1 = string
+; R2 = prefix
+;
+; returns:
+;   R1 = 1  prefix matches
+;   R1 = 0  no match
+; examples:
+;  R1 = "etc/motd"0
+;  R2 = "etc/"0
+; out R1=1
+; --------------------------------------------------
+
+str_prefix:
+    PUSH R3
+    PUSH R4 
+    ;assume match ! unless first unequal
+sp_loop:
+    LDB R3 [R2]            ; prefix char
+    CMP R3 0
+    BEQ sp_match           ; reached end of prefix?
+
+    LDB R4 [R1]            ; string char
+    CMP R4 R3
+    BNE sp_nomatch
+
+    ADD R1 R1 1
+    ADD R2 R2 1
+    B sp_loop
+sp_match:
+    LI R1 1                 ;prefix ok
+    POP R4
+    POP R3
+    RET
+sp_nomatch:
+    LI R1 0                 ; not ok
+    POP R4
+    POP R3
+    RET
+
+; --------------------------------------------------
+; skip_prefix
+;
+; R1 = string
+; R2 = prefix
+;
+; returns:
+;   R1 = pointer after prefix (etc/motd) ptr->motd (no etc/)
+;   R1 = 0 if prefix does not match
+; --------------------------------------------------
+
+skip_prefix:
+    PUSH R3
+    PUSH R4
+sk_loop:
+    LDB R3 [R2]            ; prefix char
+    CMP R3 0
+    BEQ sk_match           ; reached end of prefix
+    LDB R4 [R1]            ; string char
+    CMP R4 R3
+    BNE sk_nomatch
+    ADD R1 R1 1
+    ADD R2 R2 1
+    B sk_loop
+
+sk_match:
+    ; R1 already points past prefix
+    POP R4
+    POP R3
+    RET
+
+sk_nomatch:
+    LI R1 0                 ; no prefix/or prefix not matching with that in src string
+    POP R4
+    POP R3
+    RET
+
+; --------------------------------------------------
+; path_component_len
+;
+; R1 = path component string ie in etc/motd its len of motd0 or etc/network/interfaces its len of "network"/
+;
+; returns:
+;   R1 = length until '/' or until NUL (0)
+;   note no max length! need to do
+; --------------------------------------------------
+
+path_component_len:
+    PUSH R2
+    PUSH R3
+    LI R2 0                ; length
+pcl_loop:
+    LDB R3 [R1]
+    CMP R3 0
+    BEQ pcl_done
+    LI R4 47               ; '/'
+    CMP R3 R4
+    BEQ pcl_done
+    ADD R2 R2 1
+    ADD R1 R1 1
+    B pcl_loop
+pcl_done:
+    MOV R1 R2
+    POP R3
+    POP R2
+    RET
+
 ;====================================================================
-; file_init
+; file_init using inode
+; in: R1 = file pointe
+;     R2 = inode pointer
+;     R3 = open flags
+; out:file structure initialized
+;====================================================================
+file_init:
+    ; file->inode = inode
+    STW R2 [R1 + FILE_INODE]
+    ; file->offset = 0
+    LI R4 0
+    STW R4 [R1 + FILE_OFFSET]
+    ; file->flags = O_RDONLY etc
+    STW R3 [R1 + FILE_FLAGS]
+    RET
+
+;====================================================================
+; file_init1
 ; in: R1 = file pointer
       ;R2 = device descriptor pointer in file_pool
       ;R3 = open flags
 ; out:file structure initialized
 ;====================================================================
-file_init:
+file_init1:
 
     LDW R4 [R2 + DEV_OPS]
     STW R4 [R1 + FILE_OPS]
@@ -2521,6 +2665,78 @@ uart_rx_waitq:
 uart_tx_waitq:
     .WORD 0                    ; WQ_MASK: tasks waiting for TX_READY
 
+; ==================================================
+; VFS ops table struc
+; ==================================================
+; for TARFS in RO
+.EQU FSOPS_OPEN,       0
+.EQU FSOPS_READ,       4
+.EQU FSOPS_WRITE,      8
+.EQU FSOPS_CLOSE,     12
+.EQU FSOPS_READDIR,   16
+.EQU FSOPS_LOOKUP,    20
+; for R/W ops
+.EQU FSOPS_CREATE,    24
+.EQU FSOPS_UNLINK,    28
+.EQU FSOPS_MKDIR,     32
+.EQU FSOPS_RMDIR,     36
+
+.EQU FSOPS_SIZE,      40
+
+;VFS inst for tarfs
+tarfs_ops:
+    .WORD tarfs_open
+    .WORD tarfs_read
+    .WORD tarfs_write      
+    .WORD tarfs_close
+    .WORD tarfs_readdir
+    .WORD tarfs_lookup
+    .WORD 0 ;to do
+    .WORD 0
+    .WORD 0
+    .WORD 0
+
+; ==================================================
+; VFS inode table struc
+; ==================================================
+
+; ==================================================
+; inode struc
+; ==================================================
+
+.EQU INODE_OPS,      0
+.EQU INODE_PRIVATE,  4
+.EQU INODE_TYPE,     8
+.EQU INODE_SIZE,    12
+.EQU INODE_REFCNT,  16
+
+.EQU INODE_SIZEOF,  20
+
+;VFS inode inst for tarfs
+tarfs_inode:
+    .WORD tarfs_ops
+    .WORD tar_index
+
+
+.EQU FD_FLAG_READ,    1
+.EQU FD_FLAG_WRITE,   2
+
+;FILE struc uses inode
+.EQU FILE_INODE,    0
+.EQU FILE_OFFSET,   4
+.EQU FILE_FLAGS,    8
+.EQU FILE_SIZE,    12
+
+;.EQU FILE_OPS,      0
+;.EQU FILE_PRIVATE,  4
+;.EQU FILE_OFFSET,   8
+;.EQU FILE_FLAGS,    12
+;.EQU FILE_SIZE,     16
+
+.EQU FOPS_READ,     0
+.EQU FOPS_WRITE,    4
+.EQU FOPS_SIZE,     8
+
 
 ; ==================================================
 ; TARFS - first fs 
@@ -2568,8 +2784,8 @@ tar_limit:
 ; in R1 = pathname input (e.g. "/file.txt")
 ;
 ; returns:
-;   R1 = tar_index entry
-;   R1 = 0 if not found
+;   ;R1 = new inode ptr inited for file found in lookup
+;   ;R1 = 0 if not found
 ; --------------------------------------------------
 
 tarfs_lookup:
@@ -2604,8 +2820,7 @@ tar_lookup_loop:
 
     LI R2 TAR_IDX_SIZEOF
     MUL R3 R9 R2
-
-    ADD R1 R1 R3
+    ADD R1 R1 R3            ; 
 
     ; compare names
 
@@ -2624,16 +2839,32 @@ tar_lookup_loop:
 tar_lookup_found:
 
     LI R1 tar_index
-
     LI R2 TAR_IDX_SIZEOF
     MUL R3 R9 R2
+    ADD R11 R1 R3        ; R11 = &tar_index[R9]
 
-    ADD R1 R1 R3        ; R1 = &tar_index[R9]
+    ;alloc node for this file
+
+    BL inode_alloc
+    CMP R1 0
+    BEQ lookup_not_found
+    MOV R10 R1              ; r10 = new inode ptr
+
+    ; init this node with data from &tar_index[R9]
+
+    MOV R1 R10              ; inode
+    LI  R2 tarfs_ops        ; ops table
+    MOV R3 R11              ; private = tar entry
+    LI  R4 INODE_REG        ; FILE type
+    LDW R5 [R11 + TAR_IDX_SIZE] ;file size 
+    BL inode_init
+
+    MOV R1 R10              ;R1 = new node ptr inited for file found in lookup
 
     POP R10
     POP R9
     POP R8
-    POP LR
+    POP LR                  
     RET
 
 tar_lookup_not_found:
@@ -2860,6 +3091,12 @@ newline:
 tarfs_banner:
     .ASCIIZ "[TARFS]\r\n"
 
+etc_path:
+    .ASCIIZ "etc/"
+
+bin_path:
+    .ASCIIZ "bin/"
+
 ;==============================================================
 ; tarfs_dump_index - a simple debug function to print the contents of the tar index
 ; for each file, it prints the filename and size. This can be called from a debug
@@ -3002,6 +3239,73 @@ tarfs_read_done:
 tarfs_write:
     LI R1 ERR_ACCES
     RET
+;==========================================================================
+;tarfs_readdir - scans tar index reads files in a dir and prints output
+; --------------------------------------------------
+; tarfs_readdir
+;
+; R1 = directory prefix
+;
+; example:
+;   "etc/"
+;   "bin/"
+;
+; prints matching entries
+; --------------------------------------------------
+
+tarfs_readdir:
+
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+
+    MOV R8 R1              ; save directory path
+    LI R9 0                ; index
+
+    LI R10 tar_count
+    LDW R10 [R10]
+tr_loop:
+    CMP R9 R10
+    BGE tr_done                     ;if all tar index scanned
+
+    ; entry = &tar_index[i]
+    LI R1 tar_index
+    LI R2 TAR_IDX_SIZEOF
+    MUL R3 R9 R2
+    ADD R11 R1 R3
+    ; entry name
+    LDW R1 [R11 + TAR_IDX_NAME]
+    MOV R2 R8                       ; src dirname "etc/"
+    BL str_prefix                   ; check if tar_index entry name ie etc/motd matches prefix etc/
+    CMP R1 1
+    BNE tr_next                     ;r1=0 no match
+
+    ; print matching name
+    LDW R1 [R11 + TAR_IDX_NAME]
+    MOV R2 R8                       ; prefix
+    BL skip_prefix                  ; omit prefix nd print just filename
+
+    MOV R12 R1         ; save component ptr
+    BL path_component_len ; out R1-length
+    MOV R2 R1
+    MOV R1 R12
+    BL kputsn   ; r1-ptr r2-len of string
+
+    LI R1 newline
+    BL kputs
+
+tr_next:
+    ADD R9 R9 1                     ;to next entry for check
+    B tr_loop
+tr_done:
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
 
 ;==============================================================
 ; kputs - Simple kernel printf for debugging - prints a zero-terminated string 
@@ -3028,6 +3332,35 @@ kputs_loop:
     B kputs_loop
 
 kputs_done:
+    POP R8
+    POP LR
+    RET
+
+;==============================================================
+; kputsn - Simple kernel printf for debugging - prints n chars of string 
+; to the console using uart_put
+; R1 = string
+; R2 = length
+;==============================================================
+
+kputsn:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    MOV R8 R1
+    MOV R9 R2
+kputsn_loop:
+    CMP R9 0
+    BEQ kputsn_done
+    LDB R1 [R8]
+   ; CMP R1 0
+   ; BEQ kputs_done
+    BL uart_putc
+    ADD R8 R8 1
+    SUB R9 R9 1
+    B kputsn_loop
+kputsn_done:
+    POP R9
     POP R8
     POP LR
     RET
@@ -3211,6 +3544,175 @@ wq_wake_done:
 .EQU TASK0_USTACK_TOP, 0x6000
 .EQU TASK1_USTACK_TOP, 0x6000
 .EQU TASK2_USTACK_TOP, 0x6000
+
+; INODE_TYPE
+.EQU INODE_REG,   1
+.EQU INODE_DIR,   2
+.EQU INODE_CHAR,  3
+.EQU INODE_PIPE,  4
+
+;eg:
+;/etc/motd       REG
+;/etc            DIR
+;/dev/console    CHAR
+;pipe            PIPE
+
+;=================================================================
+;INODE POOL
+;=================================================================
+
+.EQU MAX_INODES, 64
+
+inode_pool:
+
+    .SPACE INODE_SIZEOF * MAX_INODES
+
+inode_used:
+
+    .SPACE MAX_INODES * 4
+
+;=================================================================
+;INODE HELPERS
+;=================================================================
+
+;=================================================================
+; inode_alloc
+; Exactly same pattern as file_alloc:
+;
+; scan inode_used[]
+; find free slot
+; mark used
+; return &inode_pool[i]
+;
+; out: R1 = inode ptr
+;      R1 = 0 if none
+;=================================================================
+inode_alloc:
+;to do as in file_alloc
+
+    RET
+
+;=================================================================
+;
+; inode_free
+; Exactly like:
+;
+; file_free:
+; 
+; Determine slot number from pointer.
+; 
+;inode ptr
+;  ↓
+;offset from inode_pool
+;  ↓
+;index
+;  ↓
+; inode_used[index]=0
+; in: R1-inode ptr
+;
+;=================================================================
+inode_free:
+;todo as file_free
+
+    RET
+
+;=================================================================
+; inode_init
+; 
+; Prototype:
+;
+;  R1 = inode ptr
+;  R2 = fs ops ptr
+;  R3 = private ptr
+;  R4 = inode type
+;  R5 = size
+;
+;=================================================================
+inode_init:
+
+    STW R2 [R1 + INODE_OPS]
+    STW R3 [R1 + INODE_PRIVATE]
+    STW R4 [R1 + INODE_TYPE]
+    STW R5 [R1 + INODE_SIZE]
+    LI R2 1
+    STW R2 [R1 + INODE_REFCNT]
+    RET
+
+;=================================================================
+; inode_get
+;
+; Open file:
+;
+; open("/etc/motd")
+;
+; another fd references same inode.
+; 
+; Increment refcount: in R1 - inode ptr
+;=================================================================
+
+inode_get:
+    LDW R2 [R1 + INODE_REFCNT]
+    ADD R2 R2 1
+    STW R2 [R1 + INODE_REFCNT]
+    RET
+
+;=================================================================
+; inode_put
+;
+; Close file:
+; close(fd)
+;
+; decrement refcount. in R1 - inode ptr
+; free inode if no ref
+;=================================================================
+
+inode_put:
+    PUSH LR
+    LDW R2 [R1 + INODE_REFCNT]
+    SUB R2 R2 1
+    STW R2 [R1 + INODE_REFCNT]
+    CMP R2 0
+    BNE inode_put_done
+    ; destroy inode
+    BL inode_free
+inode_put_done:
+    POP LR
+    RET
+
+; ----------------------------------
+; vfs_lookup  - "wrapper fs selector"
+;
+; R1 = pathname
+;
+; returns:
+;   R1 = inode
+;   R1 = 0 not found
+; ----------------------------------
+
+vfs_lookup:
+    PUSH LR
+    MOV R8 R1          ; pathname
+
+    BL devfs_lookup    ; 1 check among /dev/.. "files"
+    CMP R1 0
+    BNE vfs_done
+
+    MOV R1 R8
+
+    BL tarfs_lookup     ; 2 check in rootfs-tarfs /... (both funcs in R1-pathname)
+    CMP R1 0
+    BEQ vfs_not_found   
+
+vfs_done:
+    POP LR          ;3 R1 - return inode
+    RET
+
+vfs_not_found:
+    LI R1 0         ;it can be just ret but i added it for result clarity
+    POP LR          ;or R1 - Nul
+    RET
+
+
 
 ;=================================================================
 ;FILE HELPERS
@@ -4296,6 +4798,16 @@ task_alloc_found:                           ;R1 points to free task slot
 
 .EQU TAR_IDX_SIZEOF,  16
 
+; ==================================================
+; VFS module
+; ==================================================
+
+
+
+
+
+
+
 
 
 
@@ -4315,7 +4827,7 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    ;DEBUG 2
+    DEBUG 1
     ;LI R1 SYS_EXIT
     ;SVC SYS_EXIT
     B idle_loop
@@ -4323,7 +4835,7 @@ idle_loop:
 ; --TASK 1----------------------------------------------
 .ORG 0x19000
 TASK_A_START:
-    li R1 1
+    li R1 10
 write_loop1:
     push R1
     ;DEBUG 2
@@ -4345,7 +4857,7 @@ write_loop1:
     LI R2 USER_WRITE_BUF    ; user buff
     LI R3 14                ; len
     SVC SYS_WRITE
-    ;DEBUG 1
+    DEBUG 1
     pop R1
     sub R1 R1 1
     cmp r1 0
@@ -4491,15 +5003,18 @@ open_fail_msg_len:
 
 .ORG 0xA0000
 tarfs_start:
-
-; etc/motd, 16 bytes
-    .ASCIIZ "etc/motd"      ; filename (offset 0)
+; etc/motd, 16 bytes         ; filename (offset 0)
+    .ASCIIZ "etc/motd"     
     .SPACE 115              ; max filename is 124-1 bytes (0)
-    .ASCIIZ "00000000020"   ; at offset 124  - size in octal text format
+    ; at offset 124  - size in octal text format
+    .ASCIIZ "00000000020"   
     .SPACE 20               ; unused
-    .ASCIIZ "0"             ; at offset 156 type '0' for file
+    ; at offset 156 type '0' for file
+    .ASCIIZ "0"             
     .SPACE 354              ; header remainder till 512
-    .ASCIIZ "Welcome to KR32\n" ; file data 513th byte and so on.... file datain bytes (data starts  - header + 512)
+    ; file data 513th byte and so on.... file datain bytes (data starts  - header + 512)
+    ; to do = need to check why asciiz dont like comments!  ASM] pass1 error line 4889 addr 0x000A007C: invalid syntax
+    .ASCIIZ "Welcome to KR32\n" 
     .SPACE 495              ;padding till 512 - data comes in block chunks of 512 bytes each so if data is less then 512 last small remainder chunk padds till 512 block
 
 ; bin/sh, 10 bytes
@@ -4512,9 +5027,9 @@ tarfs_start:
     .ASCIIZ "#!/bin/sh\n"
     .SPACE 501
 
-; bin/ls, empty placeholder executable
-    .ASCIIZ "bin/ls"
-    .SPACE 117
+; bin/network/if-up, empty placeholder executable
+    .ASCIIZ "bin/network/if-up"
+    .SPACE 106
     .ASCIIZ "00000000000"
     .SPACE 20
     .ASCIIZ "0"
