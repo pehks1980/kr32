@@ -67,6 +67,8 @@ B KERNEL_START
 .EQU STDIN_FD,       0
 .EQU STDOUT_FD,      1
 .EQU STDERR_FD,      2
+
+
 .EQU CONSOLE_INPUT_LEN, 5
 
 ; =============================================================
@@ -82,9 +84,9 @@ B KERNEL_START
 .EQU FILE_FLAGS,    8
 .EQU FILE_SIZE,    12
 
-.EQU FOPS_READ,     0
-.EQU FOPS_WRITE,    4
-.EQU FOPS_SIZE,     8
+;.EQU FOPS_READ,     0
+;EQU FOPS_WRITE,    4
+;.EQU FOPS_SIZE,     8
 
 ; ==================================================
 ; VFS inode table struc
@@ -139,18 +141,18 @@ idle_loop:
 ; ================================================================
 .org 0x10000
 ;TASK0_PAGE_TABLE
-TASK0_PTBR:
-        .SPACE 4096             ; 1 KiB page table (1024 entries × 4 bytes)
+;TASK0_PTBR:
+;        .SPACE 4096             ; 1 KiB page table (1024 entries × 4 bytes)
 
-.org 0x20000
+;.org 0x20000
 ;TASK1_PAGE_TABLE
-TASK1_PTBR:
-        .SPACE 4096             ; 1 KiB page table
+;TASK1_PTBR:
+;        .SPACE 4096             ; 1 KiB page table
 
-.org 0x30000
+;.org 0x30000
 ;TASK2_PAGE_TABLE
-TASK2_PTBR:
-        .SPACE 4096             ; 1 KiB page table
+;TASK2_PTBR:
+;q        .SPACE 4096             ; 1 KiB page table
 
 
 .org 0x2000
@@ -1552,8 +1554,16 @@ syscall_read:
     STW R1 [SP + TF_R1]
     B trap_restore
 
+; to comply with vfs interface
+devfs_open:
+    LI R1 0
+    RET
+devfs_close:
+    LI R1 0
+    RET
 
-con_read:
+
+devfs_read:
     ;================================================================
     ; R1 = file ptr
     ; R2 = user buffer
@@ -1717,7 +1727,7 @@ syscall_write:
     B trap_restore
 
 
-con_write:
+devfs_write:
     ;================================================================
     ; R1 = file struc ptr
     ; R2 = user buffer
@@ -1889,7 +1899,7 @@ file_write:
 
     LDW R4 [R1 + FILE_INODE]
     LDW R4 [R4 + INODE_OPS]
-    LDW R4 [R4 + FOPS_WRITE]    ; get write function xdev_write from ops
+    LDW R4 [R4 + FSOPS_WRITE]    ; get write function xdev_write from ops
     JR R4                       ; execute it
 
 device_read:
@@ -2059,10 +2069,10 @@ vfs_read:
 
     PUSH LR
     MOV R7 R2
-    MOV R6 R3
+    MOV R10 R3
 
     LI R2 FD_FLAG_READ
-    BL fetch_fd_entry
+    BL fetch_fd_entry   ; macro inside destroys R6
 
     CMP R1 0
     BEQ vfs_read_badfd
@@ -2070,7 +2080,7 @@ vfs_read:
     MOV R9 R1
     MOV R1 R9
     MOV R2 R7
-    MOV R3 R6
+    MOV R3 R10
     BL file_read
     POP LR
     RET
@@ -2088,10 +2098,10 @@ vfs_write:
 
     PUSH LR
     MOV R7 R2
-    MOV R6 R3
+    MOV R10 R3
 
     LI R2 FD_FLAG_WRITE
-    BL fetch_fd_entry
+    BL fetch_fd_entry   ;macro inside desroys R6
 
     CMP R1 0
     BEQ vfs_write_badfd
@@ -2099,7 +2109,7 @@ vfs_write:
     MOV R9 R1
     MOV R1 R9
     MOV R2 R7
-    MOV R3 R6
+    MOV R3 R10
     BL file_write
     POP LR
     RET
@@ -2546,51 +2556,48 @@ file_used:
 
 .EQU MAX_FDS, 120   ;up to a page of 4k for fd tables per task, each entry is 4 bytes (file ptr) so 512 entries
 
-task0_fd_table: ; absolete minimum for stdin/stdout/stderr, can be extended with more files if needed
-    .WORD file_stdin
-    .WORD file_stdout
-    .WORD file_stderr
-    .SPACE 13*4 ;MAX_FDS-3
-
-task1_fd_table:
-    .WORD file_stdin
-    .WORD file_stdout
-    .WORD file_stderr
-    .SPACE 13*4
-
-task2_fd_table:
-    .WORD file_stdin
-    .WORD file_stdout
-    .WORD file_stderr
-    .SPACE 13*4
-
-
 ;==============================================================
 ; File objects and console device
 ;==============================================================
 
 file_stdin:
-    .WORD con_ops
-    .WORD con_device
-    .WORD 0
-    .WORD FD_FLAG_READ
+    .WORD console_inode      ; FILE_INODE
+    .WORD 0                  ; FILE_OFFSET
+    .WORD FD_FLAG_READ       ; FILE_FLAGS
 
 file_stdout:
-    .WORD con_ops
-    .WORD con_device
-    .WORD 0
-    .WORD FD_FLAG_WRITE
+    .WORD console_inode      ; FILE_INODE
+    .WORD 0                  ; FILE_OFFSET
+    .WORD FD_FLAG_WRITE      ; FILE_FLAGS
 
 file_stderr:
-    .WORD con_ops
-    .WORD con_device
+    .WORD console_inode      ; FILE_INODE
+    .WORD 0                  ; FILE_OFFSET
+    .WORD FD_FLAG_WRITE      ; FILE_FLAGS
+
+console_inode:
+    .WORD devfs_ops          ; INODE_OPS
+    .WORD con_device         ; INODE_PRIVATE
+    .WORD INODE_CHAR         ; INODE_TYPE
+    .WORD 0                  ; size
+    .WORD 1                  ; refcnt
+
+devfs_ops:
+    .WORD devfs_open
+    .WORD devfs_read
+    .WORD devfs_write
+    .WORD devfs_close
     .WORD 0
-    .WORD FD_FLAG_WRITE
+    .WORD devfs_lookup
+    .WORD 0
+    .WORD 0
+    .WORD 0
+    .WORD 0
 
 ; special con uart related
-con_ops:
-    .WORD con_read
-    .WORD con_write
+;con_ops:
+;    .WORD con_read
+;    .WORD con_write
 
 uart_rx_queue:
     .WORD 0
@@ -2631,18 +2638,13 @@ device_table:
 
 dev_console:
     .WORD dev_console_name
-    .WORD con_ops
+    .WORD devfs_ops
     .WORD con_device
 
 dev_null:
     .WORD dev_null_name
-    .WORD null_ops
+    .WORD devfs_ops
     .WORD null_device
-
-; null device
-null_ops:
-    .WORD null_read
-    .WORD null_write
 
 null_device:
     .WORD 0
