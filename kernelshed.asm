@@ -109,20 +109,30 @@ B KERNEL_START
 ; to avoid shared state and synchronization issues.      
 
 .org 0x1000
+; --TASK 0 -------System idle task, runs on kernel space with kernel privs, when no other task is ready. 
+; Should never exit.
+idle_task:
+    ENABLEINT
+    LI R1 0
+idle_loop:
+    ADD R1 R1 1
+    DEBUG 1
+    B idle_loop
+
 ;KBUFFER_WR:
-KBUFFER_WR_0:
-        .SPACE 256              ; 256b
+;KBUFFER_WR_0:
+;        .SPACE 256              ; 256b
 ;KBUFFER_RD:
-KBUFFER_RD_0:
-        .SPACE 256              ; 256b
-KBUFFER_WR_1:
-        .SPACE 256              ; 256b
-KBUFFER_RD_1:
-        .SPACE 256              ; 256b
-KBUFFER_WR_2:
-        .SPACE 256              ; 256b
-KBUFFER_RD_2:
-        .SPACE 256              ; 256b
+;KBUFFER_RD_0:
+;        .SPACE 256              ; 256b
+;KBUFFER_WR_1:
+;        .SPACE 256              ; 256b
+;KBUFFER_RD_1:
+;        .SPACE 256              ; 256b
+;KBUFFER_WR_2:
+;        .SPACE 256              ; 256b
+;KBUFFER_RD_2:
+;        .SPACE 256              ; 256b
 
 ; ================================================================
 ; PAGE TABLES for each task (1 KiB each, 4 entries x 1024 bytes)
@@ -278,6 +288,20 @@ map_common_kernel:
     LI R4 KERNEL_FLAGS
     BL map_page
 
+    LI R2 0x00009000      ; add page (number is page table entry one) tasks data
+    LI R3 0x00009000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x0000A000      ; add page (number is page table entry one) tasks data
+    LI R3 0x0000A000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x0000B000      ; add page (number is page table entry one) tasks data
+    LI R3 0x0000B000
+    LI R4 KERNEL_FLAGS
+    BL map_page
 
     ; Map MMIO pages (UART, Timer/PIT, and PIC) into kernel address space
     LI R2 0x00100000      ; UART physical and virtual base
@@ -2025,12 +2049,13 @@ fd_invalid:
     LI R1 0
     RET
 
-vfs_read:
 
-    ;================================================================
-    ; R1 = fd, R2 = user buffer, R3 = length
-    ; out: R1 = bytes read or errno
-    ;================================================================
+;================================================================
+; vfs_read: - vfs wrapper read func reads from file/inode - independent from h/w
+; R1 = fd, R2 = user buffer, R3 = length
+; out: R1 = bytes read or errno
+;================================================================
+vfs_read:
 
     PUSH LR
     MOV R7 R2
@@ -2735,6 +2760,14 @@ tar_limit:
 
 .EQU TAR_HEADER_SIZE, 512
 
+
+tarfs_open:
+    LI R1 0
+    RET
+
+tarfs_close:
+    LI R1 0
+    RET
 ; --------------------------------------------------
 ; tarfs_lookup - lookup a file in the tar index by name, for open and read operations
 ;
@@ -2804,7 +2837,7 @@ tar_lookup_found:
 
     BL inode_alloc
     CMP R1 0
-    BEQ lookup_not_found
+    BEQ tar_lookup_not_found
     MOV R10 R1              ; r10 = new inode ptr
 
     ; init this node with data from &tar_index[R9]
@@ -3154,7 +3187,9 @@ tarfs_read:
     CMP R1 1
     BNE tarfs_read_fault
 
-    LDW R11 [R8 + FILE_PRIVATE]
+    LDW R11 [R8 + FILE_INODE]
+    LDW R11 [R11 + INODE_PRIVATE]
+
     LDW R12 [R8 + FILE_OFFSET]
     LDW R4 [R11 + TAR_IDX_SIZE]
 
@@ -3718,6 +3753,7 @@ vfs_not_found:
 ;=================================================================
 
 vfs_open:
+    PUSH LR
     PUSH R8
     PUSH R9
     PUSH R10
@@ -3756,6 +3792,7 @@ vfs_open:
     POP R10
     POP R9
     POP R8
+    POP LR
     RET
 
 fail_fd:
@@ -3787,6 +3824,7 @@ vfs_exit:
     POP R10
     POP R9
     POP R8
+    POP LR
     RET
 
 ;================================================================
@@ -3860,8 +3898,7 @@ fa_found:
     ;clean this slot
     LI R7 0
 
-    STW R7 [R1 + FILE_OPS]
-    STW R7 [R1 + FILE_PRIVATE]
+    STW R7 [R1 + FILE_INODE]
     STW R7 [R1 + FILE_OFFSET]
     STW R7 [R1 + FILE_FLAGS]
 
@@ -4918,21 +4955,9 @@ task_alloc_found:                           ;R1 points to free task slot
 .EQU USER_READ_BUF,  0x6010
 
 ; ================================================================
-; TASKS
+; USER mode TASKS
 ; ================================================================
 
-.ORG 0x9000
-; --TASK 0 -------System idle task, runs on kernel space with kernel privs, when no other task is ready. 
-; Should never exit.
-idle_task:
-    ENABLEINT
-    LI R1 0
-idle_loop:
-    ADD R1 R1 1
-    DEBUG 1
-    ;LI R1 SYS_EXIT
-    ;SVC SYS_EXIT
-    B idle_loop
 
 ; --TASK 1----------------------------------------------
 .ORG 0x19000
