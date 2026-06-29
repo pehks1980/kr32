@@ -82,11 +82,9 @@ B KERNEL_START
 .EQU FILE_INODE,    0
 .EQU FILE_OFFSET,   4
 .EQU FILE_FLAGS,    8
-.EQU FILE_SIZE,    12
+.EQU FILE_REFCNT,   12          ;for dup
+.EQU FILE_SIZE,     16
 
-;.EQU FOPS_READ,     0
-;EQU FOPS_WRITE,    4
-;.EQU FOPS_SIZE,     8
 
 ; ==================================================
 ; VFS inode table struc
@@ -524,7 +522,7 @@ syscall_table:
     .WORD syscall_open          ; SVC 6
     .WORD syscall_close         ; SVC 7
     .WORD syscall_pipe          ; SVC 8
-
+    .WORD syscall_dup           ; SVC 9
 
 syscall_yield:
 ;================================================================
@@ -949,6 +947,9 @@ file_init:
     STW R4 [R1 + FILE_OFFSET]
     ; file->flags = O_RDONLY etc
     STW R3 [R1 + FILE_FLAGS]
+     ; file->refcnt = 1
+    LI R4 1
+    STW R4 [R1 + FILE_REFCNT]
     RET
 
 ;====================================================================
@@ -1020,27 +1021,33 @@ syscall_pipe:
     ; user int fd[2]
     LDW R7 [SP + TF_R1]
 
-    BL pipe_alloc
+    BL pipe_alloc       ;create new pipe object in pipe_pool
     CMP R1 0
     BEQ pipe_fail_nospc
 
     MOV R8 R1            ; new slot in pipe_pool ( pipe* )
-
     ; [0] read end          write[1]>--pipe--->read[0]
-
-    BL file_alloc
+    BL file_alloc        ; R1 - created read file ptr for read end
     CMP R1 0
-    BEQ pipe_fail_pipe_only
+    BEQ pipe_fail_read_fd
 
     MOV R9 R1           ; new file for read end  in file_pool
+    BL inode_alloc      ; get inode for this end file
+    CMP R1 0
+    BEQ pipe_fail_ia_read_fd
+    MOV R10 R1
 
-    LI R2 pipe_ops
-  ;  STW R2 [R9 + FILE_OPS]      ; store ops (for pipe of read end) in allocated  file struc needs to be adapted for inode
+    LI  R2 pipe_ops         ; pipe_ops table
+    MOV R3 R8               ; store our slot pipe* 
+    LI  R4 INODE_PIPE       ; inode type PIPE
+    LI  R5 0                ; size =0
+    BL inode_init           ; make inode for read end
 
-  ;  STW R8 [R9 + FILE_PRIVATE]  ; store our slot pipe* in file
-
-    LI R2 FD_FLAG_READ
-    STW R2 [R9 + FILE_FLAGS]    ; set file mode read
+    ; initialize file object ;read end file 
+    MOV R1 R9                ; R1 file*
+    MOV R2 R10               ; inode*
+    LI R3  FD_FLAG_READ      ; flags READ end
+    BL file_init
 
     MOV R1 R9
     BL fd_alloc                 ; insert read file to fd_table of user process
@@ -1049,41 +1056,48 @@ syscall_pipe:
     CMP R1 R2
     BEQ pipe_fail_read_file
 
-    MOV R10 R1           ; get file read fd created to R10
+    MOV R12 R1           ; get file read fd created to R10
 
-    ; write end
-
+    ; same for write end
     BL file_alloc
     CMP R1 0
-    BEQ pipe_fail_read_fd
-
+    BEQ pipe_fail_ia_write_fd
     MOV R9 R1
 
-    LI R2 pipe_ops
-  ;  STW R2 [R9 + FILE_OPS]
+    BL inode_alloc      ; get inode for this end file
+    CMP R1 0
+    BEQ pipe_fail_ia_write_fd
+    MOV R10 R1
 
-  ;  STW R8 [R9 + FILE_PRIVATE]
+    LI  R2 pipe_ops         ; pipe_ops table
+    MOV R3 R8               ; store our slot pipe* need to check if this is ok here (might be changed)
+    LI  R4 INODE_PIPE       ; inode type PIPE
+    LI  R5 0                ; size =0
+    BL inode_init           ; make inode for write end
 
-    LI R2 FD_FLAG_WRITE                 ;file mode -write
-    STW R2 [R9 + FILE_FLAGS]
+    ; initialize file object ;write end file 
+    MOV R1 R9                ; R1 file*
+    MOV R2 R10               ; inode*
+    LI  R3 FD_FLAG_WRITE     ; flags WRITE end
+    BL file_init
 
     MOV R1 R9
-    BL fd_alloc
+    BL  fd_alloc
 
-    LI R2 ERR_MFILE             ; check if fd_alloc problem
+    LI  R2 ERR_MFILE         ; check if fd_alloc problem
     CMP R1 R2
     BEQ pipe_fail_write_file
 
-    MOV R11 R1           ; R11 write fd R10 read fd
+    MOV R11 R1           ; R11 is write and fd R12 is read fd
 
-    MOV R1 R7   ; in &fd[2]
-    LI R2 8     ; len 2
-    LI R3 1     ; mem perm to write cond
-    BL user_buffer_valid_range
+    MOV R1 R7    ; in &fd[2]. not sure if R7 still has value for this ptr
+    LI  R2 8     ; len 2 words (8 bytes)
+    LI  R3 1     ; mem perm to write cond
+    BL  user_buffer_valid_range
     CMP R1 1
     BNE pipe_fail_both_fds
 
-    STW R10 [R7]    ;fd[0]-rd fd[1]-wr
+    STW R12 [R7]     ;fill fd user array of read and write ends fd[0]-rd fd[1]-wr
     STW R11 [R7 + 4]
 
     LI R1 0
@@ -1179,6 +1193,80 @@ pipe_fail_nospc:
 
     B trap_restore
 
+pipe_fail_ia_read_fd:
+    ; Ошибка при создании inode для read end
+    MOV R1 R9          ; освобождаем file (read end)
+    BL  file_free
+    MOV R1 R8          ; освобождаем pipe
+    BL  pipe_free
+    LI R1 ERR_NFILE    ; или ERR_NOMEM - смотрите ваши коды ошибок
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+pipe_fail_ia_write_fd:
+    ; Ошибка при создании inode для write end
+    MOV R1 R12         ; освобождаем read fd (если уже создан)
+    BL fd_remove
+    CMP R1 0
+    BEQ skip_file_free_read
+    BL file_free
+skip_file_free_read:
+    MOV R1 R9          ; освобождаем file (write end)
+    BL file_free
+    MOV R1 R8          ; освобождаем pipe
+    BL pipe_free
+    LI R1 ERR_NFILE
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+;===========================================================
+; syscall_dup - make another fd for FILE increase refcnt
+;
+; R1 = old fd
+;
+; returns:
+;   R1 = new fd
+;   or R1 = ERR_BADF
+;===========================================================
+
+syscall_dup:
+    
+    LDW R1 [SP + TF_R1]     ; argument fd
+
+    BL fd_lookup            ; lookup FILE*
+    CMP R1 0
+    BEQ dup_badfd
+    MOV R8 R1               ; keep FILE*
+
+    BL file_get             ; FILE.ref++
+
+    MOV R1 R8
+    BL fd_alloc             ; try to allocate new fd
+
+    LI R2 ERR_MFILE
+    CMP R1 R2
+    BEQ dup_fail_fd
+
+    STW R1 [SP + TF_R1] ;R1 - new fd
+    B trap_restore
+
+dup_fail_fd:
+
+    MOV R1 R8
+    BL file_put
+
+    LI R1 ERR_MFILE     ;R1 -err + rollback
+    STW R1 [SP + TF_R1]
+    B trap_restore    
+
+dup_badfd:
+
+    LI R1 ERR_BADF      ;R1 -err + file not found
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+
 pipe_read:
 ;=========================================================
 ; R1 = file*
@@ -1195,7 +1283,9 @@ pipe_read:
     MOV R9 R1              ; file*
     MOV R7 R2              ; user buffer
     MOV R6 R3              ; requested len
-   ;  LDW R9 [R9 + FILE_PRIVATE]    ; our instance allocated in pipe_pool pipe* needs to be adapted for inode
+
+    LDW R9 [R9 + FILE_INODE]
+    LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
     CMP R6 0                ;fast clear from it if len=0
     BEQ pipe_read_done
 ;-----------------------------------------
@@ -1401,11 +1491,12 @@ pipe_write:
 ;--------------------------------------------------
     PUSH LR
 
-    MOV R8 R1
+    MOV R9 R1
     MOV R7 R2
     MOV R6 R3
 
-  ;  LDW R9 [R8 + FILE_PRIVATE]
+    LDW R9 [R9 + FILE_INODE]
+    LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
 
     ;---------------------------------------
     ; validate user source buffer
@@ -1471,7 +1562,7 @@ pipe_write_retry:
 pipe_write_done:
 ; wake readers
     MOV R1 R9
-    ADD R1 R1 PIPE_RWAIT
+    ADD R1 R1 PIPE_RWAIT    ; wq ptr from pipe*
     BL waitq_wake_all
     MOV R1 R10      ;written bytes
     POP LR
@@ -1490,7 +1581,7 @@ pipe_write_empty:
 pipe_write_sleep:
 ;setup tasks for block on write (pipe buffer is full)
     MOV R1 R9
-    ADD R1 R1 PIPE_WWAIT
+    ADD R1 R1 PIPE_WWAIT    ; wq ptr from pipe*
     LI R2 WAIT_PIPE_WRITE
     BL waitq_prepare_sleep
     ; race check
@@ -1503,38 +1594,64 @@ pipe_write_sleep:
 
     B pipe_write_retry      ; unblocked! go write!
 
-fd_remove:
+
+
+;================================================================
+; fd_lookup - найти file* по номеру fd
+; in:  R1 = fd (номер дескриптора)
+; out: R1 = file* (указатель на структуру файла) или 0 если не найден
+;      R2 = указатель на ячейку в fd_table (для использования в fd_remove)
+;================================================================
+fd_lookup:
+    ; Проверка валидности fd
+    CMP R1 3
+    BLT fd_lookup_invalid       ; fd 0,1,2 - stdio, нельзя закрыть пользователю
+    CMP R1 MAX_FDS
+    BGE fd_lookup_invalid       ; fd >= MAX_FDS - вне диапазона
+
+    MOV R8 R1                   ; сохраняем fd
+    ; Получаем указатель на fd_table текущего процесса
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R4, R4
+    TASK_GET_FD_TABLE R4, R4    ; R4 = &fd_table[0]
+
+    ; Вычисляем адрес fd_table[fd]
+    SHL R5 R8 2                 ; R5 = fd * 4 (размер указателя)
+    ADD R6 R4 R5                ; R6 = &fd_table[fd]
+
+    LDW R1 [R6]                 ; R1 = file* из таблицы
+    CMP R1 0
+    BEQ fd_lookup_invalid       ; если NULL - дескриптор не занят
+
+    MOV R2 R6                   ; возвращаем адрес ячейки для fd_remove
+    RET
+
+fd_lookup_invalid:
+    LI R1 0
+    LI R2 0
+    RET
+
  ;================================================================
  ;  frees fd_entry of this fd ; fd_table[fd] = null + gives this file_ptr for file_free
  ;  in R1 = fd
  ;  out R1 = file* / R1 = 0 if invalid
  ;================================================================
-    CMP R1 3
-    BLT fd_remove_invalid       ; fd 0-1-2 are stdio, not closeable by user
-
-    CMP R1 MAX_FDS
-    BGE fd_remove_invalid       ; fd is out of bounds
-
-    MOV R8 R1
-
-    GET_CURR_TASK_IDX R4
-    GET_TASK_PTR R4, R4
-    TASK_GET_FD_TABLE R4, R4    ; R4 = fd table ptr of current task
-
-    SHL R5 R8 2
-    ADD R6 R4 R5                ; &fd_table[fd]
-
-    LDW R1 [R6]
+ fd_remove:
+    PUSH LR
+    BL  fd_lookup
     CMP R1 0
-    BEQ fd_remove_invalid       ; if fd_table[fd] is null, invalid fd
+    BEQ fd_remove_invalid
 
-    LI R7 0
-    STW R7 [R6]                 ; fd_table[fd] = null
-
-    RET                     ; return file* in R1 for file_free
+    MOV R8 R1          ; сохраняем file*
+    LI R3 0
+    STW R3 [R2]        ; fd_table[fd] = NULL (R2 из fd_lookup)
+    MOV R1 R8          ; file*
+    POP LR
+    RET
 
 fd_remove_invalid:
     LI R1 0
+    POP LR
     RET
 
 
@@ -2464,7 +2581,8 @@ trap_restore:
 .EQU SYS_OPEN,     6
 .EQU SYS_CLOSE,    7
 .EQU SYS_PIPE,     8
-.EQU SYS_COUNT,    9
+.EQU SYS_DUP,      9
+.EQU SYS_COUNT,    10
 
 ;=============================================================
 ; Task States
@@ -2710,8 +2828,6 @@ tarfs_ops:
     .WORD 0
     .WORD 0
     .WORD 0
-
-
 
 ;VFS inode inst for tarfs
 tarfs_inode:
@@ -3618,8 +3734,7 @@ ia_fail:
 ;
 ; inode_free
 ; Exactly like:
-;
-; file_free:
+; file_free
 ; 
 ; Determine slot number from pointer.
 ; 
@@ -3710,9 +3825,39 @@ inode_put:
     BNE inode_put_done
     ; destroy inode
     BL inode_free
+    
 inode_put_done:
     POP LR
     RET
+
+; ----------------------------------
+; file_get - increase file refcnt++
+; in R1-file*
+; ----------------------------------
+file_get:
+    LDW R2 [R1 + FILE_REFCNT]
+    ADD R2 R2 1
+    STW R2 [R1 + FILE_REFCNT]
+    RET
+; ----------------------------------
+; file_put - decrease file refcnt--
+; in R1-file*. (if file.refcnt=0 - free_file and its inode (if inode.refcnt also =0))
+; ----------------------------------
+file_put:
+    PUSH LR
+    LDW R2 [R1 + FILE_REFCNT]
+    SUB R2 R2 1
+    STW R2 [R1 + FILE_REFCNT]
+    CMP R2 0
+    BNE file_put_done
+    ; file refcnt=0 - destroy file
+    ; R1-file*
+    BL file_free
+    
+file_put_done:
+    POP LR
+    RET
+
 
 ; ----------------------------------
 ; vfs_lookup  - "wrapper fs selector"
@@ -3831,8 +3976,15 @@ vfs_exit:
 
 ;================================================================
 ; vfs_close - close opened file
+;
 ; in R1 = fd
 ; out R1 = 0 / ERR_BADF
+;
+; for documentation:
+;fd_remove() — removes one file descriptor.
+;file_put() — removes one FILE reference.
+;file_free() — destroys the FILE and releases its inode.
+;inode_put() — destroys the inode when the last FILE releases it.
 ;================================================================
 vfs_close:
     PUSH LR   
@@ -3843,13 +3995,13 @@ vfs_close:
 
     MOV R8 R1          ; save file*
 
-    LDW R1 [R8 + FILE_INODE]
-    BL inode_put       ;decrement refcnt (release inode automatically if refcnt=0)
-
     MOV R1 R8
-    BL file_free    ;in R1 file_ptr in file_pool it marks it as free (NULL)
+    BL  file_put    ;in R1 file_ptr in file_pool it 
+                    ;marks it as free (NULL) if file.refcnt==0 see doc
+    LI  R1 0        ; success
     POP LR
     RET
+
 badf_fail:
     LI R1 ERR_BADF
     POP LR
@@ -3911,28 +4063,45 @@ fa_fail:
     RET
 
 ;=================================================================
-; file_free:
+; file_free: - destroy file object
 ; input:
 ; R1 = pointer to FILE object
 ; none output
+; note it also updates inode if it exists and destroys 
+; inode if inode.refcnt=0
 ;=================================================================
 
 file_free:
 
-    LI R2 file_pool
+ ; release inode first
+    PUSH LR
+    PUSH R10
+    MOV  R10 R1
+    LDW  R2 [R1 + FILE_INODE]
+
+    CMP R2 0
+    BEQ no_inode
+
+    MOV R1 R2 
+    BL  inode_put    ; destroys inode if inode.refcnt=0
+
+no_inode:
+    MOV R1 R10
+    LI  R2 file_pool
     SUB R3 R1 R2                 ; offset from pool base
 
-    LI R4 FILE_SIZE
+    LI  R4 FILE_SIZE
     DIV R5 R3 R4                 ; slot number
 
     SHL R5 R5 2                  ; slot * 4
 
-    LI R6 file_used
+    LI  R6 file_used
     ADD R6 R6 R5                 ; address of slot in file_used
 
     LI R7 0
     STW R7 [R6]                  ; mark free
-
+    POP R10 
+    POP LR
     RET
 
 
@@ -5045,7 +5214,7 @@ task_b_loop:
 
     MOV R1 R8
     LI R2 task_b_msg
-    LI R3 18
+    LI R3 27
     SVC SYS_WRITE
     ;DEBUG 2
 
@@ -5061,8 +5230,9 @@ task_b_loop:
     ; CONSOLE_INPUT_LEN bytes.
     LI R1 STDIN_FD
     LI R2 USER_READ_BUF
-    LI R3 CONSOLE_INPUT_LEN
+    LI R3 5
     SVC SYS_READ
+    DEBUG  2
     CMP R1 0
     BLE task_b_yield
 
@@ -5096,7 +5266,7 @@ task_b_motd_path:
     .ASCIIZ "/etc/motd"
 
 task_b_msg:
-    .ASCIIZ "OPEN WRITE CLOSE\r\n"
+    .ASCIIZ "OPEN WRITE CLOSE\r\n input:> "
 
 task_b_msg_len:
     .WORD 18
