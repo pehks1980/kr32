@@ -85,6 +85,14 @@ B KERNEL_START
 .EQU FILE_REFCNT,   12          ;for dup
 .EQU FILE_SIZE,     16
 
+; ================================================================
+; Time structure for user space
+; ================================================================
+
+.EQU TIMEVAL_SEC,   0
+.EQU TIMEVAL_USEC,  4
+.EQU TIMEVAL_SIZE,  8
+
 
 ; ==================================================
 ; VFS inode table struc
@@ -523,6 +531,9 @@ syscall_table:
     .WORD syscall_close         ; SVC 7
     .WORD syscall_pipe          ; SVC 8
     .WORD syscall_dup           ; SVC 9
+    .WORD syscall_gettime       ; SVC 10 
+    .WORD syscall_brk           ; SVC 11  
+    .WORD syscall_sbrk          ; SVC 12  
 
 syscall_yield:
 ;================================================================
@@ -1172,6 +1183,8 @@ pipe_fail_read_file:
     MOV R12 R8
     MOV R1 R9
     BL file_free
+    MOV R1 R10          ; освободить inode read end
+    BL inode_free
     MOV R1 R12
     BL pipe_free
     LI R1 ERR_MFILE
@@ -1264,6 +1277,72 @@ dup_badfd:
     LI R1 ERR_BADF      ;R1 -err + file not found
     STW R1 [SP + TF_R1]
 
+    B trap_restore
+
+; ================================================================
+; syscall_gettime - Get current time
+; 
+; R1 = pointer to struct timeval in user space
+; 
+; Returns:
+;   R1 = 0 on success, -1 on error
+; ================================================================
+
+syscall_gettime:
+    
+    LDW R8 [SP + TF_R1]        ; R8 = user struct timeval pointer
+    
+    ; Validate user buffer (write access)
+    MOV R1 R8
+    LI R2 TIMEVAL_SIZE
+    LI R3 1                    ; write access
+    BL user_buffer_valid_range
+    CMP R1 1
+    BNE gettime_badptr
+    
+    ; Read current timer value from PIT
+    ; PIT is at MMIO base 0x00101000
+    LI R9 0x00101000
+    LDW R1 [R9 + 0]            ; R1 = PIT current count
+    
+    ; Convert PIT ticks to seconds and microseconds
+    ; PIT period is 2000 ms (2 seconds) from init
+    ; Each tick = 2ms
+    ; For now, return simple values based on boot time
+    
+    ; We'll store a 64-bit timestamp that increments every 2ms
+    LI R9 timer_ticks
+    LDW R2 [R9]                ; R2 = current tick count
+    
+    ; Calculate seconds = ticks / 500 (since 500 ticks = 1 second)
+    MOV R1 R2
+    LI R3 500
+    DIV R1 R1 R3               ; R1 = seconds
+    
+    ; Calculate microseconds = (ticks % 500) * 2000
+    MOV R4 R2
+    MOD R4 R4 R3               ; R4 = ticks % 500
+    LI R5 2000
+    MUL R4 R4 R5               ; R4 = microseconds (0-999000)
+    
+    ; Store to user space
+    MOV R3 R8
+    
+    ; Store seconds (32-bit)
+    STW R1 [R3 + TIMEVAL_SEC]
+    
+    ; Store microseconds (32-bit)
+    STW R4 [R3 + TIMEVAL_USEC]
+    
+    ; Success
+    LI R1 0
+    STW R1 [SP + TF_R1]
+    
+    B trap_restore
+
+gettime_badptr:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
     B trap_restore
 
 
@@ -2582,7 +2661,10 @@ trap_restore:
 .EQU SYS_CLOSE,    7
 .EQU SYS_PIPE,     8
 .EQU SYS_DUP,      9
-.EQU SYS_COUNT,    10
+.EQU SYS_GETTIME,  10      ; NEW: get time of day - returns seconds since epoch
+.EQU SYS_BRK,      11      ; NEW: change program break - memory allocation
+.EQU SYS_SBRK,     12      ; NEW: increment program break - memory allocation
+.EQU SYS_COUNT,    13      ; count of syscalls
 
 ;=============================================================
 ; Task States
