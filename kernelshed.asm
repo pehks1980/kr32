@@ -54,6 +54,7 @@ B KERNEL_START
 .EQU USER_LIMIT,      0x0003FFFF
 
 .EQU USER_DATA_VA,    0x00006000  ;start of user data page for task (process virtual space) 4 KiB per task
+.EQU USER_CODE_VA,    0x00007000  ; user code page for execve
 ; ================================================================
 ; Program break management
 ; ================================================================
@@ -524,9 +525,193 @@ syscall_table:
     .WORD syscall_close         ; SVC 7
     .WORD syscall_pipe          ; SVC 8
     .WORD syscall_dup           ; SVC 9
-    .WORD syscall_gettime       ; SVC 10 
+    .WORD syscall_gettime       ; SVC 10
     .WORD syscall_brk           ; SVC 11  
     .WORD syscall_sbrk          ; SVC 12  
+    .WORD syscall_execve        ; SVC 13  
+
+syscall_execve:
+    ;================================================================
+    ; execve(path, argv, envp)
+    ; R1 = user path
+    ; R2 = user argv
+    ; R3 = user envp (ignored for now)
+    ; Returns: does not return on success, errno in R1 on failure.
+    ;================================================================
+
+    LDW R8 [SP + TF_R1]        ; user path pointer
+
+    MOV R1 R8
+    BL copy_path_from_user
+    CMP R1 0
+    BEQ execve_badfault
+
+    MOV R12 R1                ; kernel pointer to copied pathname
+
+    MOV R1 R12
+    BL vfs_lookup             ; lookup inode for the file 
+    CMP R1 0
+    BEQ execve_noent
+
+    MOV R9 R1                 ; inode*
+    LDW R1 [R9 + INODE_TYPE]
+    LI R2 INODE_DIR
+    CMP R1 R2
+    BEQ execve_noexec           ; if the inode is a directory, we cannot execute it
+
+    LDW R3 [R9 + INODE_SIZE]
+    LI R4 PAGE_SIZE         ; 4096 bytes
+    CMP R3 R4
+    BGT execve_noexec       ; if the inode size is greater than a page, we cannot execute it
+
+    BL file_alloc
+    CMP R1 0
+    BEQ execve_nomem         ; if we cannot allocate a file for this inode, return error
+
+    MOV R10 R1                ; file*
+    MOV R1 R10
+    MOV R2 R9
+    LI R3 FD_FLAG_READ
+    BL file_init            ; initialize the file structure for reading the executable  
+
+    BL page_alloc           ; allocate a new page for the executable code of execve program
+    CMP R1 0
+    BEQ execve_noexec_file
+
+    MOV R11 R1                ; new code page PA for execve program
+
+    GET_CURR_TASK_IDX R4    ; get task's ptr which is curently does execve call
+    GET_TASK_PTR R5, R4
+
+    TASK_GET_CODE_PAGE R12, R5 ; preserve old exec code page for rollback / cleanup 
+    TASK_GET_PTBR R1, R5    ; R1 = PTBR of current task
+    LI R2 USER_CODE_VA      ; R2 - code page VA for execve program 
+    MOV R3 R11              ; R3 - code page PA for execve program
+    LI R4 USER_RW           ; R4 - code page flags for execve program (user r/w)
+    BL map_page             ; map (add) new code page into task's address space at USER_CODE_VA with read/write permissions for loading
+
+    TASK_GET_DATA_PAGE R1, R5   ; get data page ptr PA for current task
+    CMP R1 0
+    BEQ execve_data_ok          ; if no data page, skip zeroing
+    LI R3 PAGE_SIZE
+    BL mem_zero             ; zero out the data page of current task so it will be used as data page for the new execve program
+
+execve_data_ok:
+
+    MOV R1 R10              ; file* of execve program
+    LI R2 USER_CODE_VA      ; VA of code page for execve program
+    LI R3 PAGE_SIZE         ; size of code page for execve program  
+    BL file_read            ; read the execve program into the new code page to address USER_CODE_VA (0x7000)   
+    CMP R1 0
+    BLT execve_read_fail    ; if read fails, restore old exec code page and return error
+
+    MOV R1 R10              ; file* of execve program
+    BL file_put             ; close the file after reading the execve program
+
+    ; commit new exec state after successful file load - we change current task's code page, stack pointer, and program break to the new execve program's values!
+    LI R1 USER_CODE_VA
+    TASK_SET_PC R5, R1              ; set PC to start of execve program (0x7000)
+    TASK_SET_CODE_PAGE R5, R11      ; set new code page for execve program (0x7000)
+    LI R1 USER_STACK_TOP
+    TASK_SET_USP R5, R1             ; set user stack pointer to top of user stack
+    LI R1 HEAP_START
+    TASK_SET_BREAK R5, R1           ; set program break to start of heap
+
+    ; Remap the new code page read-only before handing control over.
+    TASK_GET_PTBR R1, R5            ; get PTBR of current task
+    LI R2 USER_CODE_VA              ; VA of code page for execve program
+    MOV R3 R11                      ; PA of code page for execve program    
+    LI R4 USER_RX
+    BL map_page                     ; remap new code page read-only for execve program
+
+    CMP R12 0                       ; R12 = old code page PA for execve program taken from current task's data structure
+    BEQ execve_commit_done          ; if no previous code page, skip freeing it
+    MOV R1 R12
+    BL page_free                    ; free the old code page of execve program after successful commit of new execve program - not clear why its needed!                    
+
+execve_commit_done:
+
+    ; Prepare a fresh user register state for the new program.
+    LI R1 USER_STACK_TOP             ; set user stack pointer to top of user stack
+    STW R1 [SP + TF_USP]
+    LI R1 0
+    STW R1 [SP + TF_R1]
+    STW R1 [SP + TF_R2]
+    STW R1 [SP + TF_R3]
+    STW R1 [SP + TF_R4]
+    STW R1 [SP + TF_R5]
+    STW R1 [SP + TF_R6]
+    STW R1 [SP + TF_R7]
+    STW R1 [SP + TF_R8]
+    STW R1 [SP + TF_R9]
+    STW R1 [SP + TF_R10]
+    STW R1 [SP + TF_R11]
+    STW R1 [SP + TF_R12]
+    LI R1 USER_CODE_VA
+    STW R1 [SP + TF_SEPC]              ; set SEPC to start of execve program
+
+    B trap_restore                     ; jump to new execve program with new user register state and new code page mapped read-only
+
+execve_read_fail:
+    MOV R1 R11
+    BL page_free
+
+    CMP R12 0
+    BEQ execve_restore_no_prev
+    TASK_GET_PTBR R1, R5
+    LI R2 USER_CODE_VA
+    MOV R3 R12
+    LI R4 USER_RX
+    BL map_page
+    MOV R1 R12
+    TASK_SET_CODE_PAGE R5, R12
+    B execve_restore_done
+
+execve_restore_no_prev:
+    TASK_GET_PTBR R1, R5
+    LI R2 USER_CODE_VA
+    LI R3 0
+    LI R4 0
+    BL map_page
+    LI R1 0
+    TASK_SET_CODE_PAGE R5, R1
+
+execve_restore_done:
+    MOV R1 R10
+    BL file_put
+    LI R1 ERR_NOEXEC
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+execve_nomem_file:
+    MOV R1 R10
+    BL file_put
+    LI R1 ERR_NOMEM
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+execve_nomem:
+    LI R1 ERR_NOMEM
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+execve_noexec_file:
+    MOV R1 R10
+    BL file_put
+execve_noexec:
+    LI R1 ERR_NOEXEC
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+execve_noent:
+    LI R1 ERR_NOENT
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+execve_badfault:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
+    B trap_restore
 
 syscall_yield:
 ;================================================================
@@ -2784,7 +2969,8 @@ trap_restore:
 .EQU SYS_GETTIME,  10      ; NEW: get time of day - returns seconds since epoch
 .EQU SYS_BRK,      11      ; NEW: change program break - memory allocation
 .EQU SYS_SBRK,     12      ; NEW: increment program break - memory allocation
-.EQU SYS_COUNT,    13      ; count of syscalls
+.EQU SYS_EXECVE,   13      ; NEW: execute a new program
+.EQU SYS_COUNT,    14      ; count of syscalls
 
 ;=============================================================
 ; Task States
@@ -2841,10 +3027,12 @@ trap_restore:
 .EQU TASK_KBUF_WR_PTR, 36     ; pointer to this task's kernel write buffer
 .EQU TASK_KBUF_RD_PTR, 40     ; pointer to this task's kernel read buffer
 .EQU TASK_DATA_PAGE, 44       ; pointer to this task's data page (for exec/args)
-.EQU TASK_USTACK_PAGE, 48     ; physical page backing fixed USER_STACK_VA
-.EQU TASK_KSTACK_PAGE, 52     ; identity-mapped physical kernel stack page
-.EQU TASK_BREAK,       56     ; current program break ptr
-.EQU TASK_SIZE       60
+.EQU TASK_CODE_PAGE, 48       ; pointer to this task's executable page physical address
+.EQU TASK_USTACK_PAGE, 52     ; physical page backing fixed USER_STACK_VA
+.EQU TASK_KSTACK_PAGE, 56     ; identity-mapped physical kernel stack page
+.EQU TASK_PPID, 60            ; parent process ID for execve / inherited by children
+.EQU TASK_BREAK,       64     ; current program break ptr
+.EQU TASK_SIZE       68
 
 
 
@@ -4346,6 +4534,7 @@ init_scheduler:
 
     LI R1 idle_task
     LI R2 0
+    LI R3 0
     BL task_create
 
     CMP R1 0
@@ -4357,6 +4546,7 @@ init_scheduler:
 
   ;  LI R1 TASK_A_START
   ;  LI R2 1
+  ;  LI R3 0
   ;  BL task_create
 
   ;  CMP R1 0
@@ -4368,6 +4558,7 @@ init_scheduler:
 
     LI R1 TASK_B_START
     LI R2 2
+    LI R3 0
     BL task_create
 
     CMP R1 0
@@ -4379,6 +4570,7 @@ init_scheduler:
 
     LI R1 TASK_C_START
     LI R2 3
+    LI R3 0
     BL task_create
 
     CMP R1 0
@@ -5017,6 +5209,10 @@ task_create_status_ready:
     BEQ task_create_fail
 
     TASK_SET_KBUF_RD R10, R1                ; set task kernel read buffer
+    
+    ; ----------------------------------
+    ; data page - for user buffers and heap
+    ; ----------------------------------
 
     BL page_alloc
     CMP R1 0
@@ -5027,11 +5223,14 @@ task_create_status_ready:
     MOV R12 R1
 
     TASK_GET_PTBR R1, R10
-
     LI  R2 USER_DATA_VA
     MOV R3 R12
     LI  R4 USER_RW
     BL map_page                 ; map task data page into task page table with RW permissions for user
+
+    ; initialize code page pointer to zero until execve or static code assignment
+    LI R1 0
+    TASK_SET_CODE_PAGE R10, R1
 
     ; Publish the task only after every required resource and mapping exists.
     TASK_SET_STATE R10, TASK_READY
@@ -5039,6 +5238,10 @@ task_create_status_ready:
     ; Initialize program break
     LI R1 HEAP_START
     TASK_SET_BREAK R10, R1
+
+    ; Initialize parent PID to 0 by default
+    LI R1 0
+    TASK_SET_PPID R10, R1
 
     MOV R1 R10                              ; return created task pointer
 
@@ -5173,7 +5376,15 @@ td_skip_krd:
 
     TASK_GET_DATA_PAGE R2, R12
     CMP R2 0
-    BEQ td_done     ; if task has no user data page, it also has no user buffers to free, so skip freeing user buffers and move to clearing slot and returning
+    BEQ td_skip_code
+    MOV R1 R2
+    BL page_free
+
+td_skip_code:
+
+    TASK_GET_CODE_PAGE R2, R12
+    CMP R2 0
+    BEQ td_done
     MOV R1 R2
     BL page_free
 
@@ -5610,6 +5821,17 @@ tarfs_start:
     .SPACE 20
     .ASCIIZ "0"
     .SPACE 354
+    
+; /bin/exec_test, 52 bytes
+    .ASCIIZ "/bin/exec_test"
+    .SPACE 110
+    .ASCIIZ "00000000064"
+    .SPACE 20
+    .ASCIIZ "0"
+    .SPACE 354
+    ; file data (52 bytes, padded to 52)
+    .WORD 0x0F010000, 0x00007028, 0x0F020000, 0x00000001, 0x0F030000, 0x0000000E, 0x40040000, 0x40000000
+    .WORD 0x05000000, 0x0000701C, 0x43455845, 0x4F204556, 0x000A214B
 
 ; TAR end marker: two zero headers by the tar file standart if tape head reads 2 zero blocks here then its the end of tar archive!
     .SPACE 1024

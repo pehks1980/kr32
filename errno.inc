@@ -31,6 +31,7 @@
 
 .EQU ERR_NOMEM,     -12      ; out of memory
 .EQU ERR_FAULT,     -14      ; invalid user address
+.EQU ERR_NOEXEC,     -8      ; executable file format error
 
 ; ------------------------------------------------------------
 ; File descriptor handling
