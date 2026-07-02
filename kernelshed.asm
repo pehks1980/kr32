@@ -40,22 +40,30 @@ B KERNEL_START
 ;done via alloc down .EQU TASK2_PTBR,   0x00030000   ; page table at 192KB
 
 ;need to do via alloc 
-.EQU TASK0_USTACK_PA, 0x00005000 ; physical memory address stack and data when map pages tasks 0,1,2 in memory image
-.EQU TASK1_USTACK_PA, 0x0000B000 ; func page init makes map in page table for every task (0) runs in kernel mode
-.EQU TASK2_USTACK_PA, 0x0000C000
-
-.EQU TASK0_DATA_PA,   0x00006000
-.EQU TASK1_DATA_PA,   0x0000D000
-.EQU TASK2_DATA_PA,   0x0000E000
+;.EQU TASK0_USTACK_PA, 0x00005000 ; physical memory address stack and data when map pages tasks 0,1,2 in memory image
+;.EQU TASK1_USTACK_PA, 0x0000B000 ; func page init makes map in page table for every task (0) runs in kernel mode
+;.EQU TASK2_USTACK_PA, 0x0000C000
 
 ;memory map used for data validation when make syscalls which transfer data b/w kernel and user
 .EQU KERNEL_BASE,     0x0000
 .EQU KERNEL_LIMIT,    0x000BFFFF
 .EQU USER_BASE,       0x00005000
-.EQU USER_DATA_VA,    0x00006000
+
 .EQU USER_STACK_VA,   0x0003F000
 .EQU USER_STACK_TOP,  0x00040000
 .EQU USER_LIMIT,      0x0003FFFF
+
+.EQU USER_DATA_VA,    0x00006000  ;start of user data page for task (process virtual space) 4 KiB per task
+; ================================================================
+; Program break management
+; ================================================================
+
+; Each task gets a data page at USER_DATA_VA (0x6000)
+; We manage a per-task heap within this page
+
+.EQU HEAP_START,    USER_DATA_VA + 0x100   ; Start heap after some reserved space
+.EQU HEAP_END,      USER_DATA_VA + 0x1000  ; End of data page
+
 
 .EQU KBUFFER_SIZE,   256
 
@@ -124,23 +132,8 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    DEBUG 1
+    ;DEBUG 1
     B idle_loop
-
-;KBUFFER_WR:
-;KBUFFER_WR_0:
-;        .SPACE 256              ; 256b
-;KBUFFER_RD:
-;KBUFFER_RD_0:
-;        .SPACE 256              ; 256b
-;KBUFFER_WR_1:
-;        .SPACE 256              ; 256b
-;KBUFFER_RD_1:
-;        .SPACE 256              ; 256b
-;KBUFFER_WR_2:
-;        .SPACE 256              ; 256b
-;KBUFFER_RD_2:
-;        .SPACE 256              ; 256b
 
 ; ================================================================
 ; PAGE TABLES for each task (1 KiB each, 4 entries x 1024 bytes)
@@ -1278,73 +1271,194 @@ dup_badfd:
     STW R1 [SP + TF_R1]
 
     B trap_restore
-
-; ================================================================
-; syscall_gettime - Get current time
-; 
-; R1 = pointer to struct timeval in user space
-; 
+    
+;===============================================================
+; syscall_gettime
+;
+; R1 = user pointer to struct timeval
+;
 ; Returns:
-;   R1 = 0 on success, -1 on error
-; ================================================================
+;   R1 = 0
+;   R1 = ERR_FAULT
+;===============================================================
 
 syscall_gettime:
-    
-    LDW R8 [SP + TF_R1]        ; R8 = user struct timeval pointer
-    
-    ; Validate user buffer (write access)
+
+    ;----------------------------------------------------------
+    ; Get user pointer
+    ;----------------------------------------------------------
+
+    LDW R8 [SP + TF_R1]         ; user pointer to struct timeval
+
+    ;----------------------------------------------------------
+    ; Validate destination buffer
+    ;----------------------------------------------------------
+
     MOV R1 R8
-    LI R2 TIMEVAL_SIZE
-    LI R3 1                    ; write access
-    BL user_buffer_valid_range
+    LI  R2 TIMEVAL_SIZE
+    LI  R3 1                   ; write access
+    BL  user_buffer_valid_range
+
     CMP R1 1
     BNE gettime_badptr
-    
-    ; Read current timer value from PIT
-    ; PIT is at MMIO base 0x00101000
-    LI R9 0x00101000
-    LDW R1 [R9 + 0]            ; R1 = PIT current count
-    
-    ; Convert PIT ticks to seconds and microseconds
-    ; PIT period is 2000 ms (2 seconds) from init
-    ; Each tick = 2ms
-    ; For now, return simple values based on boot time
-    
-    ; We'll store a 64-bit timestamp that increments every 2ms
-    LI R9 timer_ticks
-    LDW R2 [R9]                ; R2 = current tick count
-    
-    ; Calculate seconds = ticks / 500 (since 500 ticks = 1 second)
-    MOV R1 R2
-    LI R3 500
-    DIV R1 R1 R3               ; R1 = seconds
-    
-    ; Calculate microseconds = (ticks % 500) * 2000
-    MOV R4 R2
-    MOD R4 R4 R3               ; R4 = ticks % 500
-    LI R5 2000
-    MUL R4 R4 R5               ; R4 = microseconds (0-999000)
-    
-    ; Store to user space
-    MOV R3 R8
-    
-    ; Store seconds (32-bit)
-    STW R1 [R3 + TIMEVAL_SEC]
-    
-    ; Store microseconds (32-bit)
-    STW R4 [R3 + TIMEVAL_USEC]
-    
+
+    ;----------------------------------------------------------
+    ; Get current kernel time
+    ;----------------------------------------------------------
+
+    BL clock_gettime           ;out: R1=sec, R2=usec
+
+    ;----------------------------------------------------------
+    ; Build timeval in kernel buffer
+    ;----------------------------------------------------------
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R6, R5   ; R6 ptr kbuf_wr
+
+    STW R1 [R6 + TIMEVAL_SEC]
+    STW R2 [R6 + TIMEVAL_USEC]
+
+    ;----------------------------------------------------------
+    ; Copy to user
+    ;----------------------------------------------------------
+
+    MOV R1 R6                  ; kernel source
+    MOV R2 R8                  ; user destination
+    LI  R3 TIMEVAL_SIZE        ; size in bytes (8)
+
+    BL copy_to_user
+
+    CMP R1 TIMEVAL_SIZE
+    BNE gettime_badptr
+
+    ;----------------------------------------------------------
     ; Success
+    ;----------------------------------------------------------
+
     LI R1 0
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+gettime_badptr:
+
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
+
+    B trap_restore
+
+; ================================================================
+; syscall_brk - Set program break
+; 
+; R1 = new break address (must be within data page)
+; 
+; Returns:
+;   R1 = new break address on success, -1 on error
+; ================================================================
+
+syscall_brk:
+    LDW R8 [SP + TF_R1]        ; R8 = new break address (user space VA)
+    
+    ; Validate the address is within the data page
+    LI R2 HEAP_START
+    CMP R8 R2
+    BLT brk_invalid            ; if new break is below data page, return error
+    
+    LI R2 HEAP_END
+    CMP R8 R2
+    BGT brk_invalid            ; if new break is above last address in data page, return error
+    
+    ; Get current task
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    
+    ; Set new break in task struct
+    ; (We'll add this field to TASK structure)
+    TASK_SET_BREAK R5, R8
+    
+    ; Return new break
+    STW R8 [SP + TF_R1]
+    
+    B trap_restore
+
+brk_invalid:
+    ; Return -1
+    LI R1 ERR_FAULT
     STW R1 [SP + TF_R1]
     
     B trap_restore
 
-gettime_badptr:
+; ================================================================
+; syscall_sbrk - Increment program break (set new break relative to current ie sbrk)
+; 
+; R1 = increment (can be negative) update current break by this value
+; 
+; Returns:
+;   R1 = old break address on success, -1 on error
+; ================================================================
+
+syscall_sbrk:
+    LDW R8 [SP + TF_R1]        ; R8 = increment
+    
+    ; Get current task
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    
+    ; Get current break
+    TASK_GET_BREAK R9, R5
+    
+    ; Calculate new break
+    ADD R10 R9 R8
+    
+    ; Validate it's within the data page
+    LI R2 HEAP_START
+    CMP R10 R2
+    BLT sbrk_invalid
+    
+    LI R2 HEAP_END
+    CMP R10 R2
+    BGT sbrk_invalid
+    
+    ; Return old break
+    STW R9 [SP + TF_R1]     ; old break address
+    
+    ; Update break
+    TASK_SET_BREAK R5, R10  ;R10 - updated break address
+    
+    B trap_restore
+
+sbrk_invalid:
+    ; Return -1
     LI R1 ERR_FAULT
     STW R1 [SP + TF_R1]
     B trap_restore
 
+;===============================================================
+; clock_gettime
+;
+; Returns current kernel time.
+;
+; Out:
+;   R1 = seconds
+;   R2 = microseconds
+;===============================================================
+clock_gettime:
+
+    LI  R3 timer_ticks
+    LDW R4 [R3]                ; tick counter (2 ms per tick)
+
+    ; seconds = ticks / 500
+    MOV R1 R4
+    LI  R5 500
+    DIV R1 R1 R5
+
+    ; usec = (ticks % 500) * 2000
+    MOD R4 R4 R5
+    LI  R5 2000
+    MUL R2 R4 R5
+
+    RET
 
 pipe_read:
 ;=========================================================
@@ -2546,6 +2660,12 @@ handle_timer_irq:
     LI R3 0
     STW R3 [R2 + 8]             ; PIC_ACK = 0
     
+    ; Increment timer tick counter
+    LI R1 timer_ticks
+    LDW R2 [R1]
+    ADD R2 R2 1
+    STW R2 [R1]
+    
     ; Yield the CPU (reschedule and switch tasks)
     B schedule_and_switch
 
@@ -2723,17 +2843,20 @@ trap_restore:
 .EQU TASK_DATA_PAGE, 44       ; pointer to this task's data page (for exec/args)
 .EQU TASK_USTACK_PAGE, 48     ; physical page backing fixed USER_STACK_VA
 .EQU TASK_KSTACK_PAGE, 52     ; identity-mapped physical kernel stack page
-.EQU TASK_SIZE       56
+.EQU TASK_BREAK,       56     ; current program break ptr
+.EQU TASK_SIZE       60
 
 
 
 ; =============================================================
-; Task table
+; important kernel data structures and constants
 ; =============================================================
 
 .ORG 0x7000
 
 CURRENT_TASK:
+    .WORD 0
+TIMER_TICKS:
     .WORD 0
 
 ;==============================================================
@@ -4232,12 +4355,12 @@ init_scheduler:
     ; task A
     ; ----------------------------------
 
-    LI R1 TASK_A_START
-    LI R2 1
-    BL task_create
+  ;  LI R1 TASK_A_START
+  ;  LI R2 1
+  ;  BL task_create
 
-    CMP R1 0
-    BEQ init_scheduler_fail
+  ;  CMP R1 0
+  ;  BEQ init_scheduler_fail
 
     ; ----------------------------------
     ; task B
@@ -4245,6 +4368,17 @@ init_scheduler:
 
     LI R1 TASK_B_START
     LI R2 2
+    BL task_create
+
+    CMP R1 0
+    BEQ init_scheduler_fail
+
+    ; ----------------------------------
+    ; task C -check gettime brk,sbrk syscalls
+    ; ----------------------------------
+
+    LI R1 TASK_C_START
+    LI R2 3
     BL task_create
 
     CMP R1 0
@@ -4902,6 +5036,10 @@ task_create_status_ready:
     ; Publish the task only after every required resource and mapping exists.
     TASK_SET_STATE R10, TASK_READY
 
+    ; Initialize program break
+    LI R1 HEAP_START
+    TASK_SET_BREAK R10, R1
+
     MOV R1 R10                              ; return created task pointer
 
     POP LR
@@ -5314,7 +5452,7 @@ task_b_loop:
     LI R2 USER_READ_BUF
     LI R3 5
     SVC SYS_READ
-    DEBUG  2
+  ;  DEBUG  2
     CMP R1 0
     BLE task_b_yield
 
@@ -5326,7 +5464,7 @@ task_b_loop:
 
 task_b_yield:
     SVC SYS_YIELD
-    B task_b_loop
+    B task_b_yield
 
 task_b_open_fail:
 
@@ -5358,6 +5496,63 @@ open_fail_msg:
 
 open_fail_msg_len:
     .WORD 11
+
+
+; Test program for gettime and brk
+.org 0x1B000
+TASK_C_START:
+
+    ; ====================================
+    ; Test gettimeofday
+    ; ====================================
+    
+    LI R1 timeval_buffer
+    SVC SYS_GETTIME
+    
+    ; Print seconds
+    LI R1 STDOUT_FD
+    LI R2 time_msg
+    LI R3 12
+    SVC SYS_WRITE
+    
+    ; Print seconds value (convert to ASCII - simplified)
+    ; For now just print the value in hex via debug
+    LI R1 timeval_buffer
+    LDW R2 [R1 + TIMEVAL_SEC]
+    DEBUG 2                    ; R2 will be printed by debug
+    
+    ; ====================================
+    ; Test brk
+    ; ====================================
+    
+    ; Get current break
+    LI R1 0
+    SVC SYS_SBRK
+    
+    ; Print old break
+    DEBUG 1
+    
+    ; Allocate 256 bytes
+    LI R1 256
+    SVC SYS_SBRK
+    
+    ; Print new break
+    DEBUG 1
+    
+    ; ====================================
+    ; Loop forever
+    ; ====================================
+    
+task_c_loop:
+    SVC SYS_YIELD
+    B task_c_loop
+
+time_msg:
+    .ASCIIZ "Time: seconds="
+
+timeval_buffer:
+    .WORD 0
+    .WORD 0
 
 ; ================================================================
 ; Built-in read-only TARFS image
