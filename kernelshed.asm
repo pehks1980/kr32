@@ -53,8 +53,10 @@ B KERNEL_START
 .EQU USER_STACK_TOP,  0x00040000
 .EQU USER_LIMIT,      0x0003FFFF
 
-.EQU USER_DATA_VA,    0x00006000  ;start of user data page for task (process virtual space) 4 KiB per task
-.EQU USER_CODE_VA,    0x00007000  ; user code page for execve
+.EQU USER_DATA_VA,    0x00006000  ; start of user data page for task (process virtual space) 4 KiB per task
+.EQU USER_CODE_VA,    0x00007000  ; fixed user code VA for execve-loaded user image
+; USER_CODE_VA is the per-task user-space entry page for execve programs.
+; Each task's active executable is always mapped here when a program is loaded.
 ; ================================================================
 ; Program break management
 ; ================================================================
@@ -529,6 +531,7 @@ syscall_table:
     .WORD syscall_brk           ; SVC 11  
     .WORD syscall_sbrk          ; SVC 12  
     .WORD syscall_execve        ; SVC 13  
+    .WORD syscall_fork          ; SVC 14  
 
 syscall_execve:
     ;================================================================
@@ -536,7 +539,19 @@ syscall_execve:
     ; R1 = user path
     ; R2 = user argv
     ; R3 = user envp (ignored for now)
-    ; Returns: does not return on success, errno in R1 on failure.
+    ;
+    ; Overview:
+    ; 1) copy pathname from user space into kernel buffer
+    ; 2) lookup the file in TARFS/VFS and verify it is an executable file
+    ; 3) allocate a new code page and map it RW at USER_CODE_VA (0x7000)
+    ; 4) zero the task's data page and load the file content into the code page
+    ; 5) commit the new task state: PC=0x7000, USP=USER_STACK_TOP, program break reset
+    ; 6) remap the code page read-only and free any previous exec page
+    ; 7) restore the trapframe to begin executing the new program
+    ;
+    ; On success this does not return to the caller; the current task continues
+    ; with a freshly-loaded user image at USER_CODE_VA. On failure it returns
+    ; errno in R1 through the normal trap_restore path.
     ;================================================================
 
     LDW R8 [SP + TF_R1]        ; user path pointer
@@ -580,59 +595,59 @@ syscall_execve:
 
     MOV R11 R1                ; new code page PA for execve program
 
-    GET_CURR_TASK_IDX R4    ; get task's ptr which is curently does execve call
+    GET_CURR_TASK_IDX R4    ; get current task index
     GET_TASK_PTR R5, R4
 
-    TASK_GET_CODE_PAGE R12, R5 ; preserve old exec code page for rollback / cleanup 
-    TASK_GET_PTBR R1, R5    ; R1 = PTBR of current task
-    LI R2 USER_CODE_VA      ; R2 - code page VA for execve program 
-    MOV R3 R11              ; R3 - code page PA for execve program
-    LI R4 USER_RW           ; R4 - code page flags for execve program (user r/w)
-    BL map_page             ; map (add) new code page into task's address space at USER_CODE_VA with read/write permissions for loading
+    TASK_GET_CODE_PAGE R12, R5 ; preserve old exec code page PA for rollback / cleanup
+    TASK_GET_PTBR R1, R5       ; R1 = PTBR of current task
+    LI R2 USER_CODE_VA         ; R2 = code page VA for execve program
+    MOV R3 R11                 ; R3 = code page PA for execve program
+    LI R4 USER_RW              ; R4 = temporary RW permissions so we can load the page
+    BL map_page                ; map executable page RW at USER_CODE_VA for loading
 
-    TASK_GET_DATA_PAGE R1, R5   ; get data page ptr PA for current task
+    TASK_GET_DATA_PAGE R1, R5  ; get data page PA for current task
     CMP R1 0
-    BEQ execve_data_ok          ; if no data page, skip zeroing
+    BEQ execve_data_ok         ; if the task has no data page, skip clearing it
     LI R3 PAGE_SIZE
-    BL mem_zero             ; zero out the data page of current task so it will be used as data page for the new execve program
+    BL mem_zero                ; zero the current task data page before execve starts
 
 execve_data_ok:
 
     MOV R1 R10              ; file* of execve program
     LI R2 USER_CODE_VA      ; VA of code page for execve program
-    LI R3 PAGE_SIZE         ; size of code page for execve program  
-    BL file_read            ; read the execve program into the new code page to address USER_CODE_VA (0x7000)   
+    LI R3 PAGE_SIZE         ; size of code page for execve program
+    BL file_read            ; load executable into USER_CODE_VA (0x7000)
     CMP R1 0
     BLT execve_read_fail    ; if read fails, restore old exec code page and return error
 
     MOV R1 R10              ; file* of execve program
-    BL file_put             ; close the file after reading the execve program
+    BL file_put             ; release file resources after successful load
 
-    ; commit new exec state after successful file load - we change current task's code page, stack pointer, and program break to the new execve program's values!
+    ; commit new exec state after successful file load
     LI R1 USER_CODE_VA
-    TASK_SET_PC R5, R1              ; set PC to start of execve program (0x7000)
-    TASK_SET_CODE_PAGE R5, R11      ; set new code page for execve program (0x7000)
+    TASK_SET_PC R5, R1              ; start execution at USER_CODE_VA
+    TASK_SET_CODE_PAGE R5, R11      ; remember physical page backing this user code
     LI R1 USER_STACK_TOP
-    TASK_SET_USP R5, R1             ; set user stack pointer to top of user stack
+    TASK_SET_USP R5, R1             ; reset user stack pointer
     LI R1 HEAP_START
-    TASK_SET_BREAK R5, R1           ; set program break to start of heap
+    TASK_SET_BREAK R5, R1           ; reset program break into the task's data page
 
-    ; Remap the new code page read-only before handing control over.
+    ; Remap the new code page read-only before handing control over
     TASK_GET_PTBR R1, R5            ; get PTBR of current task
     LI R2 USER_CODE_VA              ; VA of code page for execve program
-    MOV R3 R11                      ; PA of code page for execve program    
+    MOV R3 R11                      ; PA of code page for execve program
     LI R4 USER_RX
-    BL map_page                     ; remap new code page read-only for execve program
+    BL map_page                     ; switch the new code page from RW to RX
 
-    CMP R12 0                       ; R12 = old code page PA for execve program taken from current task's data structure
+    CMP R12 0                       ; R12 = old code page PA for execve program from task metadata
     BEQ execve_commit_done          ; if no previous code page, skip freeing it
     MOV R1 R12
-    BL page_free                    ; free the old code page of execve program after successful commit of new execve program - not clear why its needed!                    
+    BL page_free                    ; free the old exec code page now that the new one is committed
 
 execve_commit_done:
 
     ; Prepare a fresh user register state for the new program.
-    LI R1 USER_STACK_TOP             ; set user stack pointer to top of user stack
+    LI R1 USER_STACK_TOP             ; reset user stack pointer for the new image
     STW R1 [SP + TF_USP]
     LI R1 0
     STW R1 [SP + TF_R1]
@@ -648,13 +663,13 @@ execve_commit_done:
     STW R1 [SP + TF_R11]
     STW R1 [SP + TF_R12]
     LI R1 USER_CODE_VA
-    STW R1 [SP + TF_SEPC]              ; set SEPC to start of execve program
+    STW R1 [SP + TF_SEPC]              ; set SEPC to the new program entry point
 
-    B trap_restore                     ; jump to new execve program with new user register state and new code page mapped read-only
+    B trap_restore                     ; restore kernel trapframe and start user execution at 0x7000
 
 execve_read_fail:
     MOV R1 R11
-    BL page_free
+    BL page_free                  ; free the failed new code page
 
     CMP R12 0
     BEQ execve_restore_no_prev
@@ -662,9 +677,9 @@ execve_read_fail:
     LI R2 USER_CODE_VA
     MOV R3 R12
     LI R4 USER_RX
-    BL map_page
+    BL map_page                   ; restore previous exec page mapping at USER_CODE_VA
     MOV R1 R12
-    TASK_SET_CODE_PAGE R5, R12
+    TASK_SET_CODE_PAGE R5, R12    ; restore previous exec code page pointer
     B execve_restore_done
 
 execve_restore_no_prev:
@@ -672,7 +687,7 @@ execve_restore_no_prev:
     LI R2 USER_CODE_VA
     LI R3 0
     LI R4 0
-    BL map_page
+    BL map_page                   ; unmap USER_CODE_VA if there was no previous code page
     LI R1 0
     TASK_SET_CODE_PAGE R5, R1
 
@@ -710,6 +725,28 @@ execve_noent:
 
 execve_badfault:
     LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+syscall_fork:
+    ;================================================================
+    ; fork()
+    ; Returns child PID in the parent and 0 in the child.
+    ; This clones the current task, duplicating its address space and
+    ; user-writable state while preserving a new independent child thread.
+    ;================================================================
+
+    BL task_clone_current
+    CMP R1 0
+    BEQ fork_fail
+
+    ; We return child PID to the parent via the trapframe.
+    TASK_GET_PID R2, R1
+    STW R2 [SP + TF_R1]
+    B trap_restore
+
+fork_fail:
+    LI R1 ERR_NOMEM
     STW R1 [SP + TF_R1]
     B trap_restore
 
@@ -2970,7 +3007,8 @@ trap_restore:
 .EQU SYS_BRK,      11      ; NEW: change program break - memory allocation
 .EQU SYS_SBRK,     12      ; NEW: increment program break - memory allocation
 .EQU SYS_EXECVE,   13      ; NEW: execute a new program
-.EQU SYS_COUNT,    14      ; count of syscalls
+.EQU SYS_FORK,     14      ; NEW: clone the current task
+.EQU SYS_COUNT,    15      ; count of syscalls
 
 ;=============================================================
 ; Task States
@@ -3026,8 +3064,11 @@ trap_restore:
 .EQU TASK_RESUME, 32          ; RESUME_* mode for TASK_KSP
 .EQU TASK_KBUF_WR_PTR, 36     ; pointer to this task's kernel write buffer
 .EQU TASK_KBUF_RD_PTR, 40     ; pointer to this task's kernel read buffer
-.EQU TASK_DATA_PAGE, 44       ; pointer to this task's data page (for exec/args)
-.EQU TASK_CODE_PAGE, 48       ; pointer to this task's executable page physical address
+.EQU TASK_DATA_PAGE, 44       ; pointer to this task's data page (user heap, exec/args, stack scratch)
+.EQU TASK_CODE_PAGE, 48       ; physical page backing the current execve-loaded user image
+    ; TASK_CODE_PAGE tracks the physical page mapped at USER_CODE_VA.
+    ; When execve replaces a process image, the new page is allocated,
+    ; mapped at USER_CODE_VA, and stored here. The previous page is freed.
 .EQU TASK_USTACK_PAGE, 52     ; physical page backing fixed USER_STACK_VA
 .EQU TASK_KSTACK_PAGE, 56     ; identity-mapped physical kernel stack page
 .EQU TASK_PPID, 60            ; parent process ID for execve / inherited by children
@@ -4557,7 +4598,7 @@ init_scheduler:
     ; ----------------------------------
 
     LI R1 TASK_B_START
-    LI R2 2
+    LI R2 1
     LI R3 0
     BL task_create
 
@@ -4569,12 +4610,17 @@ init_scheduler:
     ; ----------------------------------
 
     LI R1 TASK_C_START
-    LI R2 3
+    LI R2 2
     LI R3 0
     BL task_create
 
     CMP R1 0
     BEQ init_scheduler_fail
+
+    ; Initialize the dynamic fork PID allocator after bootstrap tasks.
+    LI R1 task_count
+    LI R2 3
+    STW R2 [R1]
 
     ; ------------------------------------------------
     ; CURRENT_TASK = 0 - init 0 task idx to scheduler first
@@ -4977,6 +5023,29 @@ pz_done:
     RET
 
 ; ================================================================
+; Copy a memory page (or other multiple of 4 bytes) by physical address.
+; R1 = source physical address
+; R2 = destination physical address
+; R3 = size in bytes (must be multiple of 4)
+; ================================================================
+page_copy:
+    PUSH LR
+
+page_copy_loop:
+    CMP R3 0
+    BEQ page_copy_done
+    LDW R4 [R1]
+    STW R4 [R2]
+    ADD R1 R1 4
+    ADD R2 R2 4
+    SUB R3 R3 4
+    B page_copy_loop
+
+page_copy_done:
+    POP LR
+    RET
+
+; ================================================================
 ; Task management
 ; ================================================================
 
@@ -5229,6 +5298,9 @@ task_create_status_ready:
     BL map_page                 ; map task data page into task page table with RW permissions for user
 
     ; initialize code page pointer to zero until execve or static code assignment
+    ; This means the task currently has no execve-loaded program image.
+    ; When execve runs, TASK_CODE_PAGE will be updated to point to the
+    ; physical page currently mapped at USER_CODE_VA.
     LI R1 0
     TASK_SET_CODE_PAGE R10, R1
 
@@ -5307,6 +5379,226 @@ task_create_clear_slot:
 task_create_fail_return:
     LI R1 0
 
+    POP LR
+    RET
+
+;================================================================
+; task_clone_current - clone the currently running task for fork
+; returns:
+;   R1 = child task* on success
+;   R1 = 0 on failure
+;
+; This performs a shallow process clone for the current task:
+; - allocate a new task slot and page table
+; - copy the current user stack, data page, and code page
+; - allocate fresh kernel stacks, kernel buffers, and fd table page
+; - copy the parent fd table and increment open file refcounts
+; - preserve the current trapframe and return 0 in the child
+;================================================================
+task_clone_current:
+    PUSH LR
+    PUSH R6
+    PUSH R7
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    ; Get the current task slot and parent task pointer.
+    GET_CURR_TASK_IDX R6
+    GET_TASK_PTR R7, R6           ; R7 = parent task*
+
+    ; Allocate a fresh child task slot.
+    BL task_alloc
+    CMP R1 0
+    BEQ clone_fail
+    MOV R10 R1                    ; R10 = child task*
+
+    ; Clear the new child task slot before use.
+    MOV R1 R10
+    LI R3 TASK_SIZE
+    BL mem_zero
+
+    ; Assign a new PID from the dynamic pid counter.
+    LI R1 task_count
+    LDW R2 [R1]
+    TASK_SET_PID R10, R2
+    ADD R2 R2 1
+    STW R2 [R1]
+
+    ; Set child parent PID to the current task's PID.
+    TASK_GET_PID R2, R7
+    TASK_SET_PPID R10, R2
+
+    ; Copy the current task's program break.
+    TASK_GET_BREAK R2, R7
+    TASK_SET_BREAK R10, R2
+
+    ; Copy current task PC for debugging/metadata.
+    TASK_GET_PC R2, R7
+    TASK_SET_PC R10, R2
+
+    ; Allocate and initialize a fresh page table for the child.
+    BL page_alloc
+    CMP R1 0
+    BEQ clone_fail
+    MOV R11 R1
+    TASK_SET_PTBR R10, R11
+
+    ; Clone the parent's entire page table into the child.
+    TASK_GET_PTBR R1, R7
+    MOV R2 R11
+    LI R3 PAGE_SIZE
+    BL page_copy
+
+    ; Preserve the current exec code page pointer if the parent uses execve.
+    TASK_GET_CODE_PAGE R2, R7
+    TASK_SET_CODE_PAGE R10, R2
+
+    ; The child has inherited the parent's kernel and code mappings.
+    ; We will override the user stack and data mappings below.
+    ; Allocate and clone the user stack page.
+    BL page_alloc
+    CMP R1 0
+    BEQ clone_fail
+    MOV R12 R1
+    TASK_SET_USTACK_PAGE R10, R12
+
+    TASK_GET_PTBR R1, R10
+    LI R2 USER_STACK_VA
+    MOV R3 R12
+    LI R4 USER_RW
+    BL map_page
+
+    TASK_GET_USTACK_PAGE R1, R7
+    MOV R2 R12
+    LI R3 PAGE_SIZE
+    BL page_copy
+
+    ; Preserve the current user SP in the child task metadata.
+    LDW R4 [SP + TF_USP]
+    TASK_SET_USP R10, R4
+
+    ; Allocate and clone the user data page.
+    BL page_alloc
+    CMP R1 0
+    BEQ clone_fail
+    MOV R12 R1
+    TASK_SET_DATA_PAGE R10, R12
+
+    TASK_GET_PTBR R1, R10
+    LI R2 USER_DATA_VA
+    MOV R3 R12
+    LI R4 USER_RW
+    BL map_page
+
+    TASK_GET_DATA_PAGE R1, R7
+    MOV R2 R12
+    LI R3 PAGE_SIZE
+    BL page_copy
+
+    ; Clone the fd table and honor open file refcounts.
+    BL page_alloc
+    CMP R1 0
+    BEQ clone_fail
+    MOV R12 R1
+    TASK_SET_FD_TABLE R10, R12
+    LI R3 PAGE_SIZE
+    MOV R1 R12
+    BL mem_zero
+
+    TASK_GET_FD_TABLE R1, R7
+    CMP R1 0
+    BEQ clone_fd_done
+
+    MOV R2 R12
+    MOV R3 PAGE_SIZE
+    BL page_copy
+
+    LI R4 0
+clone_fd_loop:
+    CMP R4 MAX_FDS
+    BGE clone_fd_done
+    SHL R5 R4 2
+    ADD R6 R12 R5
+    LDW R1 [R6]
+    CMP R1 0
+    BEQ clone_fd_next
+    BL file_get
+clone_fd_next:
+    ADD R4 R4 1
+    B clone_fd_loop
+
+clone_fd_done:
+    ; Allocate fresh kernel buffers for the child.
+    BL page_alloc
+    CMP R1 0
+    BEQ clone_fail
+    TASK_SET_KBUF_WR R10, R1
+    LI R3 PAGE_SIZE
+    BL mem_zero
+
+    BL page_alloc
+    CMP R1 0
+    BEQ clone_fail
+    TASK_SET_KBUF_RD R10, R1
+    LI R3 PAGE_SIZE
+    BL mem_zero
+
+    ; Allocate and initialize the child's kernel stack.
+    BL page_alloc
+    CMP R1 0
+    BEQ clone_fail
+    MOV R12 R1
+    TASK_SET_KSTACK_PAGE R10, R12
+    LI R3 PAGE_SIZE
+    ADD R12 R12 R3              ; R12 = child kernel stack top
+
+    ; Copy the current kernel trapframe into the child's new kernel stack.
+    ; The trapframe is stored below the stack top, so copy it to
+    ; (child_stack_top - trapframe_size).
+    MOV R1 SP
+    MOV R6 R12
+    LI R5 80                    ; trapframe size in bytes
+    SUB R6 R6 R5               ; R6 = child trapframe base inside new kernel stack
+    MOV R2 R6
+    LI R3 80
+    BL page_copy
+
+    ; Return 0 in the child syscall result register.
+    LI R4 0
+    STW R4 [R6 + TF_R1]
+
+    ; Preserve the user SP for later trap/schedule bookkeeping.
+    LDW R4 [SP + TF_USP]
+    STW R4 [R6 + TF_USP]
+
+    ; Save the child kernel trapframe pointer and make it runnable.
+    TASK_SET_KSP R10, R6
+    TASK_SET_RESUME R10, RESUME_TRAP
+    TASK_SET_WAIT R10, WAIT_NONE
+    TASK_SET_STATE R10, TASK_READY
+
+    MOV R1 R10
+    POP R12
+    POP R11
+    POP R10
+    POP R7
+    POP R6
+    POP LR
+    RET
+
+clone_fail:
+    CMP R10 0
+    BEQ clone_fail_return
+    MOV R1 R10
+    BL task_destroy
+clone_fail_return:
+    LI R1 0
+    POP R12
+    POP R11
+    POP R10
+    POP R7
+    POP R6
     POP LR
     RET
 
@@ -5714,56 +6006,67 @@ open_fail_msg_len:
 TASK_C_START:
 
     ; ====================================
-    ; Test gettimeofday
+    ; Fork syscall test
     ; ====================================
-    
-    LI R1 timeval_buffer
-    SVC SYS_GETTIME
-    
-    ; Print seconds
+    ; This user program exercises SYS_FORK and prints whether the
+    ; current thread is the parent or child.
+    ;
+    ; Expected behavior:
+    ; - parent receives child PID > 0
+    ; - child receives 0
+    ; - both print their identity and then exit.
+    ; ====================================
+
+    SVC SYS_FORK
+
+    CMP R1 0
+    BEQ fork_child
+    BLT fork_error
+
+fork_parent:
     LI R1 STDOUT_FD
-    LI R2 time_msg
-    LI R3 12
+    LI R2 fork_parent_msg
+    LI R3 fork_parent_msg_len
     SVC SYS_WRITE
-    
-    ; Print seconds value (convert to ASCII - simplified)
-    ; For now just print the value in hex via debug
-    LI R1 timeval_buffer
-    LDW R2 [R1 + TIMEVAL_SEC]
-    DEBUG 2                    ; R2 will be printed by debug
-    
-    ; ====================================
-    ; Test brk
-    ; ====================================
-    
-    ; Get current break
-    LI R1 0
-    SVC SYS_SBRK
-    
-    ; Print old break
-    DEBUG 1
-    
-    ; Allocate 256 bytes
-    LI R1 256
-    SVC SYS_SBRK
-    
-    ; Print new break
-    DEBUG 1
-    
-    ; ====================================
-    ; Loop forever
-    ; ====================================
-    
-task_c_loop:
+    LI R1 SYS_YIELD
     SVC SYS_YIELD
-    B task_c_loop
+    B fork_parent
 
-time_msg:
-    .ASCIIZ "Time: seconds="
+fork_child:
+    LI R1 STDOUT_FD
+    LI R2 fork_child_msg
+    LI R3 fork_child_msg_len
+    SVC SYS_WRITE
+    LI R1 SYS_YIELD
+    SVC SYS_YIELD
+    B fork_child
 
-timeval_buffer:
-    .WORD 0
-    .WORD 0
+fork_error:
+    LI R1 STDOUT_FD
+    LI R2 fork_error_msg
+    LI R3 fork_error_msg_len
+    SVC SYS_WRITE
+    LI R1 SYS_YIELD
+    SVC SYS_YIELD
+    B fork_error
+
+fork_parent_msg:
+    .ASCIIZ "fork: parent\n"
+
+fork_parent_msg_len:
+    .WORD 11
+
+fork_child_msg:
+    .ASCIIZ "fork: child\n"
+
+fork_child_msg_len:
+    .WORD 10
+
+fork_error_msg:
+    .ASCIIZ "fork: error\n"
+
+fork_error_msg_len:
+    .WORD 12
 
 ; ================================================================
 ; Built-in read-only TARFS image
@@ -5821,7 +6124,7 @@ tarfs_start:
     .SPACE 20
     .ASCIIZ "0"
     .SPACE 354
-    
+
 ; /bin/exec_test, 52 bytes
     .ASCIIZ "/bin/exec_test"
     .SPACE 110
