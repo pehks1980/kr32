@@ -8,7 +8,7 @@
 ; KR32 CALLING CONVENTION:
 ;   R0        = hardwired ZERO
 ;   R1-R4     = argument registers (arg0..arg3)
-;   R1        = return value register
+;   R1        = return valutask_clone_currente register
 ;   R5-R11    = caller-saved temporaries
 ;   R12       = callee-saved temporary (optional)
 ;   R13       = SP (stack pointer)
@@ -352,10 +352,14 @@ map_common_dynamic_done:
 map_page:
     ; R1=PTBR, R2=VA, R3=PA, R4=flags. The PTE format stores the physical
     ; page base in bits [31:12] and KR32 permission bits in [11:0].
+    PUSH R5
+    PUSH R6
     SHR R5 R2 12               ; VPN
     SHL R5 R5 2                ; page-table byte offset
     OR R6 R3 R4                ; PTE = PA page base | flags
     STW R6 [R1 + R5]
+    POP R6
+    POP R5
     RET
 
 ; ================================================================
@@ -2566,6 +2570,9 @@ fetch_fd_entry:
     ; - fd table entry must have at least the required flags set
     ;
     ;================================================================
+    PUSH R5
+    PUSH R6
+    PUSH R8
 
     CMP R1 0
     BLT fd_invalid
@@ -2585,9 +2592,16 @@ fetch_fd_entry:
     CMP R6 R2
     BNE fd_invalid
 
+    POP R8
+    POP R6
+    POP R5
     RET                         ;on exit R1 - has file ptr
 
 fd_invalid:
+    POP R8
+    POP R6
+    POP R5
+
     LI R1 0
     RET
 
@@ -2633,13 +2647,13 @@ vfs_write:
     MOV R10 R3
 
     LI R2 FD_FLAG_WRITE
-    BL fetch_fd_entry   ;macro inside desroys R6
+    BL fetch_fd_entry   ;macro inside desroys R6 (fixed)
 
     CMP R1 0
     BEQ vfs_write_badfd
 
     MOV R9 R1
-    MOV R1 R9
+    MOV R1 R9           ; R1 - file* acc to fd
     MOV R2 R7
     MOV R3 R10
     BL file_write
@@ -4897,6 +4911,11 @@ page_bitmap:
 ;================================================================
 
 page_alloc:
+    PUSH  R5
+    PUSH  R6
+    PUSH  R7
+    PUSH  R8
+    PUSH  R9
 
     LI R2 0                  ; page index
 
@@ -4955,11 +4974,23 @@ pa_found:
 
     ADD R1 R1 R9
 
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP R5  
+
     RET
 
 pa_fail:
 
     LI R1 0                     ; no free pages
+
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP R5  
     RET
 
 ;================================================================
@@ -4969,6 +5000,12 @@ pa_fail:
 ;================================================================
 
 page_free:
+    PUSH  R5
+    PUSH  R6
+    PUSH  R7
+    PUSH  R8
+    PUSH  R9
+
 
     LI R2 PAGE_ALLOC_BASE
     SUB R3 R1 R2         ; calculate offset from base
@@ -4997,6 +5034,11 @@ page_free:
 
     STB R7 [R6]          ; store the updated byte with the cleared bit back to the bitmap
 
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP R5  
     RET
 
 ;=================================================================
@@ -5024,12 +5066,12 @@ pz_done:
 
 ; ================================================================
 ; Copy a memory page (or other multiple of 4 bytes) by physical address.
-; R1 = source physical address
-; R2 = destination physical address
-; R3 = size in bytes (must be multiple of 4)
+; R1 = source physical address (should be aligned!)
+; R2 = destination physical address (aligned!)
+; R3 = size in bytes (must be multiple of 4) 
+; each time it copyes 4 bytes (1 word) 
 ; ================================================================
 page_copy:
-    PUSH LR
 
 page_copy_loop:
     CMP R3 0
@@ -5042,7 +5084,6 @@ page_copy_loop:
     B page_copy_loop
 
 page_copy_done:
-    POP LR
     RET
 
 ; ================================================================
@@ -5396,12 +5437,8 @@ task_create_fail_return:
 ; - preserve the current trapframe and return 0 in the child
 ;================================================================
 task_clone_current:
+    MOV  R8 SP ;save sp to point to task trapframe!
     PUSH LR
-    PUSH R6
-    PUSH R7
-    PUSH R10
-    PUSH R11
-    PUSH R12
 
     ; Get the current task slot and parent task pointer.
     GET_CURR_TASK_IDX R6
@@ -5421,13 +5458,14 @@ task_clone_current:
     ; Assign a new PID from the dynamic pid counter.
     LI R1 task_count
     LDW R2 [R1]
-    TASK_SET_PID R10, R2
+
+    TASK_SET_PID R10, R2        ; set new child task Pid to child task (current task_count value)
     ADD R2 R2 1
-    STW R2 [R1]
+    STW R2 [R1]                 ; update task_count as we created a new task
 
     ; Set child parent PID to the current task's PID.
     TASK_GET_PID R2, R7
-    TASK_SET_PPID R10, R2
+    TASK_SET_PPID R10, R2       ; pid - new, ppid - parent task's pid (new task)
 
     ; Copy the current task's program break.
     TASK_GET_BREAK R2, R7
@@ -5461,69 +5499,75 @@ task_clone_current:
     CMP R1 0
     BEQ clone_fail
     MOV R12 R1
-    TASK_SET_USTACK_PAGE R10, R12
+    TASK_SET_USTACK_PAGE R10, R12   ; set new page as child user stack page
 
     TASK_GET_PTBR R1, R10
     LI R2 USER_STACK_VA
     MOV R3 R12
     LI R4 USER_RW
-    BL map_page
+    BL map_page             ; map user stack page to child ptbr
 
     TASK_GET_USTACK_PAGE R1, R7
     MOV R2 R12
     LI R3 PAGE_SIZE
-    BL page_copy
-
-    ; Preserve the current user SP in the child task metadata.
-    LDW R4 [SP + TF_USP]
-    TASK_SET_USP R10, R4
-
+    BL page_copy            ; copy parent user stack page -> child user stack page
+    
     ; Allocate and clone the user data page.
     BL page_alloc
     CMP R1 0
     BEQ clone_fail
     MOV R12 R1
-    TASK_SET_DATA_PAGE R10, R12
+    TASK_SET_DATA_PAGE R10, R12     ; set new page as child user data page
 
     TASK_GET_PTBR R1, R10
     LI R2 USER_DATA_VA
     MOV R3 R12
     LI R4 USER_RW
-    BL map_page
+    BL map_page                     ; map user data page to child ptbr
 
     TASK_GET_DATA_PAGE R1, R7
     MOV R2 R12
     LI R3 PAGE_SIZE
-    BL page_copy
+    BL page_copy                    ; copy parent user data page -> child user data page
 
     ; Clone the fd table and honor open file refcounts.
     BL page_alloc
     CMP R1 0
     BEQ clone_fail
+
     MOV R12 R1
-    TASK_SET_FD_TABLE R10, R12
+
+    TASK_SET_FD_TABLE R10, R12       ; set new page as child fd table page
     LI R3 PAGE_SIZE
     MOV R1 R12
-    BL mem_zero
+    BL mem_zero                     ; clear the child fd table page just in case
 
-    TASK_GET_FD_TABLE R1, R7
+    TASK_GET_FD_TABLE R1, R7         ; R1 - parent fd table page
     CMP R1 0
-    BEQ clone_fd_done
+    BEQ clone_fd_done                ; if parent has no fd table, skip fd cloning
 
-    MOV R2 R12
-    MOV R3 PAGE_SIZE
+    ; parent → child copy FIRST
+    MOV R1 R1        ; parent fd page
+    MOV R2 R12       ; child fd page
+    LI R3 PAGE_SIZE
     BL page_copy
 
-    LI R4 0
+    LI R4 3                      ; fd index loop + 3 stdin/out/err refcount=1, so start at 3
+
 clone_fd_loop:
     CMP R4 MAX_FDS
     BGE clone_fd_done
-    SHL R5 R4 2
-    ADD R6 R12 R5
-    LDW R1 [R6]
-    CMP R1 0
-    BEQ clone_fd_next
-    BL file_get
+
+    SHL R5 R4 2                 ; multiply fd index by 4 to get byte offset
+    ADD R6 R12 R5               ; R6 = &child_fd_table[i]
+
+    LDW R7 [R6]                 ; R7 = file* from child fd table
+    CMP R7 0
+    BEQ clone_fd_next           ; if fd slot is empty, skip to next
+
+    MOV R1 R7                   ; IMPORTANT: isolate argument
+    BL file_get                 ; increment refcount of the file* in child fd table
+
 clone_fd_next:
     ADD R4 R4 1
     B clone_fd_loop
@@ -5533,57 +5577,58 @@ clone_fd_done:
     BL page_alloc
     CMP R1 0
     BEQ clone_fail
-    TASK_SET_KBUF_WR R10, R1
+
+    TASK_SET_KBUF_WR R10, R1        ; set new page as child kernel write buffer
     LI R3 PAGE_SIZE
-    BL mem_zero
+    BL mem_zero                     ; zero out the child kernel write buffer
 
     BL page_alloc
     CMP R1 0
     BEQ clone_fail
-    TASK_SET_KBUF_RD R10, R1
-    LI R3 PAGE_SIZE
-    BL mem_zero
+    TASK_SET_KBUF_RD R10, R1        ; set new page as child kernel read buffer
+    LI R3 PAGE_SIZE 
+    BL mem_zero                     ; zero out the child kernel read buffer
 
     ; Allocate and initialize the child's kernel stack.
     BL page_alloc
     CMP R1 0
     BEQ clone_fail
     MOV R12 R1
-    TASK_SET_KSTACK_PAGE R10, R12
+    TASK_SET_KSTACK_PAGE R10, R12   ; set new page as child kernel stack page
     LI R3 PAGE_SIZE
-    ADD R12 R12 R3              ; R12 = child kernel stack top
+    ADD R12 R12 R3                  ; R12 = child kernel stack top
 
+    
     ; Copy the current kernel trapframe into the child's new kernel stack.
-    ; The trapframe is stored below the stack top, so copy it to
-    ; (child_stack_top - trapframe_size).
-    MOV R1 SP
+    ; The trapframe is at SP + 24 (after 6 pushes of 4 bytes each)
+    ; Child trapframe goes at the top of child's stack (R12 - 80)
+    MOV R1 R8                     ; R1 = parent trapframe BASE saved in the beginiig of func
     MOV R6 R12
     LI R5 80                    ; trapframe size in bytes
     SUB R6 R6 R5               ; R6 = child trapframe base inside new kernel stack
     MOV R2 R6
     LI R3 80
-    BL page_copy
-
+    BL page_copy                ; so we copy 80 bytes from SP to R12-80 (child trapframe base)
+    
     ; Return 0 in the child syscall result register.
     LI R4 0
     STW R4 [R6 + TF_R1]
 
+
     ; Preserve the user SP for later trap/schedule bookkeeping.
-    LDW R4 [SP + TF_USP]
-    STW R4 [R6 + TF_USP]
+    ; User SP is already in the trapframe we copied
+    ; But we also need to set it in the child's task struct
+    LDW R4 [R6 + TF_USP]
+    TASK_SET_USP R10, R4
 
     ; Save the child kernel trapframe pointer and make it runnable.
-    TASK_SET_KSP R10, R6
+    TASK_SET_KSP R10, R6                    ;R6 = child trapframe base inside new kernel stack
     TASK_SET_RESUME R10, RESUME_TRAP
     TASK_SET_WAIT R10, WAIT_NONE
     TASK_SET_STATE R10, TASK_READY
 
-    MOV R1 R10
-    POP R12
-    POP R11
-    POP R10
-    POP R7
-    POP R6
+    MOV R1 R10          ; return child task pointer
+
     POP LR
     RET
 
@@ -5594,11 +5639,6 @@ clone_fail:
     BL task_destroy
 clone_fail_return:
     LI R1 0
-    POP R12
-    POP R11
-    POP R10
-    POP R7
-    POP R6
     POP LR
     RET
 
@@ -6026,7 +6066,7 @@ TASK_C_START:
 fork_parent:
     LI R1 STDOUT_FD
     LI R2 fork_parent_msg
-    LI R3 fork_parent_msg_len
+    LI R3 11
     SVC SYS_WRITE
     LI R1 SYS_YIELD
     SVC SYS_YIELD
@@ -6035,7 +6075,7 @@ fork_parent:
 fork_child:
     LI R1 STDOUT_FD
     LI R2 fork_child_msg
-    LI R3 fork_child_msg_len
+    LI R3 10
     SVC SYS_WRITE
     LI R1 SYS_YIELD
     SVC SYS_YIELD
@@ -6044,29 +6084,29 @@ fork_child:
 fork_error:
     LI R1 STDOUT_FD
     LI R2 fork_error_msg
-    LI R3 fork_error_msg_len
+    LI R3 12
     SVC SYS_WRITE
     LI R1 SYS_YIELD
     SVC SYS_YIELD
     B fork_error
 
 fork_parent_msg:
-    .ASCIIZ "fork: parent\n"
+    .ASCIIZ "fork: parent\r\n"
 
 fork_parent_msg_len:
-    .WORD 11
+    .WORD 14
 
 fork_child_msg:
-    .ASCIIZ "fork: child\n"
+    .ASCIIZ "fork: child\r\n"
 
 fork_child_msg_len:
-    .WORD 10
+    .WORD 13
 
 fork_error_msg:
-    .ASCIIZ "fork: error\n"
+    .ASCIIZ "fork: error\r\n"
 
 fork_error_msg_len:
-    .WORD 12
+    .WORD 13
 
 ; ================================================================
 ; Built-in read-only TARFS image
