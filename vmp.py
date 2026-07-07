@@ -163,7 +163,7 @@ class CPU:
         # =====================================================
         # DEVICES
         # =====================================================
-        self.timer = PIT(period_ms=2000)  # tick every 2 seconds
+        self.timer = PIT(period_ms=1)  # tick every 1 ms
         self.pic = PIC()
         self.pic.enable_irq(0)  # enable timer IRQ
         self.uart = UARTDevice()
@@ -1607,6 +1607,8 @@ class CPU:
             skip_initial_bp = False
 
             steps += 1
+            if steps % 100 == 0:
+                time.sleep(0.001)
             if steps > MAX_STEPS:
                 if not self.quiet:
                     print("[CPU] MAX STEPS REACHED -> STOP")

@@ -536,7 +536,9 @@ syscall_table:
     .WORD syscall_brk           ; SVC 11  
     .WORD syscall_sbrk          ; SVC 12  
     .WORD syscall_execve        ; SVC 13  
-    .WORD syscall_fork          ; SVC 14  
+    .WORD syscall_fork          ; SVC 14
+    .WORD syscall_sleep         ; SVC 15
+    .WORD syscall_waitpid       ; SVC 16
 
 syscall_execve:
     ;================================================================
@@ -906,7 +908,8 @@ find_any_child_found:
     BEQ waitpid_reap_child
 
     ; Child running - block parent
-    TASK_SET_WAIT_CHILD R5, R12
+    TASK_GET_PID R1, R7
+    TASK_SET_WAIT_CHILD R5, R1
     
     LI R1 child_waitq           ; child_waitq ptr
     LI R2 WAIT_CHILD            ; reason
@@ -926,8 +929,8 @@ waitpid_reap_child:
     BEQ waitpid_reap_done
 
     MOV R1 R9                  ; R1 = user status pointer
-    MOV R2 R2                  ; R2 = exit code
-    MOV R3 4                   ; R3 = size of exit code
+    MOV R4 R2                  ; preserve exit code in kernel source register
+    LI  R2 4                   ; R2 = size of exit code
     BL copy_to_user            ; write exit code to user space
 
 waitpid_reap_done:
@@ -1087,13 +1090,13 @@ syscall_sleep:
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     
-    ; Calculate wake time = current time + requested ms
+    ; Calculate wake time in PIT ticks (1 ms per tick).
     LI R3 timer_ticks
-    LDW R6 [R3]                ; current ticks (2ms per tick)
-    
-    ; Convert ms to ticks: ms / 2
-    SHR R7 R8 1                ; R7 = ticks to sleep
-    
+    LDW R6 [R3]                ; current ticks (1ms per tick)
+
+    ; Convert ms to ticks: 1 tick = 1 ms
+    MOV R7 R8                  ; R7 = ticks to sleep
+
     ADD R6 R6 R7               ; R6 = wake time in ticks
     
     ; Store wake time in task struct
@@ -1820,9 +1823,9 @@ syscall_gettime:
     ; Copy to user
     ;----------------------------------------------------------
 
-    MOV R1 R6                  ; kernel source
-    MOV R2 R8                  ; user destination
-    LI  R3 TIMEVAL_SIZE        ; size in bytes (8)
+    MOV R1 R8                  ; user destination
+    LI  R2 TIMEVAL_SIZE        ; size in bytes (8)
+    MOV R4 R6                  ; kernel source
 
     BL copy_to_user
 
@@ -1943,16 +1946,16 @@ sbrk_invalid:
 clock_gettime:
 
     LI  R3 timer_ticks
-    LDW R4 [R3]                ; tick counter (2 ms per tick)
+    LDW R4 [R3]                ; tick counter (1 ms per tick)
 
-    ; seconds = ticks / 500
+    ; seconds = ticks / 1000
     MOV R1 R4
-    LI  R5 500
+    LI  R5 1000
     DIV R1 R1 R5
 
-    ; usec = (ticks % 500) * 2000
+    ; usec = (ticks % 1000) * 1000
     MOD R4 R4 R5
-    LI  R5 2000
+    LI  R5 1000
     MUL R2 R4 R5
 
     RET
@@ -6400,67 +6403,149 @@ open_fail_msg_len:
 TASK_C_START:
 
     ; ====================================
-    ; Fork syscall test
+    ; Fork, Waitpid, and Sleep test
     ; ====================================
-    ; This user program exercises SYS_FORK and prints whether the
-    ; current thread is the parent or child.
+    ; This program demonstrates:
+    ; 1. fork() - create child process
+    ; 2. waitpid() - parent waits for child
+    ; 3. sleep() - suspend execution for specified time
     ;
     ; Expected behavior:
-    ; - parent receives child PID > 0
-    ; - child receives 0
-    ; - both print their identity and then exit.
+    ; - Parent forks a child
+    ; - Child sleeps for 2 seconds then exits
+    ; - Parent waits for child and prints status
+    ; - Both processes print timing information
     ; ====================================
 
+    ; Get current time for timing.
+    ; SYS_GETTIME expects R1 = user pointer to struct timeval.
+    LI R6 USER_WRITE_BUF
+    MOV R1 R6
+    SVC SYS_GETTIME
+    CMP R1 0
+    BLT gettime_error
+    LDW R4 [R6 + TIMEVAL_SEC]   ; Store start seconds in R4
+
+    ; Fork a child process
     SVC SYS_FORK
 
     CMP R1 0
-    BEQ fork_child
+    BEQ child_process
     BLT fork_error
+    MOV R5 R1          ; Parent keeps child PID
 
-fork_parent:
+parent_process:
+    ; Parent process - wait for child
     LI R1 STDOUT_FD
-    LI R2 fork_parent_msg
-    LI R3 11
+    LI R2 parent_wait_msg
+    LI R3 16
     SVC SYS_WRITE
-    LI R1 SYS_YIELD
-    SVC SYS_YIELD
-    B fork_parent
 
-fork_child:
+    ; Wait for child to exit
+    MOV R1 R5           ; Child PID from fork
+    LI R2 0             ; No status pointer needed for this test
+    SVC SYS_WAITPID
+
+    CMP R1 0
+    BLT wait_error
+
+    ; Child exited normally
     LI R1 STDOUT_FD
-    LI R2 fork_child_msg
-    LI R3 10
+    LI R2 parent_done_msg
+    LI R3 13
     SVC SYS_WRITE
-    LI R1 SYS_YIELD
-    SVC SYS_YIELD
-    B fork_child
+    
+    ; Print newline
+    LI R1 STDOUT_FD
+    LI R2 newline
+    LI R3 1
+    SVC SYS_WRITE
+    
+    B exit_success
+
+wait_error:
+    LI R1 STDOUT_FD
+    LI R2 wait_error_msg
+    LI R3 14
+    SVC SYS_WRITE
+    B exit_failure
+
+child_process:
+    ; Child process - sleep for 2 seconds
+    LI R1 STDOUT_FD
+    LI R2 child_start_msg
+    LI R3 13
+    SVC SYS_WRITE
+
+    ; Sleep for 2000 ms
+    LI R1 20
+    SVC SYS_SLEEP
+
+    CMP R1 0
+    BLT sleep_error
+
+    LI R1 STDOUT_FD
+    LI R2 child_end_msg
+    LI R3 12
+    SVC SYS_WRITE
+
+    ; Child exits with status 42
+    LI R1 42
+    SVC SYS_EXIT
+
+sleep_error:
+    LI R1 STDOUT_FD
+    LI R2 sleep_error_msg
+    LI R3 12
+    SVC SYS_WRITE
+    LI R1 1              ; Exit with error code
+    SVC SYS_EXIT
 
 fork_error:
     LI R1 STDOUT_FD
     LI R2 fork_error_msg
-    LI R3 12
+    LI R3 11
     SVC SYS_WRITE
-    LI R1 SYS_YIELD
-    SVC SYS_YIELD
-    B fork_error
+    B exit_failure
 
-fork_parent_msg:
-    .ASCIIZ "fork: parent\r\n"
+gettime_error:
+    LI R1 STDOUT_FD
+    LI R2 gettime_error_msg
+    LI R3 14
+    SVC SYS_WRITE
+    B exit_failure
 
-fork_parent_msg_len:
-    .WORD 14
+exit_success:
+    LI R1 0
+    SVC SYS_EXIT
 
-fork_child_msg:
-    .ASCIIZ "fork: child\r\n"
+exit_failure:
+    LI R1 1
+    SVC SYS_EXIT
 
-fork_child_msg_len:
-    .WORD 13
+gettime_error_msg:
+    .ASCIIZ "GETTIME FAIL\r\n"
+
+parent_wait_msg:
+    .ASCIIZ "PARENT WAITING\r\n"
+
+parent_done_msg:
+    .ASCIIZ "PARENT DONE\r\n"
+
+wait_error_msg:
+    .ASCIIZ "WAITPID FAIL\r\n"
+
+child_start_msg:
+    .ASCIIZ "CHILD START\r\n"
+
+child_end_msg:
+    .ASCIIZ "CHILD DONE\r\n"
+
+sleep_error_msg:
+    .ASCIIZ "SLEEP FAIL\r\n"
 
 fork_error_msg:
-    .ASCIIZ "fork: error\r\n"
-
-fork_error_msg_len:
-    .WORD 13
+    .ASCIIZ "FORK FAIL\r\n"
 
 ; ================================================================
 ; Built-in read-only TARFS image
