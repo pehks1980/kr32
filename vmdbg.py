@@ -15,6 +15,8 @@ except ImportError:
 
 def parse_int(value):
     try:
+        if value and all(ch in "0123456789abcdefABCDEF" for ch in value):
+            return int(value, 16)
         return int(value, 0)
     except ValueError:
         raise argparse.ArgumentTypeError(f"invalid integer: {value}")
@@ -81,6 +83,29 @@ class VMDbgShell(cmd.Cmd):
             print(f"step {i+1}: pc=0x{self.cpu.pc:08X} stop_reason={self.cpu.stop_reason}")
             if not cont:
                 break
+
+    def do_next(self, args):
+        "next        - step over BL by running to the next instruction"
+        pc = self.cpu.pc
+        instr = self.cpu.mem_peek_u32(pc, access="x")
+        if instr is None:
+            return self.do_step("1")
+        op = (instr >> 24) & 0xFF
+        if op != 0x30:
+            return self.do_step("1")
+        target_pc = pc + (8 if self.cpu.mem_peek_u32(pc + 4, access="x") is not None else 4)
+        had_bp = target_pc in self.cpu.breakpoints
+        if not had_bp:
+            self.cpu.add_breakpoint(target_pc)
+        try:
+            self.cpu.stop_reason = None
+            self.cpu.stop_info = None
+            self.cpu.running = True
+            self.cpu.run(self.cpu.pc, trace=self.trace)
+            print(f"stepped over BL: pc=0x{self.cpu.pc:08X} stop_reason={self.cpu.stop_reason}")
+        finally:
+            if not had_bp:
+                self.cpu.clear_breakpoint(target_pc)
 
     def do_break(self, args):
         "break ADDR    - add a breakpoint at ADDR"
@@ -174,14 +199,28 @@ class VMDbgShell(cmd.Cmd):
         print(f"Z={int(self.cpu.Z)} N={int(self.cpu.N)} C={int(self.cpu.C)} V={int(self.cpu.V)}")
 
     def do_mem(self, args):
-        "mem ADDR SIZE - dump memory bytes at ADDR"
+        "mem ADDR [SIZE] - dump physical memory bytes at PA (default 128)"
         parts = shlex.split(args)
-        if len(parts) != 2:
-            print("usage: mem ADDR SIZE")
+        if len(parts) not in (1, 2):
+            print("usage: mem ADDR [SIZE]")
             return
         try:
             addr = parse_int(parts[0])
-            size = parse_int(parts[1])
+            size = parse_int(parts[1]) if len(parts) == 2 else 128
+        except argparse.ArgumentTypeError as exc:
+            print(exc)
+            return
+        self.cpu.physical_hexdump(addr, size)
+
+    def do_vm(self, args):
+        "vm ADDR [SIZE] - dump virtual memory bytes at VA (default 128)"
+        parts = shlex.split(args)
+        if len(parts) not in (1, 2):
+            print("usage: vm ADDR [SIZE]")
+            return
+        try:
+            addr = parse_int(parts[0])
+            size = parse_int(parts[1]) if len(parts) == 2 else 128
         except argparse.ArgumentTypeError as exc:
             print(exc)
             return
@@ -247,6 +286,7 @@ def main():
     parser.add_argument("--trace", action="store_true", help="enable CPU trace during execution")
     parser.add_argument("--run", action="store_true", help="run immediately until breakpoint/halt before entering shell")
     parser.add_argument("--tui", action="store_true", help="use curses-based TUI debugger")
+    parser.add_argument("--key-probe", action="store_true", help="start the TUI in key probe mode")
     args = parser.parse_args()
 
     image_path = Path(args.image)
@@ -280,7 +320,7 @@ def main():
     if args.tui:
         if KM32TUI is None:
             raise SystemExit("TUI support is unavailable. Make sure vmdbg_tui.py is present.")
-        ui = KM32TUI(cpu, trace=args.trace)
+        ui = KM32TUI(cpu, trace=args.trace, key_probe=args.key_probe)
         if args.run:
             cpu.stop_reason = None
             cpu.stop_info = None

@@ -14,6 +14,7 @@
 ;   R13       = SP (stack pointer)
 ;   R14       = FP (frame pointer)
 ;   R15       = LR (return link)
+;   Map check  - Last Adress: 0x0000A146  Last OS page 0x0000B000
 
 #include "errno.inc"
 

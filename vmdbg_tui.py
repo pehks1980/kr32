@@ -13,6 +13,8 @@ from vmp import CPU
 
 def parse_int(value):
     try:
+        if re.fullmatch(r"[0-9A-Fa-f]+", value):
+            return int(value, 16)
         return int(value, 0)
     except ValueError:
         raise ValueError(f"invalid integer: {value}")
@@ -28,11 +30,12 @@ def parse_watch_mem(value):
 
 
 class KM32TUI:
-    HELP_TEXT = "Enter/s=step r=run restart=reset t=toggle b=break cb=clear c=continue d=disasm m=mem i=info w=watch u=unwatch cw=unwatch regs=regs h=help q=quit"
+    HELP_TEXT = "Enter/s=step n=next r=run restart=reset t=toggle b=break cb=clear c=continue d=disasm m=mem i=info w=watch u=unwatch cw=unwatch v=toggle-view regs=regs h=help q=quit"
     HELP_LINES = [
         "Commands:",
         "  Enter         - step 1 instruction",
         "  s [N]         - step N instructions (default 1)",
+        "  n             - step over BL by running to the next PC",
         "  r             - run until breakpoint/watchpoint/halt",
         "  restart       - reload image and reset CPU state",
         "  t [ADDR]      - toggle breakpoint at ADDR or current PC",
@@ -40,9 +43,11 @@ class KM32TUI:
         "  cb INDEX      - clear breakpoint by index",
         "  c             - continue (alias for run)",
         "  d ADDR [CNT]  - disassemble CNT instructions from ADDR",
-        "  m ADDR SIZE   - dump memory at ADDR",
+        "  m ADDR [SIZE] - dump physical memory at PA (default 128 bytes)",
+        "  vm ADDR [SIZE] - dump virtual memory at VA (default 128 bytes)",
         "  i breakpoints - show breakpoint list",
         "  i watchpoints - show watchpoints",
+        "  v             - toggle listing pane layout",
         "  w reg N       - watch register N",
         "  w mem ADDR[:SIZE] - watch memory range",
         "  u INDEX       - remove watchpoint by index",
@@ -54,9 +59,10 @@ class KM32TUI:
 
     LISTING_ADDR_RE = re.compile(r"^0x([0-9A-Fa-f]{8})\s+(.*)$")
 
-    def __init__(self, cpu, trace=False, lst_path=None):
+    def __init__(self, cpu, trace=False, lst_path=None, key_probe=False):
         self.cpu = cpu
         self.trace = trace
+        self.key_probe = key_probe
         self.status = "Ready"
         self.cmd_history = []
         self.history_index = None
@@ -71,6 +77,11 @@ class KM32TUI:
         self.listing_lines = []
         self.listing_addr_to_index = {}
         self.listing_addrs = []
+        self.listing_focus = False
+        self.force_full_redraw = True
+        self.esc_pending = False
+        self.mem_view = None
+        self.probe_lines = ["Key probe mode", "Press keys to inspect codes. q to exit."]
         self._load_listing()
         self.prev_info_state = None
         # do not override CPU trace_output/quiet here; main() controls them
@@ -144,6 +155,9 @@ class KM32TUI:
         self.listing_addrs = sorted(self.listing_addr_to_index)
 
     def _loop(self):
+        if self.key_probe:
+            self._loop_key_probe()
+            return
         while True:
             if not self._draw():
                 if self._wait_for_resize_or_quit():
@@ -162,8 +176,53 @@ class KM32TUI:
         if timer is not None and hasattr(timer, "last_tick"):
             timer.last_tick = time.time()
 
+    def _loop_key_probe(self):
+        self.status = "key probe"
+        while True:
+            self._draw()
+            self.output_lines = self.probe_lines[-(self.output_win.getmaxyx()[0] - 2):]
+            self._draw_output()
+            self._draw_command_area()
+            self.stdscr.refresh()
+            self.disasm_win.refresh()
+            if self.list_win:
+                self.list_win.refresh()
+            self.info_win.refresh()
+            self.output_win.refresh()
+            self.cmd_win.refresh()
+            try:
+                ch = self.stdscr.get_wch()
+            except curses.error:
+                break
+            if isinstance(ch, str) and ch.lower() in ("q", "\x03"):
+                break
+            self.probe_lines.append(self._format_key_probe(ch))
+            self.status = "key probe"
+
+    def _format_key_probe(self, ch):
+        if isinstance(ch, str):
+            if ch == "\n":
+                return "KEY: '\\n' (Enter)"
+            if ch == "\r":
+                return "KEY: '\\r' (Carriage Return)"
+            if ch == "\t":
+                return "KEY: '\\t' (Tab)"
+            if ch == "\x1b":
+                return "KEY: ESC"
+            if ch == "\x7f":
+                return "KEY: DEL/Backspace"
+            if ch.isprintable():
+                return f"KEY: {ch!r} ord={ord(ch)}"
+            return f"KEY: {ch!r} ord={ord(ch)}"
+        return f"KEYCODE: {ch}"
+
     def _draw(self):
-        self.stdscr.erase()
+        if self.force_full_redraw:
+            self.stdscr.clear()
+            self.stdscr.clearok(True)
+            self.force_full_redraw = False
+        else:
+            self.stdscr.erase()
         max_y, max_x = self.stdscr.getmaxyx()
         info_w = max(24, min(40, max_x // 4))
         cmd_h = 4
@@ -184,8 +243,12 @@ class KM32TUI:
 
         show_listing = bool(self.listing_lines) and disasm_w >= 70
         if show_listing:
-            cpu_disasm_w = max(30, min(disasm_w // 2, 52))
-            list_w = disasm_w - cpu_disasm_w - 1
+            if self.listing_focus:
+                cpu_disasm_w = max(24, min(disasm_w // 4, 34))
+                list_w = disasm_w - cpu_disasm_w - 1
+            else:
+                cpu_disasm_w = max(30, min(disasm_w // 2, 52))
+                list_w = disasm_w - cpu_disasm_w - 1
             self.disasm_win = self.stdscr.subwin(top_h, cpu_disasm_w, 0, 0)
             self.list_win = self.stdscr.subwin(top_h, list_w, 0, cpu_disasm_w + 1)
         else:
@@ -277,6 +340,19 @@ class KM32TUI:
             except curses.error:
                 return None
             if isinstance(ch, str):
+                if self.esc_pending and ch in ("\n", "\r"):
+                    self.esc_pending = False
+                    command = "n"
+                    self.cmd_history.append(command)
+                    self.history_index = len(self.cmd_history)
+                    return command
+                self.esc_pending = False
+                if ch == "\x1b":
+                    self.esc_pending = True
+                    self._draw_command_line(prompt, buffer, cursor_pos)
+                    self.cmd_win.addstr(2, 1, self.HELP_TEXT[: self.cmd_win.getmaxyx()[1] - 2])
+                    self.cmd_win.refresh()
+                    continue
                 if ch in ("\n", "\r"):
                     command = "".join(buffer).strip()
                     if command:
@@ -633,6 +709,9 @@ class KM32TUI:
                     count = parse_int(parts[1])
                 self._step(count)
                 return False
+            if op in ("n", "next"):
+                self._step_over()
+                return False
             if op in ("restart", "reset"):
                 self.cpu.reset()
                 self.status = f"restarted debug session, PC=0x{self.cpu.pc:08X}"
@@ -687,8 +766,20 @@ class KM32TUI:
                 return False
             if op in ("m", "mem") and len(parts) == 3:
                 addr = parse_int(parts[1])
-                size = parse_int(parts[2])
-                self._show_mem(addr, size)
+                size = parse_int(parts[2]) if len(parts) >= 3 else 128
+                self.mem_view = ("phys", addr, size)
+                self._show_phys_mem(addr, size)
+                return False
+            if op in ("m", "mem") and len(parts) == 2:
+                addr = parse_int(parts[1])
+                self.mem_view = ("phys", addr, 128)
+                self._show_phys_mem(addr, 128)
+                return False
+            if op == "vm" and len(parts) in (2, 3):
+                addr = parse_int(parts[1])
+                size = parse_int(parts[2]) if len(parts) == 3 else 128
+                self.mem_view = ("virt", addr, size)
+                self._show_virt_mem(addr, size)
                 return False
             if op in ("d", "disasm") and len(parts) >= 2:
                 addr = parse_int(parts[1])
@@ -715,6 +806,12 @@ class KM32TUI:
                 self.cpu.clear_watchpoint(idx)
                 self.status = f"unwatched {idx}"
                 return False
+            if op in ("v", "view"):
+                self.listing_focus = not self.listing_focus
+                self.status = "listing pane focused" if self.listing_focus else "split view"
+                self.output_lines = [self.status]
+                self.force_full_redraw = True
+                return False
             if op == "regs":
                 self.status = "reg values shown"
                 self.output_lines = [f"R{i}=0x{self.cpu.r(i):08X}" for i in range(16)]
@@ -730,10 +827,77 @@ class KM32TUI:
             cont = self.cpu.step(trace=self.trace)
             if not cont:
                 break
+        self._refresh_mem_view()
         self.status = f"stepped {count} instr{'s' if count != 1 else ''}, PC=0x{self.cpu.pc:08X}"
-        self.output_lines = [self.status]
+        if self.mem_view is None:
+            self.output_lines = [self.status]
 
-    def _show_mem(self, addr, size):
+    def _instruction_length_at(self, pc):
+        instr = self.cpu.mem_peek_u32(pc, access="x")
+        if instr is None:
+            return 4
+        op = (instr >> 24) & 0xFF
+        if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
+            ext = self.cpu.mem_peek_u32(pc + 4, access="x")
+            return 8 if ext is not None else 4
+        return 4
+
+    def _step_over(self):
+        pc = self.cpu.pc
+        instr = self.cpu.mem_peek_u32(pc, access="x")
+        if instr is None:
+            self._step(1)
+            return
+        op = (instr >> 24) & 0xFF
+        if op != 0x30:
+            self._step(1)
+            return
+        target_pc = pc + self._instruction_length_at(pc)
+        had_bp = target_pc in self.cpu.breakpoints
+        if not had_bp:
+            self.cpu.add_breakpoint(target_pc)
+        try:
+            self.cpu.stop_reason = None
+            self.cpu.stop_info = None
+            self.cpu.running = True
+            self.cpu.run(self.cpu.pc, trace=self.trace)
+            self._refresh_mem_view()
+            self.status = f"stepped over BL, PC=0x{self.cpu.pc:08X}"
+            if self.mem_view is None:
+                self.output_lines = [self.status]
+        finally:
+            if not had_bp:
+                self.cpu.clear_breakpoint(target_pc)
+
+    def _refresh_mem_view(self):
+        if self.mem_view is None:
+            return
+        kind, addr, size = self.mem_view
+        if kind == "phys":
+            self._show_phys_mem(addr, size)
+        else:
+            self._show_virt_mem(addr, size)
+
+    def _show_phys_mem(self, addr, size):
+        lines = []
+        for offset in range(0, size, 16):
+            row = addr + offset
+            chunk = []
+            for i in range(16):
+                if offset + i < size:
+                    paddr = row + i
+                    if 0 <= paddr < len(self.cpu.physical_memory):
+                        chunk.append(self.cpu.physical_memory[paddr])
+                    else:
+                        chunk.append(None)
+            hexvals = " ".join("--" if v is None else f"{v:02X}" for v in chunk)
+            hexvals = hexvals.ljust(16 * 3 - 1)
+            ascii_part = "".join("." if v is None or not (32 <= v <= 126) else chr(v) for v in chunk)
+            lines.append(f"0x{row:08X}: {hexvals}  |{ascii_part}|")
+        self.status = "mem"
+        self.output_lines = lines[: self.output_win.getmaxyx()[0] - 2]
+
+    def _show_virt_mem(self, addr, size):
         lines = []
         for offset in range(0, size, 16):
             row = addr + offset
@@ -743,8 +907,10 @@ class KM32TUI:
                     value = self.cpu.mem_peek_u8(row + i, "r")
                     chunk.append(value)
             hexvals = " ".join("--" if v is None else f"{v:02X}" for v in chunk)
-            lines.append(f"0x{row:08X}: {hexvals}")
-        self.status = "mem"
+            hexvals = hexvals.ljust(16 * 3 - 1)
+            ascii_part = "".join("." if v is None or not (32 <= v <= 126) else chr(v) for v in chunk)
+            lines.append(f"0x{row:08X}: {hexvals}  |{ascii_part}|")
+        self.status = "vm"
         self.output_lines = lines[: self.output_win.getmaxyx()[0] - 2]
 
     def _show_disasm_block(self, addr, count):
