@@ -766,28 +766,249 @@ syscall_yield:
     ; switching, while SP still points at the yielding task's trapframe.
 
     B schedule_and_switch
-
+;================================================================   
+; syscall_exit: - finish user process
+; in R1 - exit code
+;
+;1. Child calls exit()
+;2. exit() stores exit code in TASK_EXIT_CODE for parent task to collect
+;3. exit() marks child as ZOMBIE
+;4. exit() finds parent task
+;5. exit() checks if parent is waiting for this child
+;6. If yes, exit() calls waitq_wake_bitmask on child_waitq
+;7. waitq_wake_bitmask:
+;   - Removes parent from child_waitq
+;   - Marks parent as TASK_READY
+;8. exit() calls schedule_and_switch
+;9. Scheduler picks parent (now READY)
+;10. Parent resumes right after BL schedule_call (in its waitforpid)
+;11. Parent re-checks if child is ZOMBIE
+;12. Parent reaps the child and returns
+;================================================================
 syscall_exit:
-    ;================================================================               
-    ; basically a call from task to remove from scheduler so it wont be executed
-    ; Mark the current task inactive and immediately switch to another task.
-    ; A later scheduler improvement should detect "no runnable tasks".
-    ;================================================================
+    ; Get exit code from R1
+    LDW R8 [SP + TF_R1]        ; R8 = exit code
 
     GET_CURR_TASK_IDX R2
     GET_TASK_PTR R5, R2
 
+    ; Store exit code in child task struct for parent to collect in waitforpid
+    TASK_SET_EXIT_CODE R5, R8  ; Save exit code
+
     PUSH R5
     MOV R1 R5
-    BL task_close_fds      ; close all open file descriptors of this task (if any) to free file_pool resources
+    BL task_close_fds          ; close all open file descriptors of this task (if any) to free file_pool resources
     POP R5
 
-    ; Do not destroy the current task here: SP still points into its kernel
-    ; stack. Mark it unrecoverable and let idle_task reclaim it later while
-    ; running on a different stack.
+    ; Mark this child as zombie (still exists but not runnable)
     TASK_SET_STATE R5, TASK_ZOMBIE
     TASK_SET_WAIT R5, WAIT_NONE
+    
+    ; Wake parent if it's waiting
+    TASK_GET_PPID R6, R5       ; R6 = parent PID 
+    
+    ; find parent task by PPID
+    MOV R1 R6
+    LI R2 0                    ; Search by PID (parent's PID)
+    BL task_find               ; R1 = found parent task*
+    CMP R1 0
+    BEQ no_parent_waiting
+    MOV R7 R1                  ; R7 = parent task*
+    MOV R11 R2                 ; save parent task index for bitmask
+
+    ;Check if parent is waiting for this child
+    TASK_GET_WAIT_CHILD R8, R7 ; Child PID that parent R7 ptr is waiting for
+    TASK_GET_PID R9, R5        ; This child's R5 ptr PID
+    
+    LI R10 -1
+    CMP R8 R10                 ; if parent is waiting for any child (-1), then wake it up
+    BEQ wake_parent            ; 
+    
+    CMP R8 R9
+    BNE no_parent_waiting      ; parent is waiting for a different child, do not wake it up
+
+wake_parent:
+    ; Find parent's task index for bitmask
+    ; we already have parent task in R11
+    
+    LI R9 1
+    SHL R9 R9 R11               ; bit for parent task
+    
+    LI R1 child_waitq
+    MOV R2 R9
+    BL waitq_wake_bitmask       ;unblock parent task waiting for this child
+
+no_parent_waiting:
     B schedule_and_switch
+
+;=================================================================
+; syscall_waitpid - wait for a child process
+;
+; Input: R1 = PID of child to wait for (or -1 for any child)
+;        R2 = pointer to status variable (user space)
+;
+; Returns: R1 = PID of child that exited, or -1 on error, 
+; pointer to status variable is updated with exit code if not NULL
+;=================================================================
+
+syscall_waitpid:
+    LDW R8 [SP + TF_R1]        ; R8 = pid to wait for
+    LDW R9 [SP + TF_R2]        ; R9 = status pointer
+    
+    ; Validate status pointer
+    CMP R9 0
+    BEQ waitpid_validate_done
+    MOV R1 R9
+    LI R2 4
+    LI R3 1
+    BL user_buffer_valid_range
+    CMP R1 1
+    BNE waitpid_badptr
+
+waitpid_validate_done:
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_PID R10, R5       ; R10 = current (parent proc) PID
+
+    ; if search for any child
+    LI  R2 -1
+    CMP R8 R2
+    BNE find_child_by_pid
+    ; set task_find to search for any child of this parent
+    MOV R1 R10                  ; R1 = parent PID (PPID in child task)
+    LI  R2 1                    ; search by PPID
+    BL task_find               ; R1 = found child task*
+    CMP R1 0
+    BEQ waitpid_no_child        ; No any child with PPID = this parent PID found
+    ;R1 child task* found
+    B find_any_child_found
+find_child_by_pid:
+    ; Search for child task by PID
+    MOV R1 R8                  ; R1 = child PID to search for
+    LI R2 0                    ; Search by PID
+    BL task_find               ; R1 = found child task*
+    CMP R1 0
+    BEQ waitpid_no_child        ; No such child
+
+find_any_child_found:
+
+    MOV R7 R1                   ; R7 = child task*
+
+    ; Verify it's actually our child by its PPID fld
+    TASK_GET_PPID R1, R7
+    CMP R1 R10
+    BNE waitpid_no_child
+    ; R7 = child task*
+    ; check its state, if ZOMBIE, we can reap it and return its exit code
+    TASK_GET_STATE R1, R7   
+    CMP R1 TASK_ZOMBIE
+    BEQ waitpid_reap_child
+
+    ; Child running - block parent
+    TASK_SET_WAIT_CHILD R5, R12
+    
+    LI R1 child_waitq           ; child_waitq ptr
+    LI R2 WAIT_CHILD            ; reason
+    LI R3 TASK_SLEEPING         ; state to set for current task
+    BL waitq_prepare_sleep
+    
+    BL waitq_sleep_current     ; freeze the current task
+
+    ; will resume here when child exits and wakes us up
+
+waitpid_reap_child:
+    ; Get exit code from child task
+    TASK_GET_EXIT_CODE R2, R7
+
+    ; If status pointer is not NULL, write exit code to user space
+    CMP R9 0
+    BEQ waitpid_reap_done
+
+    MOV R1 R9                  ; R1 = user status pointer
+    MOV R2 R2                  ; R2 = exit code
+    MOV R3 4                   ; R3 = size of exit code
+    BL copy_to_user            ; write exit code to user space
+
+waitpid_reap_done:
+    TASK_GET_PID R10, R7       ; get child's PID
+    MOV R1 R7                  ; R1 = child task*
+    BL task_destroy
+
+    STW R10 [SP + TF_R1]        ; save child's PID to trapframe for return
+    B trap_restore
+    
+waitpid_no_child:
+    LI R1 ERR_CHILD
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+waitpid_badptr:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+
+;================================================================
+; task_find - find a task by PID or PPID
+; 
+; Input:
+;   R1 = PID or PPID to search for
+;   R2 = search mode:
+;        0 = search by PID
+;        1 = search by PPID
+; 
+; Returns:
+;   R1 = task* if found and R2 = task index
+;   R1 = 0 if not found
+;================================================================
+task_find:
+    PUSH R5
+    PUSH R6
+    
+    MOV R5 R2                  ; Save search mode
+    LI R2 0                    ; Task index
+    LI R3 MAX_TASKS
+    
+task_find_loop:
+    CMP R2 R3
+    BGE task_find_not_found
+    
+    GET_TASK_PTR R4, R2
+    TASK_GET_STATE R6, R4
+    CMP R6 TASK_DEAD
+    BEQ task_find_next         ; Skip dead tasks
+    
+    ; Search based on mode
+    CMP R5 0
+    BEQ task_find_by_pid
+    
+    ; Search by PPID
+    TASK_GET_PPID R6, R4
+    CMP R6 R1
+    BEQ task_find_found
+    B task_find_next
+    
+task_find_by_pid:
+    TASK_GET_PID R6, R4
+    CMP R6 R1
+    BEQ task_find_found
+    
+task_find_next:
+    ADD R2 R2 1
+    B task_find_loop
+    
+task_find_found:
+    MOV R1 R4                  ; Return task pointer
+    MOV R2 R2                  ; Return task index 
+    POP R6
+    POP R5
+    RET
+    
+task_find_not_found:
+    LI R1 0
+    POP R6
+    POP R5
+    RET
 
 syscall_getpid:
     ;================================================================
@@ -844,6 +1065,55 @@ syscall_open:
 open_fail_fault:
     LI R1 ERR_FAULT
     STW R1 [SP + TF_R1]     ;file not opened ERR
+    B trap_restore
+
+
+syscall_sleep:
+    ;================================================================
+    ; sleep(ms)
+    ; R1 = milliseconds to sleep
+    ; 
+    ; Returns:
+    ;   R1 = 0 on success (slept full duration)
+    ;   R1 = -1 on error (invalid time)
+    ;================================================================
+    
+    LDW R8 [SP + TF_R1]        ; R8 = milliseconds
+    
+    CMP R8 0
+    BLE sleep_invalid          ; must be positive
+    
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    
+    ; Calculate wake time = current time + requested ms
+    LI R3 timer_ticks
+    LDW R6 [R3]                ; current ticks (2ms per tick)
+    
+    ; Convert ms to ticks: ms / 2
+    SHR R7 R8 1                ; R7 = ticks to sleep
+    
+    ADD R6 R6 R7               ; R6 = wake time in ticks
+    
+    ; Store wake time in task struct
+    TASK_SET_WAKE_TIME R5, R6
+    
+    ; Use existing wait queue infrastructure
+    LI R1 sleep_waitq           ; sleep_waitq ptr
+    LI R2 WAIT_SLEEP            ; reason
+    LI R3 TASK_SLEEPING         ; new state (if other then blocked_io)
+    BL waitq_prepare_sleep     ; This marks task as TASK_SLEEP and adds it to the sleep_waitq
+
+    BL waitq_sleep_current     ; freeze the current task in kernel side until it is woken up by the timer interrupt handler when the wake time is reached
+    
+    ; Return 0 (will be set when woken)
+    LI R1 0
+    STW R1 [SP + TF_R1]
+    B trap_restore
+
+sleep_invalid:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
     B trap_restore
 
 
@@ -2901,7 +3171,52 @@ handle_timer_irq:
     LDW R2 [R1]
     ADD R2 R2 1
     STW R2 [R1]
+
+    ;================================================================
+    ; Wake sleeping tasks whose time has expired
+    ;================================================================
     
+    LI R1 sleep_waitq
+    LDW R8 [R1]                ; R8 = current sleep_waitq mask
+    LI R9 0                    ; R9 = tasks to wake bitmask
+    LI R3 0                    ; task index
+
+timer_wake_scan:
+    CMP R3 MAX_TASKS
+    BGE timer_wake_scan_done
+    
+    ; Check if this task is in the sleep wait queue
+    LI R6 1
+    SHL R6 R6 R3               ; bit for this task
+    AND R7 R8 R6
+    CMP R7 0
+    BEQ timer_wake_next        ; not in sleep queue
+    
+    ; Task is sleeping, check if it's time to wake
+    GET_TASK_PTR R5, R3
+    TASK_GET_WAKE_TIME R7, R5
+    CMP R2 R7                  ; current time >= wake time?
+    BLT timer_wake_next
+    
+    ; Mark this task for wakeup
+    OR R9 R9 R6                 ; add to wake bitmask bitwize
+
+timer_wake_next:
+    ADD R3 R3 1
+    B timer_wake_scan
+
+timer_wake_scan_done:
+    ; If no tasks to wake, skip
+    CMP R9 0
+    BEQ timer_no_wake
+    
+    ; Wake the expired tasks using our new function
+    LI R1 sleep_waitq
+    MOV R2 R9
+    BL waitq_wake_bitmask 
+
+timer_no_wake:
+
     ; Yield the CPU (reschedule and switch tasks)
     B schedule_and_switch
 
@@ -3022,7 +3337,10 @@ trap_restore:
 .EQU SYS_SBRK,     12      ; NEW: increment program break - memory allocation
 .EQU SYS_EXECVE,   13      ; NEW: execute a new program
 .EQU SYS_FORK,     14      ; NEW: clone the current task
-.EQU SYS_COUNT,    15      ; count of syscalls
+.EQU SYS_SLEEP,     15      ; sleep for specified milliseconds
+.EQU SYS_WAITPID,   16      ; wait for child process to change state
+.EQU SYS_COUNT,     17      ; update count
+
 
 ;=============================================================
 ; Task States
@@ -3044,6 +3362,8 @@ trap_restore:
 .EQU WAIT_UART_TX,     2
 .EQU WAIT_PIPE_READ,   3
 .EQU WAIT_PIPE_WRITE,  4
+.EQU WAIT_SLEEP,       5    ; sleeping on timer
+.EQU WAIT_CHILD,       6    ; waiting for child to exit
 
 ;=============================================================
 ; Task resume modes
@@ -3085,9 +3405,12 @@ trap_restore:
     ; mapped at USER_CODE_VA, and stored here. The previous page is freed.
 .EQU TASK_USTACK_PAGE, 52     ; physical page backing fixed USER_STACK_VA
 .EQU TASK_KSTACK_PAGE, 56     ; identity-mapped physical kernel stack page
-.EQU TASK_PPID, 60            ; parent process ID for execve / inherited by children
+.EQU TASK_PPID,        60     ; parent process ID for execve / inherited by children
 .EQU TASK_BREAK,       64     ; current program break ptr
-.EQU TASK_SIZE       68
+.EQU TASK_WAKE_TIME,  68     ; absolute time when sleep expires
+.EQU TASK_EXIT_CODE,  72     ; exit code of terminated task
+.EQU TASK_WAIT_CHILD, 76     ; PID of child being waited for
+.EQU TASK_SIZE,       80     ; current task struc size
 
 
 
@@ -3234,7 +3557,7 @@ pipe_used:
     .SPACE MAX_PIPES * 4
 
 ;==============================================================
-; Wait queues owned by the UART console device
+; Wait queues for: UART console device / sleeping / waitpid
 ;==============================================================
 
 ; Separate queues are used for separate blocking conditions. A single UART
@@ -3245,6 +3568,14 @@ uart_rx_waitq:
 
 uart_tx_waitq:
     .WORD 0                    ; WQ_MASK: tasks waiting for TX_READY
+
+; Wait queue for sleeping tasks (woken by timer interrupt)
+sleep_waitq:
+    .WORD 0                    ; WQ_MASK: tasks sleeping on timer
+
+; Wait queue for parent tasks waiting for children to exit
+child_waitq:
+    .WORD 0                    ; WQ_MASK: parents waiting for children
 
 ; ==================================================
 ; VFS ops table struc
@@ -3948,17 +4279,19 @@ waitq_prepare_sleep:
     ;================================================================
     ; R1 = wait queue pointer
     ; R2 = WAIT_* reason for debug/task dumps
+    ; R3 = optional for sleep TASK_* state to set for this task (usually TASK_BLOCKED_IO)
     ;
     ; Adds the current task to the queue bitmask and marks it blocked.
     ; Device code must re-check hardware readiness after this call. If
     ; the condition is already true, call waitq_cancel_sleep_current.
     ;================================================================
-
+    PUSH R8
     PUSH R9
     PUSH R10
-
+    
     MOV R9 R1                  ; preserve wait queue pointer
     MOV R10 R2                 ; preserve debug wait reason
+    MOV R8 R3                  ; preserve task state to set
 
     GET_CURR_TASK_IDX R2       ; R2 = current task index
 
@@ -3972,8 +4305,15 @@ waitq_prepare_sleep:
     TASK_SET_STATE R5, TASK_BLOCKED_IO
     TASK_SET_WAIT R5, R10
 
+; addition trick if R3 is set as TASK_SLEEPING then we also set the state to TASK_SLEEPING for syscall sleep/waitpid
+    CMP R8 TASK_SLEEPING
+    BNE waitq_prepare_done
+    TASK_SET_STATE R5, TASK_SLEEPING
+
+waitq_prepare_done:
     POP R10
     POP R9
+    POP R8
     RET
 
 waitq_cancel_sleep_current:
@@ -4062,33 +4402,46 @@ wq_wake_done:
     POP LR
     RET
 
-; just for info ref here actual .equ in the beginning
-; flags def
-;EQU FD_FLAG_READ,    1
-;EQU FD_FLAG_WRITE,   2
+waitq_wake_bitmask:
+    ;================================================================
+    ; R1 = wait queue pointer
+    ; R2 = bitmask of tasks to wake (1 = wake, 0 = ignore)
+    ; Wakes every task currently recorded in the R2 bitmask. 
+    ;================================================================
 
-; file struc
-;EQU FILE_OPS,      0
-;EQU FILE_PRIVATE,  4
-;EQU FILE_OFFSET,   8
-;EQU FILE_FLAGS,    12
-;EQU FILE_SIZE,     16
+    PUSH LR
 
-; ops
-;EQU FOPS_READ,     0
-;EQU FOPS_WRITE,    4
-;EQU FOPS_SIZE,     8
+    MOV R9 R1
+    LDW R8 [R9 + WQ_MASK]      ; snapshot queued tasks
+    MOV R10 R2                 ;
+    NOT R10 R10                ; invert bitmask to clear only specified tasks
+    AND R10 R8 R10             ; clear only specified tasks
+    STW R10 [R9 + WQ_MASK]     ; update queue entries to remove (tobe) woken  tasks
 
-; private con_device
-;EQU UARTDEV_RX_QUEUE, 0
-;EQU UARTDEV_TX_QUEUE, 4
-;EQU UARTDEV_MMIO,     8
-;EQU UARTDEV_SIZE,     12
+    MOV R8 R2                  ; R8 = bitmask of tasks to wake
+    LI R2 0                    ; task index
 
-; fd
-;EQU STDIN_FD,       0
-;EQU STDOUT_FD,      1
-;EQU STDERR_FD,      2
+wq_wake_b_loop:
+    CMP R2 MAX_TASKS           ; check if we processed all tasks in bitmask
+    BGE wq_wake_b_done
+
+    LI R3 1 
+    SHL R3 R3 R2               ; R3 = bit for task R2
+    AND R4 R8 R3               ; check if this task is in the wake bitmask
+    CMP R4 0
+    BEQ wq_wake_b_next
+
+    GET_TASK_PTR R5, R2        ; wake task R2 if its in the bitmask
+    TASK_SET_STATE R5, TASK_READY
+    TASK_SET_WAIT R5, WAIT_NONE
+
+wq_wake_b_next:
+    ADD R2 R2 1
+    B wq_wake_b_loop
+
+wq_wake_b_done:
+    POP LR
+    RET
 
 ;==============================================================
 ; Stack tops
