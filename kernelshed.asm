@@ -968,12 +968,13 @@ waitpid_badptr:
 task_find:
     PUSH R5
     PUSH R6
+    PUSH R7
     
     MOV R5 R2                  ; Save search mode
+    MOV R7 R1                  ; Save PID/PPID
     LI R2 0                    ; Task index
-    LI R3 MAX_TASKS
-    
 task_find_loop:
+    LI R3 MAX_TASKS
     CMP R2 R3
     BGE task_find_not_found
     
@@ -988,13 +989,13 @@ task_find_loop:
     
     ; Search by PPID
     TASK_GET_PPID R6, R4
-    CMP R6 R1
+    CMP R6 R7
     BEQ task_find_found
     B task_find_next
     
 task_find_by_pid:
     TASK_GET_PID R6, R4
-    CMP R6 R1
+    CMP R6 R7
     BEQ task_find_found
     
 task_find_next:
@@ -1003,13 +1004,15 @@ task_find_next:
     
 task_find_found:
     MOV R1 R4                  ; Return task pointer
-    MOV R2 R2                  ; Return task index 
+    MOV R2 R2                  ; Return task index
+    POP R7
     POP R6
     POP R5
     RET
     
 task_find_not_found:
     LI R1 0
+    POP R7
     POP R6
     POP R5
     RET
@@ -2955,6 +2958,11 @@ user_buffer_valid_range:
     ; - each page spanned by the buffer must be present (P) and user-accessible (U) in the page table
     ; - if access type is write, pages must also have the writable (W) bit set
     ;================================================================
+    PUSH R5
+    PUSH R6
+    PUSH R7
+    PUSH R8
+    PUSH R9
     PUSH R10
     PUSH R11
     PUSH R12
@@ -3028,6 +3036,11 @@ uv_valid:
     POP R12
     POP R11
     POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP R5
     RET
 
 uv_invalid:
@@ -3036,6 +3049,11 @@ uv_invalid:
     POP R12
     POP R11
     POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP R5
     RET
 
 copy_from_user:
@@ -3047,6 +3065,9 @@ copy_from_user:
     ;================================================================
 
    ; DEBUG 2
+    PUSH R5
+    PUSH R6
+    PUSH R7
     LI R5 0
 cfu_head:
     CMP R2 0
@@ -3084,6 +3105,9 @@ cfu_tail:
     B cfu_tail
 cfu_done:
     MOV R1 R5
+    POP R7
+    POP R6
+    POP R5
     RET
 
 copy_to_user:
@@ -3095,6 +3119,9 @@ copy_to_user:
     ;================================================================
 
    ; DEBUG 2
+    PUSH R5
+    PUSH R6
+    PUSH R7
     LI R5 0
 ctu_head:
     CMP R2 0
@@ -3132,6 +3159,9 @@ ctu_tail:
     B ctu_tail
 ctu_done:
     MOV R1 R5
+    POP R7
+    POP R6
+    POP R5
     RET
 
 handle_debug:
