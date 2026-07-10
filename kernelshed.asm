@@ -2777,6 +2777,20 @@ uart_write_kernel:
     ; This is a simple synchronous write that blocks until all bytes are sent.
     ;================================================================
 
+    ; mutex for write to console lock
+    PUSH R1
+    PUSH R2
+    PUSH R3
+    
+    ; Lock console mutex
+    BL console_lock
+    
+    ; Write to UART
+    POP R3
+    POP R2
+    POP R1
+
+
     LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
     LI R5 0                     ; index = 0 (bytes written so far)
 
@@ -2797,6 +2811,15 @@ dcw_poll_tx:
 
 dcw_done:
     MOV R1 R5                   ; return number of bytes written
+
+
+ ; Unlock console mutex for exclusive write to uart device
+    PUSH R1
+    BL console_unlock
+    POP R1
+
+
+
     RET
 
 null_read:
@@ -3386,7 +3409,7 @@ trap_restore:
 .EQU TASK_BLOCKED_IO,  3    ; blocked on I/O operation
 .EQU TASK_SLEEPING,    4    ; sleeping/waiting
 .EQU TASK_ZOMBIE,      5    ; terminated but not yet reaped
-
+.EQU TASK_WAIT_MUTEX,  6    ; waiting for mutex
 ;=============================================================
 ; Task wait reasons
 ;=============================================================
@@ -3398,7 +3421,7 @@ trap_restore:
 .EQU WAIT_PIPE_WRITE,  4
 .EQU WAIT_SLEEP,       5    ; sleeping on timer
 .EQU WAIT_CHILD,       6    ; waiting for child to exit
-
+.EQU WAIT_MUTEX,       7    ; wait for mutex
 ;=============================================================
 ; Task resume modes
 ;=============================================================
@@ -6246,6 +6269,245 @@ task_alloc_loop:
 task_alloc_found:                           ;R1 points to free task slot
 
     RET
+
+
+; ================================================================
+; SIMPLE MUTEX IMPLEMENTATION
+; ================================================================
+
+; Mutex structure offsets
+.EQU MUTEX_OWNER,     0    ; task* of current owner (0 if unlocked)
+.EQU MUTEX_WAITQ,     4    ; wait queue of tasks waiting for this mutex
+.EQU MUTEX_SIZE,      8
+
+; ================================================================
+; Console mutex instance
+; ================================================================
+
+console_mutex:
+    .WORD 0              ; owner (0 = unlocked)
+    .WORD 0              ; wait queue (bitmask of waiting tasks)
+
+; ================================================================
+; mutex_init - Initialize a mutex
+; R1 = mutex pointer
+; ================================================================
+mutex_init:
+    PUSH R2
+    
+    LI R2 0
+    STW R2 [R1 + MUTEX_OWNER]      ; owner = NULL
+    STW R2 [R1 + MUTEX_WAITQ]      ; waitq = 0 (empty)
+    
+    POP R2
+    RET
+
+; ================================================================
+; mutex_lock - Acquire a mutex (blocks if already locked)
+; R1 = mutex pointer
+;
+;If (no one has the key):
+;    Take the key (become owner)
+;    Enter the room
+;Else:
+;    Get in line (add to wait queue)
+;    Go to sleep (scheduler runs other tasks)
+;    Wake up when key is available
+;    Try to take the key again
+; ================================================================
+
+mutex_lock:
+
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    
+    MOV R8 R1                  ; save mutex pointer
+    GET_CURR_TASK_IDX R9
+    GET_TASK_PTR R9, R9        ; R9 = current task*
+    
+mutex_lock_retry:
+    ; Check if mutex is already locked
+    LDW R10 [R8 + MUTEX_OWNER]
+    CMP R10 0
+    BEQ mutex_lock_acquire      ; if unlocked, acquire it
+    
+    ; this Mutex is locked by someone else - block
+    ; Add current task to mutex wait queue
+    MOV R1 R8
+    ADD R1 R1 MUTEX_WAITQ
+    
+    LI R2 WAIT_MUTEX
+    LI R3 TASK_WAIT_MUTEX
+    BL waitq_prepare_sleep
+    
+    ; Re-check if mutex became available while preparing sleep
+    LDW R10 [R8 + MUTEX_OWNER]
+    CMP R10 0
+    BEQ mutex_lock_wake
+    
+    ; Still locked - go to sleep
+    BL waitq_sleep_current
+    
+    ; Woken up - try to acquire again
+    B mutex_lock_retry
+
+mutex_lock_wake:
+    ; Mutex became available, cancel sleep and acquire
+    MOV R1 R8
+    ADD R1 R1 MUTEX_WAITQ
+    BL waitq_cancel_sleep_current
+    
+    B mutex_lock_retry
+
+mutex_lock_acquire:
+    ; Disable interrupts to prevent race conditions
+    DISABLEINT
+    
+    ; Double-check it's still unlocked
+    LDW R10 [R8 + MUTEX_OWNER]
+    CMP R10 0
+    BNE mutex_lock_race
+    
+    ; Set owner to current task
+    STW R9 [R8 + MUTEX_OWNER]
+    
+    ; Re-enable interrupts
+    ENABLEINT
+    
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+mutex_lock_race:
+    ; Someone else acquired it while interrupts were disabled
+    ENABLEINT
+    B mutex_lock_retry
+
+
+; ================================================================
+; mutex_unlock - Release a mutex
+; R1 = mutex pointer
+; If (I am the owner):
+;    Give up the key (owner = NULL)
+;     If (someone is waiting):
+;        Wake up the first person in line
+;        They will try to take the key
+; ================================================================
+mutex_unlock:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    
+    MOV  R8 R1                  ; save mutex pointer
+    GET_CURR_TASK_IDX R9
+    GET_TASK_PTR R9, R9        ; R9 = current task*
+    
+    ; Verify ownership
+    LDW  R10 [R8 + MUTEX_OWNER]
+    CMP  R10 R9
+    BNE  mutex_unlock_error     ; Not owner - error!
+    
+    ; Release the mutex
+    LI  R10 0
+    STW R10 [R8 + MUTEX_OWNER]
+    
+    ; Wake one waiting task (if someone is waiting)
+    ; waky next one (of any waiting)
+    MOV R1 R8
+    ADD R1 R1 MUTEX_WAITQ
+    BL waitq_wake_one
+    
+mutex_unlock_done:
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+mutex_unlock_error:
+    ; Not owner - ignore (or panic)
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+; ================================================================
+; waitq_wake_one - Wake exactly one task from the wait queue
+; R1 = wait queue pointer
+; ================================================================
+waitq_wake_one:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    
+    MOV R8 R1                  ; wait queue pointer
+    LDW R9 [R8 + WQ_MASK]      ; current wait queue mask
+    
+    CMP R9 0
+    BEQ waitq_wake_one_done    ; No waiters
+    
+    ; Find the first waiting task
+    LI R10 0                   ; task index
+    
+waitq_wake_one_find:
+    CMP R10 MAX_TASKS
+    BGE waitq_wake_one_done
+    
+    LI R11 1
+    SHL R11 R11 R10            ; bit for this task
+    AND R2 R9 R11
+    CMP R2 0
+    BNE waitq_wake_one_found
+    
+    ADD R10 R10 1
+    B waitq_wake_one_find
+
+waitq_wake_one_found:
+    ; Clear this task's bit from the wait queue
+    NOT R11 R11
+    AND R9 R9 R11
+    STW R9 [R8 + WQ_MASK]
+    
+    ; Wake this task
+    GET_TASK_PTR R1, R10
+    TASK_SET_STATE R1, TASK_READY
+    TASK_SET_WAIT R1, WAIT_NONE
+
+waitq_wake_one_done:
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+; ================================================================
+; CONSOLE MUTEX WRAPPER FUNCTIONS
+; ================================================================
+
+console_lock:
+    PUSH LR
+    LI R1 console_mutex
+    BL mutex_lock
+    POP LR
+    RET
+
+console_unlock:
+    PUSH LR
+    LI R1 console_mutex
+    BL mutex_unlock
+    POP LR
+    RET
+
+
 
 ; ==================================================
 ; TAR index entry
