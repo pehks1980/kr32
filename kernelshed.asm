@@ -180,6 +180,9 @@ func KERNEL_START
         ; Initialize MMIO devices (PIC, PIT, UART)
         call init_mmio_devices
 
+        ;init console mutex
+        call init_console_mutex 
+
         ; Mount the built-in read-only TAR archive and show its index.
         LI R1 tarfs_start
         LI R2 tarfs_end
@@ -207,6 +210,17 @@ func KERNEL_START
         ; by preemptive switches.
         ; jump to task0 entry point (0x5000) through the same trap restore 
         B trap_restore
+
+; ================================================================
+; Initialize console mutex at boot time
+; ================================================================
+
+init_console_mutex:
+    PUSH LR
+    LI R1 console_mutex
+    BL mutex_init
+    POP LR
+    RET
 
 ; ================================================================
 ; Initialize IDT - ALL TRAPS GO TO ONE ENTRY
@@ -2776,6 +2790,7 @@ uart_write_kernel:
     ; Polls the UART_STATUS TX_READY bit before sending each byte.
     ; This is a simple synchronous write that blocks until all bytes are sent.
     ;================================================================
+    PUSH LR
 
     ; mutex for write to console lock
     PUSH R1
@@ -2819,7 +2834,7 @@ dcw_done:
     POP R1
 
 
-
+    POP LR
     RET
 
 null_read:
