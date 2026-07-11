@@ -558,7 +558,7 @@ syscall_execve:
     ;================================================================
     ; execve(path, argv, envp)
     ; R1 = user path
-    ; R2 = user argv
+    ; R2 = user argv (NULL-terminated vector of user string pointers)
     ; R3 = user envp (ignored for now)
     ;
     ; Overview:
@@ -666,14 +666,101 @@ execve_data_ok:
     BL page_free                    ; free the old exec code page now that the new one is committed
 
 execve_commit_done:
+    ; Build a fresh Unix-style initial stack:
+    ;   [argc][argv pointers...][NULL][string data...]
+    ; The new program can read argc/argv from the stack, and we also mirror
+    ; argc/argv into R1/R2 for convenience.
+
+    MOV R4 R2                      ; save original argv vector pointer
+    LI R6 0                        ; argc
+    LI R13 0                       ; total string bytes
+
+    ; First pass: count args and total string bytes.
+    MOV R7 R4
+execve_argv_count_loop:
+    CMP R7 0
+    BEQ execve_argv_count_done
+    LDW R8 [R7]
+    CMP R8 0
+    BEQ execve_argv_count_done
+
+    CMP R6 16                      ; keep the first version small and bounded
+    BGE execve_badfault
+
+    LI R10 0
+execve_arg_len_loop:
+    LDB R9 [R8 + R10]
+    CMP R9 0
+    BEQ execve_arg_len_done
+    ADD R10 R10 1
+    B execve_arg_len_loop
+
+execve_arg_len_done:
+    ADD R10 R10 1                  ; include trailing NUL
+    ADD R13 R13 R10
+    ADD R6 R6 1
+    ADD R7 R7 4
+    B execve_argv_count_loop
+
+execve_argv_count_done:
+    ; Compute stack layout.
+    ; string_base = USER_STACK_TOP - total_string_bytes
+    LI R14 USER_STACK_TOP
+    SUB R14 R14 R13
+
+    ; argv_base = string_base - (argc + 2) * 4
+    MOV R15 R6
+    ADD R15 R15 2
+    LI R1 4
+    MUL R15 R15 R1
+    SUB R15 R14 R15
+
+    ; Store argc at the start of the new stack.
+    STW R6 [R15]
+
+    ; Second pass: copy strings and write argv pointers.
+    MOV R7 R4                      ; source argv vector
+    MOV R8 R14                     ; string destination cursor
+    ADD R1 R15 4                   ; argv[0] slot
+
+execve_argv_copy_loop:
+    LDW R9 [R7]
+    CMP R9 0
+    BEQ execve_argv_copy_done
+
+    STW R8 [R1]                    ; argv[i] -> current string cursor
+
+    LI R10 0
+execve_argv_strcpy_loop:
+    LDB R11 [R9 + R10]
+    STB R11 [R8 + R10]
+    CMP R11 0
+    BEQ execve_argv_strcpy_done
+    ADD R10 R10 1
+    B execve_argv_strcpy_loop
+
+execve_argv_strcpy_done:
+    ADD R8 R8 R10
+    ADD R8 R8 1
+    ADD R7 R7 4
+    ADD R1 R1 4
+    B execve_argv_copy_loop
+
+execve_argv_copy_done:
+    LI R9 0
+    STW R9 [R1]                    ; argv[argc] = NULL
+
+    ; Make the new user entry point easy to consume:
+    ; R1 = argc, R2 = argv, R3 = envp (unused for now)
+    STW R6 [SP + TF_R1]
+    ADD R1 R15 4
+    STW R1 [SP + TF_R2]
+    LI R1 0
+    STW R1 [SP + TF_R3]
+    STW R15 [SP + TF_USP]
 
     ; Prepare a fresh user register state for the new program.
-    LI R1 USER_STACK_TOP             ; reset user stack pointer for the new image
-    STW R1 [SP + TF_USP]
     LI R1 0
-    STW R1 [SP + TF_R1]
-    STW R1 [SP + TF_R2]
-    STW R1 [SP + TF_R3]
     STW R1 [SP + TF_R4]
     STW R1 [SP + TF_R5]
     STW R1 [SP + TF_R6]
@@ -6861,75 +6948,4 @@ sleep_error_msg:
 fork_error_msg:
     .ASCIIZ "FORK FAIL\r\n"
 
-; ================================================================
-; Built-in read-only TARFS image
-;
-; The current TAR scanner only needs the POSIX name, size, and type
-; fields. These test headers intentionally leave checksum/owner fields
-; zero until the build grows a general binary-asset inclusion step.
-; ================================================================
-; in 512-byte header:
-;TAR_NAME_OFF = 0
-;TAR_SIZE_OFF = 124
-;TAR_TYPE_OFF = 156
-;TAR_HEADER_SIZE = 512
-
-;+-------------------+
-;| 512-byte header   |
-;+-------------------+
-;| file data         |
-;+-------------------+
-;| padding to 512    |
-;+-------------------+
-;| next header       |
-;+-------------------+
-
-.ORG 0xA0000
-tarfs_start:
-; etc/motd, 16 bytes         ; filename (offset 0)
-    .ASCIIZ "etc/motd"     
-    .SPACE 115              ; max filename is 124-1 bytes (0)
-    ; at offset 124  - size in octal text format
-    .ASCIIZ "00000000020"   
-    .SPACE 20               ; unused
-    ; at offset 156 type '0' for file
-    .ASCIIZ "0"             
-    .SPACE 354              ; header remainder till 512
-    ; file data 513th byte and so on.... file datain bytes (data starts  - header + 512)
-    ; to do = need to check why asciiz dont like comments!  ASM] pass1 error line 4889 addr 0x000A007C: invalid syntax
-    .ASCIIZ "Welcome to KR32\n" 
-    .SPACE 495              ;padding till 512 - data comes in block chunks of 512 bytes each so if data is less then 512 last small remainder chunk padds till 512 block
-
-; bin/sh, 10 bytes
-    .ASCIIZ "bin/sh"
-    .SPACE 117
-    .ASCIIZ "00000000012"
-    .SPACE 20
-    .ASCIIZ "0"
-    .SPACE 354
-    .ASCIIZ "#!/bin/sh\n"
-    .SPACE 501
-
-; bin/network/if-up, empty placeholder executable
-    .ASCIIZ "bin/network/if-up"
-    .SPACE 106
-    .ASCIIZ "00000000000"
-    .SPACE 20
-    .ASCIIZ "0"
-    .SPACE 354
-
-; /bin/exec_test, 52 bytes
-    .ASCIIZ "/bin/exec_test"
-    .SPACE 110
-    .ASCIIZ "00000000064"
-    .SPACE 20
-    .ASCIIZ "0"
-    .SPACE 354
-    ; file data (52 bytes, padded to 52)
-    .WORD 0x0F010000, 0x00007028, 0x0F020000, 0x00000001, 0x0F030000, 0x0000000E, 0x40040000, 0x40000000
-    .WORD 0x05000000, 0x0000701C, 0x43455845, 0x4F204556, 0x000A214B
-
-; TAR end marker: two zero headers by the tar file standart if tape head reads 2 zero blocks here then its the end of tar archive!
-    .SPACE 1024
-
-tarfs_end:
+#include "tarfs_generated.inc"
