@@ -5024,20 +5024,20 @@ init_scheduler:
     ; task A
     ; ----------------------------------
 
-  ;  LI R1 TASK_A_START
-  ;  LI R2 1
-  ;  LI R3 0
-  ;  BL task_create
+   ;  LI R1 TASK_A_START
+   ;  LI R2 1
+   ;  LI R3 0
+   ;  BL task_create
 
-  ;  CMP R1 0
-  ;  BEQ init_scheduler_fail
+   ;  CMP R1 0
+   ;  BEQ init_scheduler_fail
 
     ; ----------------------------------
     ; task B
     ; ----------------------------------
 
     LI R1 TASK_B_START
-    LI R2 1
+    LI R2 2
     LI R3 0
     BL task_create
 
@@ -5049,7 +5049,7 @@ init_scheduler:
     ; ----------------------------------
 
     LI R1 TASK_C_START
-    LI R2 2
+    LI R2 3
     LI R3 0
     BL task_create
 
@@ -5058,7 +5058,7 @@ init_scheduler:
 
     ; Initialize the dynamic fork PID allocator after bootstrap tasks.
     LI R1 task_count
-    LI R2 3
+    LI R2 4                     ; last task+1 for now
     STW R2 [R1]
 
     ; ------------------------------------------------
@@ -6492,9 +6492,9 @@ waitq_wake_one_found:
     STW R9 [R8 + WQ_MASK]
     
     ; Wake this task
-    GET_TASK_PTR R1, R10
-    TASK_SET_STATE R1, TASK_READY
-    TASK_SET_WAIT R1, WAIT_NONE
+    GET_TASK_PTR R5, R10
+    TASK_SET_STATE R5, TASK_READY
+    TASK_SET_WAIT R5, WAIT_NONE
 
 waitq_wake_one_done:
     POP R11
@@ -6560,7 +6560,7 @@ console_unlock:
 ; --TASK 1----------------------------------------------
 .ORG 0x19000
 TASK_A_START:
-    li R1 10
+    li R1 25
 write_loop1:
     push R1
     ;DEBUG 2
@@ -6742,12 +6742,22 @@ TASK_C_START:
     MOV R5 R1          ; Parent keeps child PID
 
 parent_process:
-    ; Parent process - wait for child
+    ; this is to test mutex in debug in mutual printing to vy several process to console
+    ; Parent process - keep both tasks active so console writes contend
+    LI R6 40
+pr_1:
+    cmp R6 0
+    Beq pr_fin
     LI R1 STDOUT_FD
     LI R2 parent_wait_msg
     LI R3 16
     SVC SYS_WRITE
-
+    LI R1 1
+    SVC SYS_SLEEP
+    sub R6 R6 1
+    B   pr_1
+pr_fin:
+    
     ; Wait for child to exit
     MOV R1 R5           ; Child PID from fork
     LI R2 0             ; No status pointer needed for this test
@@ -6778,23 +6788,20 @@ wait_error:
     B exit_failure
 
 child_process:
-    ; Child process - sleep for 2 seconds
+    ; Child process - write in a tight loop so it overlaps with parent
+    LI R6 40
+ch_1:
+    CMP R6 0
+    BEQ ch_fin
     LI R1 STDOUT_FD
     LI R2 child_start_msg
     LI R3 13
     SVC SYS_WRITE
-
-    ; Sleep for 2000 ms
-    LI R1 20
+    LI R1 1
     SVC SYS_SLEEP
-
-    CMP R1 0
-    BLT sleep_error
-
-    LI R1 STDOUT_FD
-    LI R2 child_end_msg
-    LI R3 12
-    SVC SYS_WRITE
+    SUB R6 R6 1
+    B ch_1
+ch_fin:
 
     ; Child exits with status 42
     LI R1 42

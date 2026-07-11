@@ -5301,20 +5301,20 @@ init_scheduler:
     ; task A
     ; ----------------------------------
 
-  ;  LI R1 TASK_A_START
-  ;  LI R2 1
-  ;  LI R3 0
-  ;  BL task_create
+   ;  LI R1 TASK_A_START
+   ;  LI R2 1
+   ;  LI R3 0
+   ;  BL task_create
 
-  ;  CMP R1 0
-  ;  BEQ init_scheduler_fail
+   ;  CMP R1 0
+   ;  BEQ init_scheduler_fail
 
     ; ----------------------------------
     ; task B
     ; ----------------------------------
 
 0x00008E4E       LI R1 TASK_B_START
-0x00008E56       LI R2 1
+0x00008E56       LI R2 2
 0x00008E5E       LI R3 0
 0x00008E66       BL task_create
 
@@ -5326,7 +5326,7 @@ init_scheduler:
     ; ----------------------------------
 
 0x00008E7A       LI R1 TASK_C_START
-0x00008E82       LI R2 2
+0x00008E82       LI R2 3
 0x00008E8A       LI R3 0
 0x00008E92       BL task_create
 
@@ -5335,7 +5335,7 @@ init_scheduler:
 
     ; Initialize the dynamic fork PID allocator after bootstrap tasks.
 0x00008EA6       LI R1 task_count
-0x00008EAE       LI R2 3
+0x00008EAE       LI R2 4                     ; last task+1 for now
 0x00008EB6       STW R2 [R1]
 
     ; ------------------------------------------------
@@ -6913,17 +6913,17 @@ waitq_wake_one_found:
 0x0000A342       STW R9 [R8 + WQ_MASK]
 
     ; Wake this task
-; macro: GET_TASK_PTR R1, R10
+; macro: GET_TASK_PTR R5, R10
 0x0000A346   LI R1 TASK_SIZE
 0x0000A34E   MUL R3 R10 R1
-0x0000A352   LI R1 tasks
-0x0000A35A   ADD R1 R1 R3
-; macro: TASK_SET_STATE R1, TASK_READY
+0x0000A352   LI R5 tasks
+0x0000A35A   ADD R5 R5 R3
+; macro: TASK_SET_STATE R5, TASK_READY
 0x0000A35E   LI R1 TASK_READY
-0x0000A366   STW R1 [R1 + TASK_STATE]
-; macro: TASK_SET_WAIT R1, WAIT_NONE
+0x0000A366   STW R1 [R5 + TASK_STATE]
+; macro: TASK_SET_WAIT R5, WAIT_NONE
 0x0000A36A   LI R1 WAIT_NONE
-0x0000A372   STW R1 [R1 + TASK_WAIT]
+0x0000A372   STW R1 [R5 + TASK_WAIT]
 
 waitq_wake_one_done:
 0x0000A376       POP R11
@@ -6989,7 +6989,7 @@ console_unlock:
 ; --TASK 1----------------------------------------------
 .ORG 0x19000
 TASK_A_START:
-0x00019000       li R1 10
+0x00019000       li R1 25
 write_loop1:
 0x00019008       push R1
     ;DEBUG 2
@@ -7171,93 +7171,100 @@ TASK_C_START:
 0x0001B038       MOV R5 R1          ; Parent keeps child PID
 
 parent_process:
-    ; Parent process - wait for child
-0x0001B03C       LI R1 STDOUT_FD
-0x0001B044       LI R2 parent_wait_msg
-0x0001B04C       LI R3 16
-0x0001B054       SVC SYS_WRITE
+    ; this is to test mutex in debug in mutual printing to vy several process to console
+    ; Parent process - keep both tasks active so console writes contend
+0x0001B03C       LI R6 40
+pr_1:
+0x0001B044       cmp R6 0
+0x0001B048       Beq pr_fin
+0x0001B050       LI R1 STDOUT_FD
+0x0001B058       LI R2 parent_wait_msg
+0x0001B060       LI R3 16
+0x0001B068       SVC SYS_WRITE
+0x0001B06C       LI R1 1
+0x0001B074       SVC SYS_SLEEP
+0x0001B078       sub R6 R6 1
+0x0001B07C       B   pr_1
+pr_fin:
 
     ; Wait for child to exit
-0x0001B058       MOV R1 R5           ; Child PID from fork
-0x0001B05C       LI R2 0             ; No status pointer needed for this test
-0x0001B064       SVC SYS_WAITPID
+0x0001B084       MOV R1 R5           ; Child PID from fork
+0x0001B088       LI R2 0             ; No status pointer needed for this test
+0x0001B090       SVC SYS_WAITPID
 
-0x0001B068       CMP R1 0
-0x0001B06C       BLT wait_error
+0x0001B094       CMP R1 0
+0x0001B098       BLT wait_error
 
     ; Child exited normally
-0x0001B074       LI R1 STDOUT_FD
-0x0001B07C       LI R2 parent_done_msg
-0x0001B084       LI R3 13
-0x0001B08C       SVC SYS_WRITE
+0x0001B0A0       LI R1 STDOUT_FD
+0x0001B0A8       LI R2 parent_done_msg
+0x0001B0B0       LI R3 13
+0x0001B0B8       SVC SYS_WRITE
 
     ; Print newline
-0x0001B090       LI R1 STDOUT_FD
-0x0001B098       LI R2 newline
-0x0001B0A0       LI R3 1
-0x0001B0A8       SVC SYS_WRITE
+0x0001B0BC       LI R1 STDOUT_FD
+0x0001B0C4       LI R2 newline
+0x0001B0CC       LI R3 1
+0x0001B0D4       SVC SYS_WRITE
 
-0x0001B0AC       B exit_success
+0x0001B0D8       B exit_success
 
 wait_error:
-0x0001B0B4       LI R1 STDOUT_FD
-0x0001B0BC       LI R2 wait_error_msg
-0x0001B0C4       LI R3 14
-0x0001B0CC       SVC SYS_WRITE
-0x0001B0D0       B exit_failure
+0x0001B0E0       LI R1 STDOUT_FD
+0x0001B0E8       LI R2 wait_error_msg
+0x0001B0F0       LI R3 14
+0x0001B0F8       SVC SYS_WRITE
+0x0001B0FC       B exit_failure
 
 child_process:
-    ; Child process - sleep for 2 seconds
-0x0001B0D8       LI R1 STDOUT_FD
-0x0001B0E0       LI R2 child_start_msg
-0x0001B0E8       LI R3 13
-0x0001B0F0       SVC SYS_WRITE
-
-    ; Sleep for 2000 ms
-0x0001B0F4       LI R1 20
-0x0001B0FC       SVC SYS_SLEEP
-
-0x0001B100       CMP R1 0
-0x0001B104       BLT sleep_error
-
-0x0001B10C       LI R1 STDOUT_FD
-0x0001B114       LI R2 child_end_msg
-0x0001B11C       LI R3 12
-0x0001B124       SVC SYS_WRITE
+    ; Child process - write in a tight loop so it overlaps with parent
+0x0001B104       LI R6 40
+ch_1:
+0x0001B10C       CMP R6 0
+0x0001B110       BEQ ch_fin
+0x0001B118       LI R1 STDOUT_FD
+0x0001B120       LI R2 child_start_msg
+0x0001B128       LI R3 13
+0x0001B130       SVC SYS_WRITE
+0x0001B134       LI R1 1
+0x0001B13C       SVC SYS_SLEEP
+0x0001B140       SUB R6 R6 1
+0x0001B144       B ch_1
+ch_fin:
 
     ; Child exits with status 42
-0x0001B128       LI R1 42
-0x0001B130       SVC SYS_EXIT
+0x0001B14C       LI R1 42
+0x0001B154       SVC SYS_EXIT
 
 sleep_error:
-0x0001B134       LI R1 STDOUT_FD
-0x0001B13C       LI R2 sleep_error_msg
-0x0001B144       LI R3 12
-0x0001B14C       SVC SYS_WRITE
-0x0001B150       LI R1 1              ; Exit with error code
-0x0001B158       SVC SYS_EXIT
+0x0001B158       LI R1 STDOUT_FD
+0x0001B160       LI R2 sleep_error_msg
+0x0001B168       LI R3 12
+0x0001B170       SVC SYS_WRITE
+0x0001B174       LI R1 1              ; Exit with error code
+0x0001B17C       SVC SYS_EXIT
 
 fork_error:
-0x0001B15C       LI R1 STDOUT_FD
-0x0001B164       LI R2 fork_error_msg
-0x0001B16C       LI R3 11
-0x0001B174       SVC SYS_WRITE
-0x0001B178       B exit_failure
-
-gettime_error:
 0x0001B180       LI R1 STDOUT_FD
-0x0001B188       LI R2 gettime_error_msg
-0x0001B190       LI R3 14
+0x0001B188       LI R2 fork_error_msg
+0x0001B190       LI R3 11
 0x0001B198       SVC SYS_WRITE
 0x0001B19C       B exit_failure
 
+gettime_error:
+0x0001B1A4       LI R1 STDOUT_FD
+0x0001B1AC       LI R2 gettime_error_msg
+0x0001B1B4       LI R3 14
+0x0001B1BC       SVC SYS_WRITE
+0x0001B1C0       B exit_failure
+
 exit_success:
-0x0001B1A4       LI R1 0
-0x0001B1AC       SVC SYS_EXIT
+0x0001B1C8       LI R1 0
+0x0001B1D0       SVC SYS_EXIT
 
 exit_failure:
-0x0001B1B0       LI R1 1
-0x0001B1B8       SVC SYS_EXIT
+0x0001B1D4       LI R1 1
+0x0001B1DC       SVC SYS_EXIT
 
 gettime_error_msg:
     .ASCIIZ "GETTIME FAIL\r\n"
