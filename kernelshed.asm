@@ -6831,7 +6831,7 @@ TASK_C_START:
 parent_process:
     ; this is to test mutex in debug in mutual printing to vy several process to console
     ; Parent process - keep both tasks active so console writes contend
-    LI R6 40
+    LI R6 10
 pr_1:
     cmp R6 0
     Beq pr_fin
@@ -6876,7 +6876,7 @@ wait_error:
 
 child_process:
     ; Child process - write in a tight loop so it overlaps with parent
-    LI R6 40
+    LI R6 20
 ch_1:
     CMP R6 0
     BEQ ch_fin

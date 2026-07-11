@@ -76,40 +76,58 @@ def chunk_words(data):
         words.append(word)
     return words, padded
 
-
 def build_tar_block(path, data):
-    name = path.lstrip("/") if path.startswith("/") else path
+    name = path.lstrip("/")
     name_bytes = name.encode("ascii")
+
     if len(name_bytes) >= 124:
-        raise ValueError("Path too long for TAR header name field")
+        raise ValueError("Path too long")
 
-    size_octal = format_octal_size(len(data))
-    if len(size_octal) != 11:
-        raise ValueError("Size octal formatting failed")
+    size_octal = format(len(data), "011o")
 
+    #
+    # TAR header (512 bytes)
+    #
     header = []
+
     header.append(f"; {path}, {len(data)} bytes")
-    header.append(f"    .ASCIIZ \"{path}\"")
+    header.append(f'    .ASCIIZ "{name}"')
     header.append(f"    .SPACE {124 - len(name_bytes) - 1}")
-    header.append(f"    .ASCIIZ \"{size_octal}\"")
+    header.append(f'    .ASCIIZ "{size_octal}"')
     header.append("    .SPACE 20")
-    header.append("    .ASCIIZ \"0\"")
+    header.append('    .ASCIIZ "0"')
     header.append("    .SPACE 354")
 
-    words, padded_len = chunk_words(data)
-    payload = []
-    payload.append(f"    ; file data ({len(data)} bytes, padded to {padded_len})")
-    for idx in range(0, len(words), 8):
-        chunk = words[idx : idx + 8]
-        payload.append("    .WORD " + ", ".join(f"0x{word:08X}" for word in chunk))
+    #
+    # File data
+    #
 
-    total_payload_bytes = len(words) * 4
-    if total_payload_bytes < padded_len:
-        extra = padded_len - total_payload_bytes
-        payload.append(f"    .SPACE {extra}")
+    payload = []
+
+    word_padded = (len(data) + 3) & ~3
+    padded_data = data.ljust(word_padded, b"\x00")
+
+    payload.append(f"    ; file data ({len(data)} bytes)")
+
+    for i in range(0, word_padded, 32):          # 8 words per line
+        words = []
+        for j in range(i, min(i + 32, word_padded), 4):
+            w = int.from_bytes(padded_data[j:j+4], "little")
+            words.append(f"0x{w:08X}")
+
+        payload.append("    .WORD " + ", ".join(words))
+
+    #
+    # TAR block padding
+    #
+
+    tar_padded = (len(data) + 511) & ~511
+    pad = tar_padded - word_padded
+
+    if pad:
+        payload.append(f"    .SPACE {pad}    ; pad to next TAR block")
 
     return header + payload
-
 
 def main():
     args = parse_args()

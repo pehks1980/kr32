@@ -18,8 +18,31 @@ OUT = ROOT / "tarfs_generated.inc"
 def octal_size(length):
     return format(length, "011o")
 
-
 def chunk_words(data):
+    """
+    Convert bytes into .WORDs.
+
+    TAR requires file payloads to be padded to 512-byte boundaries.
+    .WORD output additionally requires multiples of 4 bytes.
+    """
+
+    # TAR payload padding
+    tar_padded = (len(data) + 511) & ~511
+
+    # (512 is divisible by 4, so this is mostly for safety)
+    word_padded = (tar_padded + 3) & ~3
+
+    padded_data = data.ljust(word_padded, b"\x00")
+
+    words = []
+
+    for i in range(0, len(padded_data), 4):
+        words.append(int.from_bytes(padded_data[i:i+4], "little"))
+
+    return words, tar_padded
+
+
+def chunk_words_old(data):
     padded = (len(data) + 3) // 4 * 4
     padded_data = data.ljust(padded, b"\x00")
     words = [int.from_bytes(padded_data[i : i + 4], "little") for i in range(0, len(padded_data), 4)]
