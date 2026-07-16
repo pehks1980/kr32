@@ -326,7 +326,7 @@ exit_hang:
 ; CONSTANTS
 ;------------------------------------------------------------------------------
 
-.EQU MAX_BLOCKS, 32       ; Maximum number of blocks we can track
+.EQU MAX_BLOCKS, 48       ; Maximum number of blocks we can track
                           ; (can't allocate more than 32 times without freeing)
 
 ; Block descriptor offsets (each block needs these 3 values)
@@ -336,7 +336,9 @@ exit_hang:
 .EQU BLOCK_DESC,  12      ; Total size of one block descriptor (3 words = 12 bytes)
 
 ;------------------------------------------------------------------------------
-; DATA SECTION - The block table
+; DATA SECTION - The block table 
+; normally memory blocks get resereved from HEAP which is located at data segment 
+; page (page address specified as user_data_va) 
 ;------------------------------------------------------------------------------
 
 block_table:
