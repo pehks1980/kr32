@@ -46,16 +46,16 @@ B KERNEL_START
 ;.EQU TASK2_USTACK_PA, 0x0000C000
 
 ;memory map used for data validation when make syscalls which transfer data b/w kernel and user
-.EQU KERNEL_BASE,     0x0000
-.EQU KERNEL_LIMIT,    0x000BFFFF
-.EQU USER_BASE,       0x00005000
+.EQU KERNEL_BASE,     0x00000000
+.EQU KERNEL_LIMIT,    0x0003EFFF
+
+.EQU USER_BASE,       0x0003F000
+.EQU USER_LIMIT,      0x0005FFFF
 
 .EQU USER_STACK_VA,   0x0003F000
 .EQU USER_STACK_TOP,  0x00040000
-.EQU USER_LIMIT,      0x0003FFFF
-
-.EQU USER_DATA_VA,    0x00006000  ; start of user data page for task (process virtual space) 4 KiB per task
-.EQU USER_CODE_VA,    0x00007000  ; fixed user code VA for execve-loaded user image
+.EQU USER_DATA_VA,    0x00042000  ; start of user data page for task (process virtual space) 4 KiB per task (form heap memory)
+.EQU USER_CODE_VA,    0x00043000  ; fixed user code VA for execve-loaded user image
 ; USER_CODE_VA is the per-task user-space entry page for execve programs.
 ; Each task's active executable is always mapped here when a program is loaded.
 ; ================================================================
@@ -564,7 +564,7 @@ syscall_execve:
     ; Overview:
     ; 1) copy pathname from user space into kernel buffer
     ; 2) lookup the file in TARFS/VFS and verify it is an executable file
-    ; 3) allocate a new code page and map it RW at USER_CODE_VA (0x7000)
+    ; 3) allocate a new code page and map it RW at USER_CODE_VA
     ; 4) zero the task's data page and load the file content into the code page
     ; 5) commit the new task state: PC=0x7000, USP=USER_STACK_TOP, program break reset
     ; 6) remap the code page read-only and free any previous exec page
@@ -576,6 +576,9 @@ syscall_execve:
     ;================================================================
 
     LDW R8 [SP + TF_R1]        ; user path pointer
+
+    LDW R9 [SP + TF_R2]        ; user argv pointer
+    PUSH R9
 
     MOV R1 R8
     BL copy_path_from_user
@@ -673,7 +676,7 @@ execve_commit_done:
 
     MOV R4 R2                      ; save original argv vector pointer
     LI R6 0                        ; argc
-    LI R13 0                       ; total string bytes
+    LI R12 0                       ; total string bytes
 
     ; First pass: count args and total string bytes.
     MOV R7 R4
@@ -697,7 +700,7 @@ execve_arg_len_loop:
 
 execve_arg_len_done:
     ADD R10 R10 1                  ; include trailing NUL
-    ADD R13 R13 R10
+    ADD R12 R12 R10
     ADD R6 R6 1
     ADD R7 R7 4
     B execve_argv_count_loop
@@ -705,50 +708,49 @@ execve_arg_len_done:
 execve_argv_count_done:
     ; Compute stack layout.
     ; string_base = USER_STACK_TOP - total_string_bytes
-    LI R14 USER_STACK_TOP
-    SUB R14 R14 R13
+    LI R1 USER_STACK_TOP
+    SUB R4 R1 R12   ;R4 string base
 
     ; argv_base = string_base - (argc + 2) * 4
-    MOV R15 R6
-    ADD R15 R15 2
+    MOV R2 R6
+    ADD R2 R2 2
     LI R1 4
-    MUL R15 R15 R1
-    SUB R15 R14 R15
+    MUL R2 R2 R1
+    SUB R4 R4 R2        ; R4 argv_base
 
     ; Store argc at the start of the new stack.
-    STW R6 [R15]
+    STW R6 [R4]
 
     ; Second pass: copy strings and write argv pointers.
-    MOV R7 R4                      ; source argv vector
-    MOV R8 R14                     ; string destination cursor
-    ADD R1 R15 4                   ; argv[0] slot
+    POP R7                  ; source argv[]
+    MOV R8 R5               ; destination for strings
+    ADD R9 R4 4             ; R9 = argv[1] slot on new stack
 
-execve_argv_copy_loop:
-    LDW R9 [R7]
-    CMP R9 0
-    BEQ execve_argv_copy_done
+argv_copy_loop:
+    LDW R10 [R7]
+    CMP R10 0
+    BEQ argv_copy_done
 
-    STW R8 [R1]                    ; argv[i] -> current string cursor
+    STW R8 [R9]
+    LI R11 0
 
-    LI R10 0
-execve_argv_strcpy_loop:
-    LDB R11 [R9 + R10]
-    STB R11 [R8 + R10]
-    CMP R11 0
-    BEQ execve_argv_strcpy_done
-    ADD R10 R10 1
-    B execve_argv_strcpy_loop
+argv_copy_string:
+    LDB R12 [R10 + R11]
+    STB R12 [R8 + R11]
+    CMP R12 0
+    BEQ argv_string_done
 
-execve_argv_strcpy_done:
-    ADD R8 R8 R10
+    ADD R11 R11 1
+    B argv_copy_string
+argv_string_done:
+    ADD R8 R8 R11
     ADD R8 R8 1
     ADD R7 R7 4
-    ADD R1 R1 4
-    B execve_argv_copy_loop
-
-execve_argv_copy_done:
-    LI R9 0
-    STW R9 [R1]                    ; argv[argc] = NULL
+    ADD R9 R9 4
+    B argv_copy_loop
+argv_copy_done:
+    LI R10 0
+    STW R10 [R9]                ; argv[argc] = NULL
 
     ; Make the new user entry point easy to consume:
     ; R1 = argc, R2 = argv, R3 = envp (unused for now)
@@ -802,6 +804,8 @@ execve_restore_no_prev:
 execve_restore_done:
     MOV R1 R10
     BL file_put
+
+    POP R1                      ;save stack
     LI R1 ERR_NOEXEC
     STW R1 [SP + TF_R1]
     B trap_restore
@@ -809,29 +813,36 @@ execve_restore_done:
 execve_nomem_file:
     MOV R1 R10
     BL file_put
+
+    POP R1
     LI R1 ERR_NOMEM
     STW R1 [SP + TF_R1]
     B trap_restore
 
 execve_nomem:
+    POP R1
     LI R1 ERR_NOMEM
     STW R1 [SP + TF_R1]
     B trap_restore
 
 execve_noexec_file:
+
     MOV R1 R10
     BL file_put
 execve_noexec:
+    POP R1
     LI R1 ERR_NOEXEC
     STW R1 [SP + TF_R1]
     B trap_restore
 
 execve_noent:
+    POP R1
     LI R1 ERR_NOENT
     STW R1 [SP + TF_R1]
     B trap_restore
 
 execve_badfault:
+    POP R1
     LI R1 ERR_FAULT
     STW R1 [SP + TF_R1]
     B trap_restore
@@ -6876,19 +6887,34 @@ wait_error:
 
 child_process:
     ; Child process - write in a tight loop so it overlaps with parent
-    LI R6 20
-ch_1:
-    CMP R6 0
-    BEQ ch_fin
+
+    LI R1 echo_path
+    LI R2 echo_argv
+    LI R3 0
+
+    SVC SYS_EXECVE
+
     LI R1 STDOUT_FD
     LI R2 child_start_msg
     LI R3 13
     SVC SYS_WRITE
+
+    LI R1 echo_path
+    LI R2 echo_argv
+    LI R3 0
+
+    SVC SYS_EXECVE
+
+    ; returns if error with execve
+
+    LI R1 STDOUT_FD
+    LI R2 exec_failed_msg
+    LI R3 13
+    SVC SYS_WRITE
+    
     LI R1 1
     SVC SYS_SLEEP
-    SUB R6 R6 1
-    B ch_1
-ch_fin:
+
 
     ; Child exits with status 42
     LI R1 42
@@ -6944,8 +6970,23 @@ child_end_msg:
 
 sleep_error_msg:
     .ASCIIZ "SLEEP FAIL\r\n"
-
+exec_failed_msg:
+    .ASCIIZ "EXECV FAIL\r\n"
 fork_error_msg:
     .ASCIIZ "FORK FAIL\r\n"
+;no first slash yet!
+echo_path:
+    .ASCIIZ "bin/echo"
+
+arg0:
+    .ASCIIZ "echo"
+
+arg1:
+    .ASCIIZ "Hello from execve!"
+
+echo_argv:
+    .WORD echo_path
+    .WORD arg1
+    .WORD 0
 
 #include "tarfs_generated.inc"

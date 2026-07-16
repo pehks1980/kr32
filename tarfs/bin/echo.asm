@@ -1,5 +1,5 @@
-.org 0x7000
-
+.org 0x00043000
+; from USER_CODE_VA
 ;==============================================================================
 ; echo - Print all command line arguments
 ;==============================================================================
@@ -7,6 +7,7 @@
 ; followed by a newline. Uses the shared libc scaffold.
 ;==============================================================================
 
+;library is here so it dtsrtd _start which calls main
 #include "../lib/libc.inc"
 
 ;==============================================================================
@@ -46,6 +47,7 @@ echo_newline:
     BL puts
 
 echo_done:
+
     LI R1 0              ; Return success
     POP R10
     POP R9

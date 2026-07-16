@@ -23,6 +23,7 @@
 .EQU SYS_EXECVE, 13
 .EQU SYS_FORK,   14
 .EQU SYS_SLEEP,  15
+.EQU SYS_WAITPID, 16
 
 .EQU STDOUT_FD, 1
 
@@ -261,19 +262,6 @@ fork:
     SVC SYS_FORK
     RET
 
-;------------------------------------------------------------------------------
-; fork()
-;
-; parent:
-;   R1 = child pid
-;
-; child:
-;   R1 = 0
-;------------------------------------------------------------------------------
-fork:
-    SVC SYS_FORK
-    RET
-
 
 ;------------------------------------------------------------------------------
 ; execve(path, argv, envp)
@@ -382,7 +370,8 @@ malloc:
     ;   ADD R1 7    -> 107
     ;   AND 0xFFFFFFF8 -> 104 (multiple of 8)
     ADD R1 R1 7           ; Add 7 to round up
-    AND R1 R1 0xFFFFFFF8  ; Clear lower 3 bits (make multiple of 8)
+    LI  R2 0xFFFFFFF8 
+    AND R1 R1 R2          ; Clear lower 3 bits (make multiple of 8)
     MOV R5 R1             ; R5 = aligned size (e.g., 104)
     
     ; Step 2: Search for a free block in the table
@@ -435,8 +424,7 @@ malloc_sbrk:
     
     ; R5 already has the aligned size we need
     MOV R1 R5             ; R1 = size to allocate
-    LI R2 12              ; R2 = SYS_SBRK syscall number
-    SVC R2                ; Call kernel: sbrk(size)
+    SVC SYS_SBRK          ; Call kernel: sbrk(size)
     
     ; Check if sbrk failed (returns -1 or 0 on error)
     CMP R1 0              ; Did sbrk return 0 or negative?
