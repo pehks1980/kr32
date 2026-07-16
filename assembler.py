@@ -484,6 +484,9 @@ class Assembler:
 
             self.emit8(0)
             return
+        
+        elif op == "NOP":
+            self.emit32(self.encode(OP[op]))
 
         # =================================================
         # MOV Rn IMM16

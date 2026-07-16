@@ -68,7 +68,7 @@ def read_source_bytes(path: Path):
         asm = Assembler()
         lines = src
         asm.build(lines, out="/tmp/tarfs_build.img", write_output=False)
-        start = 0x7000
+        start = 0x043000
         end = asm.pc
         return bytes(asm.memory[start:end])
     return path.read_bytes()

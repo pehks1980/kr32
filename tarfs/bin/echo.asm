@@ -16,6 +16,10 @@
 ; OUT: R1 = 0 (always succeeds)
 ;==============================================================================
 main:
+    NOP
+    NOP
+    NOP
+    NOP
     PUSH LR
     PUSH R8              ; 
     PUSH R9              ; 
