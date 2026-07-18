@@ -37,6 +37,11 @@ _start:
     ADD R2 SP 4          ; argv
     LI R3 0              ; envp = NULL
     BL main
+    PUSH R1              ; exit 0 - success 1 - error
+    LI R1 1              ; put to sleep so parent waitpid can work
+    SVC SYS_SLEEP
+    POP  R1
+    ;LI R1 42
     SVC SYS_EXIT
 
 ;==============================================================================

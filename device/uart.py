@@ -15,7 +15,7 @@ class UARTDevice:
         self.rx_fifo = []
         self.tx_fifo = []
         self.tx_output = []
-        self.tx_capacity = 16
+        self.tx_capacity = 1024 #16
         self.tx_drain_period = 256
         self.tx_drain_counter = 0
         # Control register: Bit 0 = RX Interrupt Enable, Bit 1 = TX Interrupt Enable

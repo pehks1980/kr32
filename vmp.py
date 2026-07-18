@@ -1614,12 +1614,13 @@ class CPU:
             skip_initial_bp = False
 
             steps += 1
-            if steps % 100 == 0:
-                time.sleep(0.001)
-            if steps > MAX_STEPS:
-                if not self.quiet:
-                    print("[CPU] MAX STEPS REACHED -> STOP")
-                break
+            #if steps % 100 == 0:  ban MAX_steps
+            #    time.sleep(0.001)
+            
+            #if steps > MAX_STEPS:
+            #    if not self.quiet:
+            #        print("[CPU] MAX STEPS REACHED -> STOP")
+            #    break
 
             try:
                 self._execute_instruction(trace=trace)

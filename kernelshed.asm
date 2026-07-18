@@ -666,9 +666,9 @@ execve_data_ok:
     MOV R1 R10              ; file* of execve program
     BL file_put             ; release file resources after successful load
 
-    GET_CURR_TASK_IDX R4
+    GET_CURR_TASK_IDX R4    ; this was real mistake here! I forgot to retore current task ptr
     GET_TASK_PTR R5, R4     ; reload task ptr after calls that may clobber caller-saved R5
-
+                            ; we also added INVLPG - for good! - history comments
     ; commit new exec state after successful file load
     LI R1 USER_CODE_VA
     TASK_SET_PC R5, R1              ; start execution at USER_CODE_VA
@@ -6977,7 +6977,7 @@ TASK_C_START:
 parent_process:
     ; this is to test mutex in debug in mutual printing to vy several process to console
     ; Parent process - keep both tasks active so console writes contend
-    LI R6 10
+    LI R6 2
 pr_1:
     cmp R6 0
     Beq pr_fin
@@ -6992,7 +6992,8 @@ pr_1:
 pr_fin:
     
     ; Wait for child to exit
-    MOV R1 R5           ; Child PID from fork
+    ;MOV R1 R5           ; Child PID from fork
+    LI R1 -1            ; wait for any
     LI R2 0             ; No status pointer needed for this test
     SVC SYS_WAITPID
 
@@ -7023,23 +7024,21 @@ wait_error:
 child_process:
     ; Child process - write in a tight loop so it overlaps with parent
 
-    LI R1 echo_path
-    LI R2 echo_argv
-    LI R3 0
-
-    SVC SYS_EXECVE
-
     LI R1 STDOUT_FD
     LI R2 child_start_msg
     LI R3 13
     SVC SYS_WRITE
 
-    LI R1 echo_path
-    LI R2 echo_argv
+
+    ;LI R1 echo_path
+    ;LI R2 echo_argv
+    ;LI R3 0
+
+    LI R1 cat_path
+    LI R2 cat_argv
     LI R3 0
 
     SVC SYS_EXECVE
-
     ; returns if error with execve
 
     LI R1 STDOUT_FD
@@ -7052,7 +7051,8 @@ child_process:
 
 
     ; Child exits with status 42
-    LI R1 42
+    ;LI R1 42
+    LI R1 0
     SVC SYS_EXIT
 
 sleep_error:
@@ -7110,18 +7110,47 @@ exec_failed_msg:
 fork_error_msg:
     .ASCIIZ "FORK FAIL\r\n"
 ;no first slash yet!
+;==========
+;cat
+;==========
 echo_path:
     .ASCIIZ "bin/echo"
 
-arg0:
+echo_arg0:
     .ASCIIZ "echo"
 
-arg1:
+echo_arg1:
     .ASCIIZ "Hello from execve!"
+
+echo_arg2:
+    .ASCIIZ "second arg!"
 
 echo_argv:
     .WORD echo_path
-    .WORD arg1
+    .WORD echo_arg1
+    .WORD echo_arg2
     .WORD 0
+
+;==========
+;cat
+;==========
+cat_path:
+    .ASCIIZ "bin/cat"
+
+cat_arg0:
+    .ASCIIZ "cat"
+
+cat_arg1:
+    .ASCIIZ "etc/motd"
+
+cat_arg2:
+    .ASCIIZ "lib/libc.inc"
+
+cat_argv:
+    .WORD cat_path
+    .WORD cat_arg1
+    .WORD cat_arg2
+    .WORD 0
+
 
 #include "tarfs_generated.inc"
