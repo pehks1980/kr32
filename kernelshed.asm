@@ -32,6 +32,7 @@ B KERNEL_START
 .EQU USER_RX,      0x001D       ; P|R|X|U
 .EQU USER_RW,      0x001B       ; P|R|W|U
 .EQU KERN_USER_RX, 0x003D       ; P|R|X|U|G, shared executable (kernel can fetch user code)
+.EQU KERNEL_USER_ALL, 0x003F       ; G|P|U|X|W|R, shared executable writable full access
 
 .EQU PAGE_SIZE,    0x1000
 .EQU PAGE_MASK,    0x0FFF
@@ -49,7 +50,7 @@ B KERNEL_START
 .EQU KERNEL_BASE,     0x00000000
 .EQU KERNEL_LIMIT,    0x0003EFFF
 
-.EQU USER_BASE,       0x0003F000
+.EQU USER_BASE,       0x00019000
 .EQU USER_LIMIT,      0x0005FFFF
 
 .EQU USER_STACK_VA,   0x0003F000
@@ -129,8 +130,12 @@ B KERNEL_START
 ; to avoid shared state and synchronization issues.      
 
 .org 0x1000
+;======================================================================================================
+;
 ; --TASK 0 -------System idle task, runs on kernel space with kernel privs, when no other task is ready. 
 ; Should never exit.
+;
+;======================================================================================================
 idle_task:
     ENABLEINT
     LI R1 0
@@ -139,23 +144,6 @@ idle_loop:
     ;DEBUG 1
     B idle_loop
 
-; ================================================================
-; PAGE TABLES for each task (1 KiB each, 4 entries x 1024 bytes)
-; ================================================================
-.org 0x10000
-;TASK0_PAGE_TABLE
-;TASK0_PTBR:
-;        .SPACE 4096             ; 1 KiB page table (1024 entries × 4 bytes)
-
-;.org 0x20000
-;TASK1_PAGE_TABLE
-;TASK1_PTBR:
-;        .SPACE 4096             ; 1 KiB page table
-
-;.org 0x30000
-;TASK2_PAGE_TABLE
-;TASK2_PTBR:
-;q        .SPACE 4096             ; 1 KiB page table
 
 
 .org 0x2000
@@ -297,6 +285,16 @@ map_common_kernel:
     LI R4 KERNEL_FLAGS
     BL map_page
 
+    LI R2 0x00005000
+    LI R3 0x00005000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x00006000
+    LI R3 0x00006000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
     LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
     LI R3 0x00007000
     LI R4 KERNEL_FLAGS
@@ -321,6 +319,13 @@ map_common_kernel:
     LI R3 0x0000B000
     LI R4 KERNEL_FLAGS
     BL map_page
+
+    LI R2 0x0000C000      ; add page (number is page table entry one) tasks data
+    LI R3 0x0000C000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    
 
     ; Map MMIO pages (UART, Timer/PIT, and PIC) into kernel address space
     LI R2 0x00100000      ; UART physical and virtual base
@@ -373,6 +378,20 @@ map_page:
     SHL R5 R5 2                ; page-table byte offset
     OR R6 R3 R4                ; PTE = PA page base | flags
     STW R6 [R1 + R5]
+    POP R6
+    POP R5
+    RET
+
+map_page_rt:
+    ; Runtime page-table update. Same ABI as map_page, but also invalidates
+    ; the cached translation for R2 so permission changes take effect now.
+    PUSH R5
+    PUSH R6
+    SHR R5 R2 12               ; VPN
+    SHL R5 R5 2                ; page-table byte offset
+    OR R6 R3 R4                ; PTE = PA page base | flags
+    STW R6 [R1 + R5]
+    INVLPG R2
     POP R6
     POP R5
     RET
@@ -566,7 +585,7 @@ syscall_execve:
     ; 2) lookup the file in TARFS/VFS and verify it is an executable file
     ; 3) allocate a new code page and map it RW at USER_CODE_VA
     ; 4) zero the task's data page and load the file content into the code page
-    ; 5) commit the new task state: PC=0x7000, USP=USER_STACK_TOP, program break reset
+    ; 5) commit the new task state: PC=user_code_va, USP=USER_STACK_TOP, program break reset
     ; 6) remap the code page read-only and free any previous exec page
     ; 7) restore the trapframe to begin executing the new program
     ;
@@ -627,7 +646,7 @@ syscall_execve:
     LI R2 USER_CODE_VA         ; R2 = code page VA for execve program
     MOV R3 R11                 ; R3 = code page PA for execve program
     LI R4 USER_RW              ; R4 = temporary RW permissions so we can load the page
-    BL map_page                ; map executable page RW at USER_CODE_VA for loading
+    BL map_page_rt             ; runtime map executable page RW at USER_CODE_VA for loading
 
     TASK_GET_DATA_PAGE R1, R5  ; get data page PA for current task
     CMP R1 0
@@ -640,12 +659,15 @@ execve_data_ok:
     MOV R1 R10              ; file* of execve program
     LI R2 USER_CODE_VA      ; VA of code page for execve program
     LI R3 PAGE_SIZE         ; size of code page for execve program
-    BL file_read            ; load executable into USER_CODE_VA (0x7000)
+    BL file_read            ; load executable into USER_CODE_VA
     CMP R1 0
     BLT execve_read_fail    ; if read fails, restore old exec code page and return error
 
     MOV R1 R10              ; file* of execve program
     BL file_put             ; release file resources after successful load
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4     ; reload task ptr after calls that may clobber caller-saved R5
 
     ; commit new exec state after successful file load
     LI R1 USER_CODE_VA
@@ -660,8 +682,10 @@ execve_data_ok:
     TASK_GET_PTBR R1, R5            ; get PTBR of current task
     LI R2 USER_CODE_VA              ; VA of code page for execve program
     MOV R3 R11                      ; PA of code page for execve program
-    LI R4 USER_RX
-    BL map_page                     ; switch the new code page from RW to RX
+    LI R4 KERNEL_USER_ALL
+    BL map_page_rt                  ; switch the new code page from RW to RX
+
+   ; DEBUG 2
 
     CMP R12 0                       ; R12 = old code page PA for execve program from task metadata
     BEQ execve_commit_done          ; if no previous code page, skip freeing it
@@ -674,11 +698,10 @@ execve_commit_done:
     ; The new program can read argc/argv from the stack, and we also mirror
     ; argc/argv into R1/R2 for convenience.
 
-    MOV R4 R2                      ; save original argv vector pointer
-    LI R6 0                        ; argc
-    LI R12 0                       ; total string bytes
-
-    ; First pass: count args and total string bytes.
+    POP R4                         ; remember argv ptr from start of syscall
+    LI R6 0                        ; R6 = argc counter
+    
+    ; Step 1: Count argc
     MOV R7 R4
 execve_argv_count_loop:
     CMP R7 0
@@ -686,80 +709,188 @@ execve_argv_count_loop:
     LDW R8 [R7]
     CMP R8 0
     BEQ execve_argv_count_done
-
-    CMP R6 16                      ; keep the first version small and bounded
+    
+    CMP R6 16                      ;MAX argc count
     BGE execve_badfault
-
-    LI R10 0
-execve_arg_len_loop:
-    LDB R9 [R8 + R10]
-    CMP R9 0
-    BEQ execve_arg_len_done
-    ADD R10 R10 1
-    B execve_arg_len_loop
-
-execve_arg_len_done:
-    ADD R10 R10 1                  ; include trailing NUL
-    ADD R12 R12 R10
+    
     ADD R6 R6 1
     ADD R7 R7 4
     B execve_argv_count_loop
 
 execve_argv_count_done:
-    ; Compute stack layout.
-    ; string_base = USER_STACK_TOP - total_string_bytes
-    LI R1 USER_STACK_TOP
-    SUB R4 R1 R12   ;R4 string base
+    ; Now we know argc = R6, argv = R4
 
-    ; argv_base = string_base - (argc + 2) * 4
-    MOV R2 R6
-    ADD R2 R2 2
-    LI R1 4
-    MUL R2 R2 R1
-    SUB R4 R4 R2        ; R4 argv_base
+    ;=============================================================
+    ; Build initial user stack
+    ;
+    ; Stack layout after exec:
+    ;
+    ;   USER_STACK_TOP
+    ;        |
+    ;        |  copied strings ptrs!!! we dont toch actual strings et-al and ptrs!!!
+    ;        |
+    ;        |  argv[argc] = NULL
+    ;        |  argv[argc-1]
+    ;        |  ...
+    ;        |  argv[0]
+    ;        |  argc
+    ;        +---------------------> initial user SP
+    ;
+    ; On entry:
+    ;   R4 = source argv[]
+    ;   R6 = argc
+    ;
+    ; On exit:
+    ;   R1 = argc
+    ;   R2 = argv
+    ;   USP points at argc
+    ;=============================================================
 
-    ; Store argc at the start of the new stack.
-    STW R6 [R4]
+    ;-------------------------------------------------------------
+    ; Start copying strings from top of user stack downward.
+    ; R5 = current string cursor
+    ;-------------------------------------------------------------
+    LI  R5 USER_STACK_TOP
 
-    ; Second pass: copy strings and write argv pointers.
-    POP R7                  ; source argv[]
-    MOV R8 R5               ; destination for strings
-    ADD R9 R4 4             ; R9 = argv[1] slot on new stack
+    ;-------------------------------------------------------------
+    ; Temporary kernel array for argv pointers.
+    ; argv_tmp[16]
+    ;-------------------------------------------------------------
+    LI  R11 execve_tmp_argv
 
-argv_copy_loop:
-    LDW R10 [R7]
-    CMP R10 0
-    BEQ argv_copy_done
+    ;-------------------------------------------------------------
+    ; Copy strings in reverse order so they naturally pack downward.
+    ;-------------------------------------------------------------
+    MOV R7 R6
+    SUB R7 R7 1             ; [argc]-1
 
-    STW R8 [R9]
-    LI R11 0
+execve_copy_reverse:
+    LI  R8 -1
+    CMP R7 R8
+    BEQ execve_strings_done
 
-argv_copy_string:
-    LDB R12 [R10 + R11]
-    STB R12 [R8 + R11]
-    CMP R12 0
-    BEQ argv_string_done
+    ; source string = argv[i] starting from last arg string
+    ;MUL R8 R7 4
+    MOV R8 R7
+    SHL R8 R8 2             ;*4+ptr 
+    ADD R9 R4 R8
+    LDW R10 [R9]            ;last argv string ptr
 
-    ADD R11 R11 1
-    B argv_copy_string
-argv_string_done:
-    ADD R8 R8 R11
+    ;-------------------------------------------------------------
+    ; strlen()
+    ; R12 = length including terminating NUL
+    ;-------------------------------------------------------------
+    LI R12 0                ;str len ctr - compute this argv string len (+ 0)
+
+execve_strlen:
+
+    LDB R2 [R10 + R12]
+    ADD R12 R12 1
+    CMP R2 0
+    BNE execve_strlen
+
+    ; reserve space - on user stack top this argv string destination 
+
+    SUB R5 R5 R12               ; R5 dest addres argv string copy to gets updated by lenght of each string
+                                ; to be copied to tmp 
+
+    ; remember destination pointer
+    MOV R8 R7
+    SHL R8 R8 2                 ;R7 argv string number in argv array
+    ADD R9 R11 R8
+    STW R5 [R9]                 ;R5(R11) points to temp storage
+
+    ; memcpy()
+
+    LI R8 0
+
+execve_copy_string:             ; first copy strings ptrs from (argv array) to temp stogare strings 
+                                ; from last string to first - opposite order
+    LDB R2 [R10 + R8]           ; R10 execv argv &string[i]  (last to first)
+    STB R2 [R5 + R8]            ; R5 same in tmp
+
+    CMP R2 0
+    BEQ execve_copy_done
+
     ADD R8 R8 1
-    ADD R7 R7 4
-    ADD R9 R9 4
-    B argv_copy_loop
-argv_copy_done:
-    LI R10 0
-    STW R10 [R9]                ; argv[argc] = NULL
+    B execve_copy_string
 
-    ; Make the new user entry point easy to consume:
-    ; R1 = argc, R2 = argv, R3 = envp (unused for now)
-    STW R6 [SP + TF_R1]
-    ADD R1 R15 4
-    STW R1 [SP + TF_R2]
+execve_copy_done:
+
+    SUB R7 R7 1                 ; to copy next string
+    B execve_copy_reverse
+
+execve_strings_done:            ;copy argv strings array to temp storage in opposite order is done
+
+    ;-------------------------------------------------------------
+    ; Reserve space for:
+    ;
+    ; argc
+    ; argv[0..argc-1] - already updated R5 while copy str + argc(word)+null(word)
+    ; NULL
+    ;
+    ; stack_words = argc + 2
+    ;-------------------------------------------------------------
+    MOV R7 R6
+    ADD R7 R7 2
+
+    MOV R8 R7
+    SHL R8 R8 2 
+
+    SUB R5 R5 R8            ;update R5 by stack words
+
+    ;-------------------------------------------------------------
+    ; R5 now becomes initial user stack pointer.
+    ;-------------------------------------------------------------
+
+    STW R6 [R5]             ; put argc to user stack see picture above (Reserve space for:)
+
+    ADD R9 R5 4             ; R9 - move 'writing head' to next element argv in user stack
+                            ; R5 - initial user stack pointer
+    ;-------------------------------------------------------------
+    ; Copy argv pointers
+    ;-------------------------------------------------------------
+    LI R7 0
+
+execve_copy_argv:
+
+    CMP R7 R6
+    BEQ execve_copy_argv_done
+    
+    MOV R8 R7
+    SHL R8 R8 2 
+
+    LDW R12 [R11 + R8]       ;we copy stings pointers here not actual strings!
+
+    STW R12 [R9 + R8]
+
+    ADD R7 R7 1
+    B execve_copy_argv
+
+execve_copy_argv_done:
+
+    ; argv[argc] = NULL
+    MOV R8 R6
+    SHL R8 R8 2
+    ADD R10 R9 R8
+
+    LI R12 0
+    STW R12 [R10]               ; write NuLL - finish form user stack frame (arguments part!)
+
+    ;-------------------------------------------------------------
+    ; Prepare trapframe for new process.
+    ;-------------------------------------------------------------
+
+    STW R6 [SP + TF_R1]      ; argc
+
+    MOV R1 R9
+    STW R1 [SP + TF_R2]      ; argv
+
     LI R1 0
-    STW R1 [SP + TF_R3]
-    STW R15 [SP + TF_USP]
+    STW R1 [SP + TF_R3]      ; envp
+
+    STW R5 [SP + TF_USP]     ; initial user SP
+
 
     ; Prepare a fresh user register state for the new program.
     LI R1 0
@@ -772,14 +903,17 @@ argv_copy_done:
     STW R1 [SP + TF_R10]
     STW R1 [SP + TF_R11]
     STW R1 [SP + TF_R12]
-    LI R1 USER_CODE_VA
+    LI R1   USER_CODE_VA               ; user execve program entry point
     STW R1 [SP + TF_SEPC]              ; set SEPC to the new program entry point
 
-    B trap_restore                     ; restore kernel trapframe and start user execution at 0x7000
+    B trap_restore                     ; restore kernel trapframe and start user execution at user_code_va
 
 execve_read_fail:
     MOV R1 R11
     BL page_free                  ; free the failed new code page
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4           ; reload task ptr before restoring USER_CODE_VA mapping
 
     CMP R12 0
     BEQ execve_restore_no_prev
@@ -787,7 +921,7 @@ execve_read_fail:
     LI R2 USER_CODE_VA
     MOV R3 R12
     LI R4 USER_RX
-    BL map_page                   ; restore previous exec page mapping at USER_CODE_VA
+    BL map_page_rt                ; restore previous exec page mapping at USER_CODE_VA
     MOV R1 R12
     TASK_SET_CODE_PAGE R5, R12    ; restore previous exec code page pointer
     B execve_restore_done
@@ -797,7 +931,7 @@ execve_restore_no_prev:
     LI R2 USER_CODE_VA
     LI R3 0
     LI R4 0
-    BL map_page                   ; unmap USER_CODE_VA if there was no previous code page
+    BL map_page_rt                ; unmap USER_CODE_VA if there was no previous code page
     LI R1 0
     TASK_SET_CODE_PAGE R5, R1
 
@@ -846,6 +980,13 @@ execve_badfault:
     LI R1 ERR_FAULT
     STW R1 [SP + TF_R1]
     B trap_restore
+
+;-------------------------------------------------------------
+; Temporary argv pointer storage during execve
+; Supports up to 16 arguments.
+;-------------------------------------------------------------
+execve_tmp_argv:
+    .SPACE 64        ; 16 × 4-byte pointers
 
 syscall_fork:
     ;================================================================
@@ -5391,10 +5532,10 @@ restore_kernel_context:         ;in case new task was stopped in kernel jump to 
 .EQU PAGE_SIZE      4096
 .EQU PAGE_SHIFT     12
 
-.EQU PAGE_ALLOC_BASE 0x00040000
+.EQU PAGE_ALLOC_BASE 0x00050000
 
 .EQU MAX_PHYS_PAGES 128
-.EQU PAGE_ALLOC_END  0x000C0000
+.EQU PAGE_ALLOC_END  0x000D0000
 
 
 ; 0 = free
@@ -6637,18 +6778,11 @@ console_unlock:
 ; VFS module
 ; ==================================================
 
+; common va address in data segment of a process
+.EQU USER_READ_BUF,  0x00042000
+.EQU USER_WRITE_BUF, 0x00042100
 
 
-
-
-
-
-
-
-
-; need to define and allocate user stuff at user code
-.EQU USER_WRITE_BUF, 0x6000
-.EQU USER_READ_BUF,  0x6010
 
 ; ================================================================
 ; USER mode TASKS
@@ -6688,6 +6822,7 @@ write_loop1:
     ; Exit after the write test.
     LI R1 SYS_EXIT
     SVC SYS_EXIT
+
 
 ; ---TASK 2---------------------------------------------
 

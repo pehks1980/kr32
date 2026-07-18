@@ -2,6 +2,50 @@
 
 from mmu import PAGE_EXEC, PAGE_GLOBAL, PAGE_PRESENT, PAGE_READ, PAGE_USER, PAGE_WRITE
 
+_SYMBOLS = None
+
+
+def _load_symbols():
+    global _SYMBOLS
+    if _SYMBOLS is not None:
+        return _SYMBOLS
+
+    _SYMBOLS = ({}, {})
+    try:
+        from assembler import Assembler
+
+        for path in ("kernelshed_pre.asm", "kernelshed.asm"):
+            try:
+                with open(path, "r", encoding="utf-8") as src:
+                    lines = src.readlines()
+                asm = Assembler()
+                asm.pass1(lines)
+                _SYMBOLS = (asm.labels, asm.consts)
+                break
+            except OSError:
+                continue
+    except Exception:
+        pass
+    return _SYMBOLS
+
+
+def _sym(name, default=None):
+    labels, consts = _load_symbols()
+    return labels.get(name, labels.get(name.upper(), consts.get(name, consts.get(name.upper(), default))))
+
+
+def _read_u32_phys(vm, paddr):
+    if paddr is None or paddr < 0 or paddr + 4 > len(vm.physical_memory):
+        return None
+    return int.from_bytes(vm.physical_memory[paddr:paddr + 4], "little")
+
+
+def _pte_for(vm, ptbr, vaddr):
+    if ptbr is None or vaddr is None:
+        return None
+    vpn = vaddr // vm.mmu.page_size
+    return _read_u32_phys(vm, ptbr + vpn * 4)
+
 
 def format_page_flags(flags):
     """Return compact PTE/TLB flags in KR32 order."""
@@ -99,6 +143,131 @@ def dump_page_table(vm):
         print("  no present entries")
     print()
 
+
+def _task_context(vm):
+    current_task_addr = _sym("CURRENT_TASK")
+    tasks_addr = _sym("tasks")
+    task_size = _sym("TASK_SIZE")
+    if current_task_addr is None or tasks_addr is None or task_size is None:
+        return None
+
+    idx = _read_u32_phys(vm, current_task_addr)
+    if idx is None:
+        return None
+    task_ptr = tasks_addr + idx * task_size
+
+    def field(name):
+        off = _sym(name)
+        return _read_u32_phys(vm, task_ptr + off) if off is not None else None
+
+    return {
+        "idx": idx,
+        "ptr": task_ptr,
+        "pid": field("TASK_PID"),
+        "state": field("TASK_STATE"),
+        "ptbr": field("TASK_PTBR"),
+        "pc": field("TASK_PC"),
+        "usp": field("TASK_USP"),
+        "ksp": field("TASK_KSP"),
+        "resume": field("TASK_RESUME"),
+        "wait": field("TASK_WAIT"),
+        "break": field("TASK_BREAK"),
+        "code_page": field("TASK_CODE_PAGE"),
+        "data_page": field("TASK_DATA_PAGE"),
+        "ustack_page": field("TASK_USTACK_PAGE"),
+    }
+
+
+def dump_task_context(vm):
+    """Dump scheduler/task metadata relevant to the active address space."""
+    ctx = _task_context(vm)
+    print("=== TASK CONTEXT ===")
+    if ctx is None:
+        print("  unavailable: symbols or task memory not readable")
+        print()
+        return
+
+    print(
+        f"  current={ctx['idx']} task=0x{ctx['ptr']:08x} "
+        f"pid={ctx['pid']} state={ctx['state']} wait={ctx['wait']} resume={ctx['resume']}"
+    )
+    print(
+        f"  task PTBR=0x{ctx['ptbr'] or 0:08x} active PTBR=0x{vm.mmu.ptbr_pa:08x} "
+        f"task PC=0x{ctx['pc'] or 0:08x}"
+    )
+    print(
+        f"  KSP=0x{ctx['ksp'] or 0:08x} USP=0x{ctx['usp'] or 0:08x} "
+        f"BRK=0x{ctx['break'] or 0:08x}"
+    )
+    print(
+        f"  pages: code=0x{ctx['code_page'] or 0:08x} "
+        f"data=0x{ctx['data_page'] or 0:08x} ustack=0x{ctx['ustack_page'] or 0:08x}"
+    )
+    print()
+
+
+def _interesting_vaddrs(vm):
+    candidates = [
+        ("PC", vm.pc),
+        ("SEPC", vm.sepc),
+        ("trap_epc", vm.trap_epc),
+        ("trap_return", vm.trap_return_pc),
+        ("STVAL", vm.stval),
+        ("SP", vm.get_sp()),
+        ("USER_CODE_VA", _sym("USER_CODE_VA")),
+        ("USER_DATA_VA", _sym("USER_DATA_VA")),
+        ("USER_STACK_VA", _sym("USER_STACK_VA")),
+        ("HEAP_START", _sym("HEAP_START")),
+    ]
+
+    seen = set()
+    out = []
+    for name, addr in candidates:
+        if addr is None:
+            continue
+        page = (addr // vm.mmu.page_size) * vm.mmu.page_size
+        key = (name, page) if name in ("PC", "SEPC", "trap_epc", "trap_return", "STVAL", "SP") else ("fixed", page)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((name, addr, page))
+    return out
+
+
+def dump_address_context(vm):
+    """Dump focused PTE/TLB state for addresses relevant to the current task."""
+    ctx = _task_context(vm)
+    task_ptbr = ctx["ptbr"] if ctx else None
+    active_ptbr = vm.mmu.ptbr_pa
+
+    print("=== ADDRESS CONTEXT ===")
+    print("  name           VA         page       active PTE          task PTE            TLB")
+    for name, addr, page in _interesting_vaddrs(vm):
+        active_pte = _pte_for(vm, active_ptbr, page)
+        task_pte = _pte_for(vm, task_ptbr, page) if task_ptbr != active_ptbr else active_pte
+        vpn = vm.mmu.vpn(page)
+        tlb = vm.mmu.tlb.entries.get(vpn)
+
+        def fmt_pte(pte):
+            if pte is None:
+                return "unavailable"
+            flags = pte & 0xFFF
+            if not flags & PAGE_PRESENT:
+                return f"0x{pte:08x} [-]"
+            return f"0x{pte:08x} [{format_page_flags(flags)}]"
+
+        if tlb is None:
+            tlb_text = "-"
+        else:
+            ppn, flags = tlb
+            tlb_text = f"PA 0x{ppn * vm.mmu.page_size:08x} [{format_page_flags(flags)}]"
+
+        print(
+            f"  {name:<13} 0x{addr:08x} 0x{page:08x} "
+            f"{fmt_pte(active_pte):<19} {fmt_pte(task_pte):<19} {tlb_text}"
+        )
+    print()
+
 def dump_idt(vm):
     """Dump the Interrupt Descriptor Table."""
     idtr = vm.idt_base_pa
@@ -186,12 +355,14 @@ def dump_all(vm):
 def dump_debug2(vm, dump_range=None):
     """Dump execution state plus compact MMU views for address-space tests."""
     print("\n" + "="*50)
-    print("KR32 VM DEBUG DUMP (MMU)")
+    print("KR32 VM DEBUG DUMP (TASK/MMU)")
     print("="*50)
     dump_registers(vm)
     dump_flags(vm)
     dump_trap_state(vm)
-    dump_page_table(vm)
+    dump_task_context(vm)
+    dump_address_context(vm)
+    dump_idt(vm)
     dump_tlb(vm)
     if dump_range is not None:
         dump_memory(vm, dump_range[0], dump_range[1])

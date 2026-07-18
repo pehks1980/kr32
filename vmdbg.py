@@ -22,6 +22,19 @@ def parse_int(value):
         raise argparse.ArgumentTypeError(f"invalid integer: {value}")
 
 
+def parse_addr_or_reg(cpu, value):
+    text = value.strip()
+    upper = text.upper()
+    aliases = {"SP": cpu.SP_REG, "FP": cpu.FP_REG, "LR": cpu.LR_REG, "ZERO": cpu.ZERO_REG}
+    if upper in aliases:
+        return cpu.r(aliases[upper])
+    if upper.startswith("R") and upper[1:].isdigit():
+        idx = int(upper[1:], 10)
+        if 0 <= idx < 32:
+            return cpu.r(idx)
+    return parse_int(text)
+
+
 def parse_watch_mem(value):
     parts = value.split(":")
     if len(parts) == 1:
@@ -219,7 +232,7 @@ class VMDbgShell(cmd.Cmd):
             print("usage: vm ADDR [SIZE]")
             return
         try:
-            addr = parse_int(parts[0])
+            addr = parse_addr_or_reg(self.cpu, parts[0])
             size = parse_int(parts[1]) if len(parts) == 2 else 128
         except argparse.ArgumentTypeError as exc:
             print(exc)

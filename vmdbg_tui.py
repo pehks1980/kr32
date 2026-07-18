@@ -20,6 +20,19 @@ def parse_int(value):
         raise ValueError(f"invalid integer: {value}")
 
 
+def parse_addr_or_reg(cpu, value):
+    text = value.strip()
+    upper = text.upper()
+    aliases = {"SP": cpu.SP_REG, "FP": cpu.FP_REG, "LR": cpu.LR_REG, "ZERO": cpu.ZERO_REG}
+    if upper in aliases:
+        return cpu.r(aliases[upper])
+    if upper.startswith("R") and upper[1:].isdigit():
+        idx = int(upper[1:], 10)
+        if 0 <= idx < 32:
+            return cpu.r(idx)
+    return parse_int(text)
+
+
 def parse_watch_mem(value):
     parts = value.split(":")
     if len(parts) == 1:
@@ -776,7 +789,7 @@ class KM32TUI:
                 self._show_phys_mem(addr, 128)
                 return False
             if op == "vm" and len(parts) in (2, 3):
-                addr = parse_int(parts[1])
+                addr = parse_addr_or_reg(self.cpu, parts[1])
                 size = parse_int(parts[2]) if len(parts) == 3 else 128
                 self.mem_view = ("virt", addr, size)
                 self._show_virt_mem(addr, size)

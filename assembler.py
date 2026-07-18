@@ -75,6 +75,7 @@ OP = {
     "CSRRW": 0x5D,
     "EOI": 0x5E,
     "TRACE": 0x5F,
+    "INVLPG": 0x60,
 }
 
 REG_ALIAS = {
@@ -745,6 +746,11 @@ class Assembler:
             self.emit32(self.encode(OP[op], reg(p[1]), csr(p[2]), reg(p[3])))
 
         elif op == "EOI":
+            self.emit32(self.encode(OP[op], reg(p[1])))
+
+        elif op == "INVLPG":
+            if len(p) != 2:
+                raise ValueError("INVLPG expects one register operand")
             self.emit32(self.encode(OP[op], reg(p[1])))
 
         else:

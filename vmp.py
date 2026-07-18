@@ -464,6 +464,7 @@ class CPU:
             0x5D: "CSRRW",
             0x5E: "EOI",
             0x5F: "TRACE",
+            0x60: "INVLPG",
 
             0xFF: "HLT",
         }.get(op)
@@ -555,6 +556,8 @@ class CPU:
             return f"EOI {self.reg_name(a)}"
         if op == 0x5F:
             return f"TRACE {c}"
+        if op == 0x60:
+            return f"INVLPG {self.reg_name(a)}"
         
         if op == 0xFF:
             return "HLT"
@@ -1430,6 +1433,10 @@ class CPU:
                 elif trace_val == 2:
                     self.trace = True
                     self.tracevirt = True
+
+            elif op == 0x60:
+                self.require_supervisor("INVLPG")
+                self.mmu.tlb.flush_vpn(self.mmu.vpn(self.r(a)))
 
             elif op == 0x50:
                 self.require_supervisor("SETPTBR")

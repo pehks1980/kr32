@@ -1,4 +1,4 @@
-.ORG 0x7000
+.ORG 0x43000
 
     ; Simple user program for execve test.
     ; It writes a message to stdout and then loops forever.
