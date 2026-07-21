@@ -123,6 +123,19 @@ B KERNEL_START
 
 .EQU INODE_SIZEOF,  20
 
+; ================================================================
+; Dirent structure for readdir (matches userspace)
+; ================================================================
+.EQU DT_REG,        1          ; regular file
+.EQU DT_DIR,        2          ; directory
+
+.EQU DIRENT_INODE,  0          ; uint32_t d_ino  (dummy inode)
+.EQU DIRENT_SIZE,   4          ; uint32_t d_size (file size in bytes)
+.EQU DIRENT_TYPE,   8          ; uint32_t d_type (DT_REG, DT_DIR)
+.EQU DIRENT_NAME,   12         ; char     d_name[64]
+.EQU DIRENT_NAME_LEN, 64
+.EQU DIRENT_SIZEOF, 76         
+
 
 
 ; KBUFFER for kernel<->user data transfer, one per task, mapped into each address space at 0x1000-0x1FFF 
@@ -178,11 +191,13 @@ func KERNEL_START
         call tarfs_init
         call tarfs_dump_index
 
+
+        ;test read dirs from tarfs probably needs to be removed later
         LI R1 etc_path
-        call tarfs_readdir
+        call tarfs_readdir1
 
         LI R1 bin_path
-        call tarfs_readdir
+        call tarfs_readdir1
 
         ; Activate the first dynamically created address space before
         ; enabling translation and restoring its initial trapframe.
@@ -4053,8 +4068,9 @@ tar_lookup_found:
     MOV R1 R10              ; inode
     LI  R2 tarfs_ops        ; ops table
     MOV R3 R11              ; private = tar entry
-    LI  R4 INODE_REG        ; FILE type
-    LDW R5 [R11 + TAR_IDX_SIZE] ;file size 
+      
+    LDW R4 [R11 + TAR_IDX_TYPE] ; FILE type
+    LDW R5 [R11 + TAR_IDX_SIZE] ; file size 
     BL inode_init
 
     MOV R1 R10              ;R1 = new node ptr inited for file found in lookup
@@ -4396,10 +4412,16 @@ tarfs_read:
     BNE tarfs_read_fault
 
     LDW R11 [R8 + FILE_INODE]
+    LDW R5  [R11 + INODE_TYPE]
     LDW R11 [R11 + INODE_PRIVATE]
+     ; ---- check if this is a directory ----
+    LI  R2 INODE_DIR
+    CMP R5 R2
+    ; CMP R5 INODE_DIR - this will result inerror as command will be assembled in decimal number
+    BEQ tarfs_read_dir
 
     LDW R12 [R8 + FILE_OFFSET]
-    LDW R4 [R11 + TAR_IDX_SIZE]
+    LDW R4  [R11 + TAR_IDX_SIZE]
 
     CMP R12 R4
     BGEU tarfs_read_eof
@@ -4420,6 +4442,14 @@ tarfs_read_count_ready:
     STW R12 [R8 + FILE_OFFSET]
     B tarfs_read_done
 
+tarfs_read_dir:
+    ; directory read – call our dir read function
+    MOV R1 R8
+    MOV R2 R9
+    MOV R3 R10
+    BL tarfs_readdir
+    B tarfs_read_done   ; jump to the common return path
+
 tarfs_read_fault:
     LI R1 ERR_FAULT
     B tarfs_read_done
@@ -4439,8 +4469,213 @@ tarfs_read_done:
 tarfs_write:
     LI R1 ERR_ACCES
     RET
+
+; --------------------------------------------------
+; tarfs_readdir - read next directory entry into user buffer
+;
+; R1 = file* (opened directory)
+; R2 = user buffer (struct dirent*)
+; R3 = buffer length (should be >= DIRENT_SIZEOF)
+;
+; returns:
+;   R1 = DIRENT_SIZEOF (74) on success, 0 on EOF, negative errno
+; --------------------------------------------------
+tarfs_readdir:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    ; ---- validate user buffer ----
+    MOV R8 R2                 ; save user buffer
+    MOV R9 R3                 ; save length
+    CMP R9 DIRENT_SIZEOF
+    BLT readdir_short         ; not enough space for one entry
+
+    PUSH R9
+    MOV R1 R8
+    LI  R2 DIRENT_SIZEOF
+    LI  R3 1                  ; write access
+    BL  user_buffer_valid_range
+    POP R9
+    CMP R1 1
+    BNE readdir_fault
+
+    ; ---- get inode and private data ----
+    LDW R4 [R1 + FILE_INODE]    ; R4 = inode*
+    LDW R5 [R4 + INODE_PRIVATE] ; R5 = tar index entry for the directory itself
+    CMP R5 0
+    BEQ readdir_eof
+
+    ; get directory prefix from that tar entry (e.g., "etc/")
+    LDW R10 [R5 + TAR_IDX_NAME] ; R10 = full path of directory (with trailing /)
+
+    ; load current entry index from file offset
+    LDW R11 [R1 + FILE_OFFSET] ; R11 = index (number of entries already returned)
+
+    ; ---- scan tar index from this index ----
+    ;LI R12 tar_count
+    ;LDW R12 [R12]             ; total number of tar entries
+    MOV R6 R11                ; current scan index
+
+readdir_scan:
+    LI  R1 tar_count          ;total number entryes in index count
+    CMP R6 R1
+    BGE readdir_eof           ; no more entries
+
+    ; entry = tar_index + R6 * TAR_IDX_SIZEOF
+    LI R1 tar_index
+    LI R2 TAR_IDX_SIZEOF
+    MUL R3 R6 R2
+    ADD R7 R1 R3              ; R7 = &tar_index[R6]
+
+    ; check if this entry's name starts with the directory prefix
+    LDW R1 [R7 + TAR_IDX_NAME]
+    MOV R2 R10
+    BL str_prefix            ; check if tar_index entry name ie etc/motd matches prefix etc/
+    CMP R1 1
+    BNE readdir_skip
+
+    ; skip the directory entry itself (exact match)
+    LDW R1 [R7 + TAR_IDX_NAME]
+    MOV R2 R10
+    BL strcmp                ; ie skip if we read 'etc/' == etc/
+    CMP R1 1
+    BEQ readdir_skip
+
+    ; ---- found a matching file/directory ----
+    ; skip the prefix to get the relative component
+    LDW R1 [R7 + TAR_IDX_NAME]
+    MOV R2 R10
+    BL skip_prefix            ; R1 = pointer after prefix omit prefix - just filename 'etc/bin' -> bin
+    MOV R9 R1                 ; R9 = component name (e.g., "motd" (file) or "network/ (subdir)")
+
+    ; compute the component length up to next '/'
+    MOV R1 R9
+    BL path_component_len     ; R1 = component length (L)
+    MOV R8 R1                 ; R8 = component name length
+
+    ; clamp to DIRENT_NAME_LEN - 1 to avoid overflow
+    LI R2 63
+    CMP R4 R2
+    BLE readdir_name_ok
+    MOV R4 63
+readdir_name_ok:
+    ; save R6 cureent entry index
+    MOV R11 R6
+    ;get type 
+    LDW R6  [R7 + TAR_IDX_TYPE]  ;R6  R11 = tar type (0=file, 5=dir)
+
+    ; map tar type to DT_* constants
+    CMP R6 5
+    BEQ readdir_type_dir
+    LI R6 DT_REG               ; default type to regular r11 - file
+    B readdir_type_done
+readdir_type_dir:
+    LI R6 DT_DIR               ; switch type R11 - dir
+readdir_type_done:
+
+    ; ---- build struct dirent in KBUF_WR ----
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R1, R5
+
+
+   ; GET_CURR_TASK_IDX R2
+   ; GET_TASK_PTR R2, R2
+   ; TASK_GET_KBUF_WR R5, R2    ; R5 = kernel write buffer
+
+    ; d_ino = index + 1 (dummy); R1 = kernel write buffer - form dirent stuc with read dir-entry
+    ADD R3 R11 1
+    STW R3 [R1 + DIRENT_INODE]
+    ; d_type = DT_REG or DT_DIR
+    STW R6 [R1 + DIRENT_TYPE]
+
+    ; get size from tar entry
+    LDW R12 [R7 + TAR_IDX_SIZE]  ; R12 = file size
+    ; d_size = file size
+    STW R12 [R1 + DIRENT_SIZE]
+
+    ; ---- update file offset to next entry ----
+    ;ADD R6 R6 1
+    STW R3 [R1 + FILE_OFFSET] ; store new index R11+1 for next read
+    
+
+    ; d_name = component name (copy up to 64 bytes)
+    MOV R1 R9                  ; source name R9 = component name (e.g., "motd" (file) or "network/ (subdir)")
+    ADD R3 R5 DIRENT_NAME      ; destination dirent struc in KBUF_WR
+    LI  R6 0                   ; index
+
+readdir_copy_name:
+    CMP R6 R8                  ;R8 = component name length
+    BGE readdir_copy_name_done
+    LDB R10 [R1 + R6]
+    STB R10 [R3 + R6]
+    ADD R6 R6 1
+    B readdir_copy_name
+
+readdir_copy_name_done:
+    ; NUL-terminate
+    LI R10 0
+    STB R10 [R3 + R6]
+
+    ; ---- copy whole dirent (DIRENT_SIZEOF bytes) to user buffer ----
+    MOV R1 R8                 ; user buffer (original)
+    LI  R2 DIRENT_SIZEOF
+    MOV R4 R5                 ; kernel source (KBUF_WR)
+    BL copy_to_user
+    CMP R1 DIRENT_SIZEOF
+    BNE readdir_fault
+
+    ; return number of bytes written (DIRENT_SIZEOF)
+    MOV R1 DIRENT_SIZEOF
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+readdir_skip:
+    ADD R6 R6 1
+    B readdir_scan
+
+readdir_eof:
+    LI R1 0
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+readdir_short:
+    LI R1 ERR_FAULT
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+readdir_fault:
+    LI R1 ERR_FAULT
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+
 ;==========================================================================
-;tarfs_readdir - scans tar index reads files in a dir and prints output
+;tarfs_readdir1 - scans tar index reads files in a dir and prints output
 ; --------------------------------------------------
 ; tarfs_readdir
 ;
@@ -4453,7 +4688,7 @@ tarfs_write:
 ; prints matching entries
 ; --------------------------------------------------
 
-tarfs_readdir:
+tarfs_readdir1:
 
     PUSH LR
     PUSH R8
@@ -4769,7 +5004,7 @@ wq_wake_b_done:
 
 ; INODE_TYPE
 .EQU INODE_REG,   1
-.EQU INODE_DIR,   2
+.EQU INODE_DIR,   53   ;'5' -taken from tarfs needs to be fixed!
 .EQU INODE_CHAR,  3
 .EQU INODE_PIPE,  4
 
@@ -5028,7 +5263,8 @@ vfs_open:
     LDW R2 [R8 + INODE_TYPE]
     LI R3 INODE_DIR
     CMP R2 R3
-    BEQ fail_isdir            ; if pathname is a dir
+    
+    ;BEQ fail_isdir            ; if pathname is a dir -implemented readdir
 
     BL file_alloc        ; out: R1 = pointer to new FILE object in file_pool
     CMP R1 0
@@ -7034,8 +7270,12 @@ child_process:
     ;LI R2 echo_argv
     ;LI R3 0
 
-    LI R1 cat_path
-    LI R2 cat_argv
+    ;LI R1 cat_path
+    ;LI R2 cat_argv
+    ;LI R3 0
+
+    LI R1 ls_path
+    LI R2 ls_argv
     LI R3 0
 
     SVC SYS_EXECVE
@@ -7150,6 +7390,27 @@ cat_argv:
     .WORD cat_path
     .WORD cat_arg1
     .WORD cat_arg2
+    .WORD 0
+
+;==========
+;ls
+;==========
+ls_path:
+    .ASCIIZ "bin/ls"
+
+ls_arg0:
+    .ASCIIZ "ls"
+
+ls_arg1:
+    .ASCIIZ "etc/"
+
+ls_arg2:
+    .ASCIIZ "bin/"
+
+ls_argv:
+    .WORD ls_path
+    .WORD ls_arg1
+    .WORD ls_arg2
     .WORD 0
 
 

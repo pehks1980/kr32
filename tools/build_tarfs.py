@@ -108,6 +108,26 @@ def main():
     files = sorted(p for p in root.rglob("*") if p.is_file())
 
     lines = [".ORG 0xA0000", "tarfs_start:"]
+    lines.append(""" 
+    ; ----- bin/ directory -----
+    .ASCIIZ "bin/"
+    .SPACE 119                
+    .ASCIIZ "00000000000"     
+    .SPACE 20                 
+    .ASCIIZ "5"               
+    .SPACE 354                
+    ; no file data (directory has zero size)
+                 
+    ; ----- etc/ directory -----
+    .ASCIIZ "etc/"
+    .SPACE 119                
+    .ASCIIZ "00000000000"     
+    .SPACE 20                 
+    .ASCIIZ "5"               
+    .SPACE 354                
+    ; no file data (directory has zero size)
+
+    """)
     for path in files:
         data = read_source_bytes(path)
         lines.extend(emit_entry(normalize_path(path), data))
