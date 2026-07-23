@@ -4489,22 +4489,24 @@ tarfs_readdir:
     PUSH R12
 
     ; ---- validate user buffer ----
-    MOV R8 R2                 ; save user buffer
+    MOV R8 R2                 ; save user buffer + to stack
+    PUSH R8
     MOV R9 R3                 ; save length
+    MOV R12 R1                ; save file ptr
     CMP R9 DIRENT_SIZEOF
     BLT readdir_short         ; not enough space for one entry
 
-    PUSH R9
+    ;PUSH R9
     MOV R1 R8
     LI  R2 DIRENT_SIZEOF
     LI  R3 1                  ; write access
     BL  user_buffer_valid_range
-    POP R9
+    ;POP R9
     CMP R1 1
     BNE readdir_fault
 
     ; ---- get inode and private data ----
-    LDW R4 [R1 + FILE_INODE]    ; R4 = inode*
+    LDW R4 [R12 + FILE_INODE]    ; R4 = inode* r12 -file ptf
     LDW R5 [R4 + INODE_PRIVATE] ; R5 = tar index entry for the directory itself
     CMP R5 0
     BEQ readdir_eof
@@ -4513,7 +4515,7 @@ tarfs_readdir:
     LDW R10 [R5 + TAR_IDX_NAME] ; R10 = full path of directory (with trailing /)
 
     ; load current entry index from file offset
-    LDW R11 [R1 + FILE_OFFSET] ; R11 = index (number of entries already returned)
+    LDW R11 [R12 + FILE_OFFSET] ; R11 = index (number of entries already returned)
 
     ; ---- scan tar index from this index ----
     ;LI R12 tar_count
@@ -4522,6 +4524,7 @@ tarfs_readdir:
 
 readdir_scan:
     LI  R1 tar_count          ;total number entryes in index count
+    LDW R1 [R1]
     CMP R6 R1
     BGE readdir_eof           ; no more entries
 
@@ -4559,9 +4562,9 @@ readdir_scan:
 
     ; clamp to DIRENT_NAME_LEN - 1 to avoid overflow
     LI R2 63
-    CMP R4 R2
+    CMP R8 R2
     BLE readdir_name_ok
-    MOV R4 63
+    MOV R8 63
 readdir_name_ok:
     ; save R6 cureent entry index
     MOV R11 R6
@@ -4569,7 +4572,9 @@ readdir_name_ok:
     LDW R6  [R7 + TAR_IDX_TYPE]  ;R6  R11 = tar type (0=file, 5=dir)
 
     ; map tar type to DT_* constants
-    CMP R6 5
+    LI  R1 INODE_DIR     ;adapted 35hex yess
+    CMP R6 R1
+    ;CMP R6 5            ;needs to be adapted 35hex
     BEQ readdir_type_dir
     LI R6 DT_REG               ; default type to regular r11 - file
     B readdir_type_done
@@ -4594,24 +4599,24 @@ readdir_type_done:
     STW R6 [R1 + DIRENT_TYPE]
 
     ; get size from tar entry
-    LDW R12 [R7 + TAR_IDX_SIZE]  ; R12 = file size
+    LDW R2  [R7 + TAR_IDX_SIZE]  ; R12 = file size
     ; d_size = file size
-    STW R12 [R1 + DIRENT_SIZE]
+    STW R2  [R1 + DIRENT_SIZE]
 
     ; ---- update file offset to next entry ----
     ;ADD R6 R6 1
-    STW R3 [R1 + FILE_OFFSET] ; store new index R11+1 for next read
+    STW R3 [R12 + FILE_OFFSET] ; store new index R11+1 for next read
     
 
     ; d_name = component name (copy up to 64 bytes)
-    MOV R1 R9                  ; source name R9 = component name (e.g., "motd" (file) or "network/ (subdir)")
-    ADD R3 R5 DIRENT_NAME      ; destination dirent struc in KBUF_WR
+    MOV R2 R9                  ; source name R9 = component name (e.g., "motd" (file) or "network/ (subdir)")
+    ADD R3 R1 DIRENT_NAME      ; destination dirent struc in KBUF_WR
     LI  R6 0                   ; index
 
 readdir_copy_name:
     CMP R6 R8                  ;R8 = component name length
     BGE readdir_copy_name_done
-    LDB R10 [R1 + R6]
+    LDB R10 [R2 + R6]
     STB R10 [R3 + R6]
     ADD R6 R6 1
     B readdir_copy_name
@@ -4622,9 +4627,11 @@ readdir_copy_name_done:
     STB R10 [R3 + R6]
 
     ; ---- copy whole dirent (DIRENT_SIZEOF bytes) to user buffer ----
-    MOV R1 R8                 ; user buffer (original)
-    LI  R2 DIRENT_SIZEOF
-    MOV R4 R5                 ; kernel source (KBUF_WR)
+    
+    LI  R2 DIRENT_SIZEOF      ; len dirent
+    MOV R4 R1                 ; kernel source (KBUF_WR)
+    POP R1                    ; user buffer (original)
+    ;MOV R1 R8                 ; user buffer (original)
     BL copy_to_user
     CMP R1 DIRENT_SIZEOF
     BNE readdir_fault
@@ -4644,6 +4651,7 @@ readdir_skip:
     B readdir_scan
 
 readdir_eof:
+    Pop R1          ;bc we saved r8 inside loop
     LI R1 0
     POP R12
     POP R11
@@ -4654,6 +4662,7 @@ readdir_eof:
     RET
 
 readdir_short:
+    Pop R1 
     LI R1 ERR_FAULT
     POP R12
     POP R11
@@ -4664,6 +4673,7 @@ readdir_short:
     RET
 
 readdir_fault:
+    Pop R1 
     LI R1 ERR_FAULT
     POP R12
     POP R11
