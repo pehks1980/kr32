@@ -73,6 +73,24 @@ def read_source_bytes(path: Path):
         return bytes(asm.memory[start:end])
     return path.read_bytes()
 
+def emit_dir(path: str):
+    name = path.rstrip("/") + "/"
+
+    name_bytes = name.encode("ascii")
+    if len(name_bytes) >= 124:
+        raise ValueError(f"tar path too long: {name}")
+
+    return [
+        f"; {name}",
+        f'    .ASCIIZ "{name}"',
+        f"    .SPACE {124 - len(name_bytes) - 1}",
+        '    .ASCIIZ "00000000000"',   # size = 0
+        "    .SPACE 20",
+        '    .ASCIIZ "5"',             # TAR directory
+        "    .SPACE 354",
+        "",
+    ]
+
 
 def emit_entry(path: str, data: bytes):
     name_bytes = path.encode("ascii")
@@ -105,33 +123,27 @@ def main():
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
-    files = sorted(p for p in root.rglob("*") if p.is_file())
+
+    dirs = sorted(
+        p for p in root.rglob("*")
+        if p.is_dir()
+    )
+
+    files = sorted(
+        p for p in root.rglob("*")
+        if p.is_file()
+    )
 
     lines = [".ORG 0xA0000", "tarfs_start:"]
-    lines.append(""" 
-    ; ----- bin/ directory -----
-    .ASCIIZ "bin/"
-    .SPACE 119                
-    .ASCIIZ "00000000000"     
-    .SPACE 20                 
-    .ASCIIZ "5"               
-    .SPACE 354                
-    ; no file data (directory has zero size)
-                 
-    ; ----- etc/ directory -----
-    .ASCIIZ "etc/"
-    .SPACE 119                
-    .ASCIIZ "00000000000"     
-    .SPACE 20                 
-    .ASCIIZ "5"               
-    .SPACE 354                
-    ; no file data (directory has zero size)
 
-    """)
-    for path in files:
-        data = read_source_bytes(path)
-        lines.extend(emit_entry(normalize_path(path), data))
+    for d in dirs:
+        lines.extend(emit_dir(normalize_path(d)))
+
+    for f in files:
+        data = read_source_bytes(f)
+        lines.extend(emit_entry(normalize_path(f), data))
         lines.append("")
+
     lines.append("    .SPACE 1024")
     lines.append("tarfs_end:")
     lines.append("")

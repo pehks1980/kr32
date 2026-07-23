@@ -91,6 +91,7 @@ B KERNEL_START
 .EQU FD_FLAG_READ,    1
 .EQU FD_FLAG_WRITE,   2
 
+
 ;FILE struc uses inode
 .EQU FILE_INODE,    0
 .EQU FILE_OFFSET,   4
@@ -7406,16 +7407,16 @@ cat_argv:
 ;ls
 ;==========
 ls_path:
-    .ASCIIZ "bin/ls"
+    .ASCIIZ "bin/ls1"
 
 ls_arg0:
-    .ASCIIZ "ls"
+    .ASCIIZ "ls1"
 
 ls_arg1:
     .ASCIIZ "etc/"
 
 ls_arg2:
-    .ASCIIZ "bin/"
+    .ASCIIZ "lib/"
 
 ls_argv:
     .WORD ls_path
