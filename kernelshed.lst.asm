@@ -676,10 +676,12 @@ syscall_execve:
     ; 1) copy pathname from user space into kernel buffer
     ; 2) lookup the file in TARFS/VFS and verify it is an executable file
     ; 3) allocate a new code page and map it RW at USER_CODE_VA
-    ; 4) zero the task's data page and load the file content into the code page
+    ; 4) zero the task's data page and load the file content into the code page (USER_CODE_VA 0x43000)
     ; 5) commit the new task state: PC=user_code_va, USP=USER_STACK_TOP, program break reset
-    ; 6) remap the code page read-only and free any previous exec page
-    ; 7) restore the trapframe to begin executing the new program
+    ; 6) remap the code page read-only map page to code page and free any previous exec page
+    ; 7) process argc argv by copy em out of order so they fit perfectly on top of user stack frame
+    ; of the new task
+    ; 8) restore the trapframe to begin executing the new program
     ;
     ; On success this does not return to the caller; the current task continues
     ; with a freshly-loaded user image at USER_CODE_VA. On failure it returns
@@ -810,10 +812,10 @@ execve_commit_done:
     ; The new program can read argc/argv from the stack, and we also mirror
     ; argc/argv into R1/R2 for convenience.
 
-0x0000274C       POP R4                         ; remember argv ptr from start of syscall
+0x0000274C       POP R4                         ; remember argv ptr from start of syscall_execve
 0x00002750       LI R6 0                        ; R6 = argc counter
 
-    ; Step 1: Count argc
+    ; Step 1: Count argc - walk on argv ptrs count argc till  we find NULL check above
 0x00002758       MOV R7 R4
 execve_argv_count_loop:
 0x0000275C       CMP R7 0
@@ -876,17 +878,16 @@ execve_argv_count_done:
 0x000027A4       MOV R7 R6
 0x000027A8       SUB R7 R7 1             ; [argc]-1
 
-execve_copy_reverse:
+execve_copy_reverse:        ; R7(i) = (argc-1 ... 0)
 0x000027AC       LI  R8 -1
 0x000027B4       CMP R7 R8
 0x000027B8       BEQ execve_strings_done
 
     ; source string = argv[i] starting from last arg string
-    ;MUL R8 R7 4
 0x000027C0       MOV R8 R7
-0x000027C4       SHL R8 R8 2             ;*4+ptr
+0x000027C4       SHL R8 R8 2             ;R7(i)*4+argv ptr => R9(&argv[i])
 0x000027C8       ADD R9 R4 R8
-0x000027CC       LDW R10 [R9]            ;last argv string ptr
+0x000027CC       LDW R10 [R9]            ;get string ptr from last argv[argc-1] (in first iteration)
 
     ;-------------------------------------------------------------
     ; strlen()
@@ -909,14 +910,13 @@ execve_strlen:
     ; remember destination pointer
 0x000027F0       MOV R8 R7
 0x000027F4       SHL R8 R8 2                 ;R7 argv string number in argv array
-0x000027F8       ADD R9 R11 R8
-0x000027FC       STW R5 [R9]                 ;R5(R11) points to temp storage
+0x000027F8       ADD R9 R11 R8               ;r9=&temp argv[i]  which is = R7(i)*4+&temp argv[] array storage
+0x000027FC       STW R5 [R9]                 ;R5->[R9] string pointer on user stack
 
     ; memcpy()
-
 0x00002800       LI R8 0
 
-execve_copy_string:             ; first copy strings ptrs from (argv array) to temp stogare strings
+execve_copy_string:             ; first copy strings ptrs from (argv array) to temp storage
                                 ; from last string to first - opposite order
 0x00002808       LDB R2 [R10 + R8]           ; R10 execv argv &string[i]  (last to first)
 0x0000280C       STB R2 [R5 + R8]            ; R5 same in tmp
@@ -924,7 +924,7 @@ execve_copy_string:             ; first copy strings ptrs from (argv array) to t
 0x00002810       CMP R2 0
 0x00002814       BEQ execve_copy_done
 
-0x0000281C       ADD R8 R8 1
+0x0000281C       ADD R8 R8 1                 ; to next char in string
 0x00002820       B execve_copy_string
 
 execve_copy_done:
@@ -960,7 +960,7 @@ execve_strings_done:            ;copy argv strings array to temp storage in oppo
 0x0000284C       ADD R9 R5 4             ; R9 - move 'writing head' to next element argv in user stack
                             ; R5 - initial user stack pointer
     ;-------------------------------------------------------------
-    ; Copy argv pointers
+    ; argv data copied. now - Copy argv pointers
     ;-------------------------------------------------------------
 0x00002850       LI R7 0
 
@@ -970,11 +970,11 @@ execve_copy_argv:
 0x0000285C       BEQ execve_copy_argv_done
 
 0x00002864       MOV R8 R7
-0x00002868       SHL R8 R8 2
+0x00002868       SHL R8 R8 2              ; R7 argv index
 
-0x0000286C       LDW R12 [R11 + R8]       ;we copy stings pointers here not actual strings!
-
-0x00002870       STW R12 [R9 + R8]
+0x0000286C       LDW R12 [R11 + R8]       ; we copy stings pointers here (not actual strings!)
+                             ; R11 - &execve_tmp_argv
+0x00002870       STW R12 [R9 + R8]        ; R9 - write head on user stack
 
 0x00002874       ADD R7 R7 1
 0x00002878       B execve_copy_argv
@@ -7891,14 +7891,6 @@ tarfs_start:
     .ASCIIZ "5"
     .SPACE 354
 
-; etc/network/
-    .ASCIIZ "etc/network/"
-    .SPACE 111
-    .ASCIIZ "00000000000"
-    .SPACE 20
-    .ASCIIZ "5"
-    .SPACE 354
-
 ; lib/
     .ASCIIZ "lib/"
     .SPACE 119
@@ -9483,4 +9475,4 @@ tarfs_start:
 
     .SPACE 1024
 tarfs_end:
-[ASM] Built memory.img (710144 bytes)
+[ASM] Built memory.img (709632 bytes)

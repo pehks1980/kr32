@@ -600,10 +600,12 @@ syscall_execve:
     ; 1) copy pathname from user space into kernel buffer
     ; 2) lookup the file in TARFS/VFS and verify it is an executable file
     ; 3) allocate a new code page and map it RW at USER_CODE_VA
-    ; 4) zero the task's data page and load the file content into the code page
+    ; 4) zero the task's data page and load the file content into the code page (USER_CODE_VA 0x43000)
     ; 5) commit the new task state: PC=user_code_va, USP=USER_STACK_TOP, program break reset
-    ; 6) remap the code page read-only and free any previous exec page
-    ; 7) restore the trapframe to begin executing the new program
+    ; 6) remap the code page read-only map page to code page and free any previous exec page
+    ; 7) process argc argv by copy em out of order so they fit perfectly on top of user stack frame 
+    ; of the new task
+    ; 8) restore the trapframe to begin executing the new program
     ;
     ; On success this does not return to the caller; the current task continues
     ; with a freshly-loaded user image at USER_CODE_VA. On failure it returns
@@ -714,10 +716,10 @@ execve_commit_done:
     ; The new program can read argc/argv from the stack, and we also mirror
     ; argc/argv into R1/R2 for convenience.
 
-    POP R4                         ; remember argv ptr from start of syscall
+    POP R4                         ; remember argv ptr from start of syscall_execve
     LI R6 0                        ; R6 = argc counter
     
-    ; Step 1: Count argc
+    ; Step 1: Count argc - walk on argv ptrs count argc till  we find NULL check above
     MOV R7 R4
 execve_argv_count_loop:
     CMP R7 0
@@ -780,17 +782,16 @@ execve_argv_count_done:
     MOV R7 R6
     SUB R7 R7 1             ; [argc]-1
 
-execve_copy_reverse:
+execve_copy_reverse:        ; R7(i) = (argc-1 ... 0) 
     LI  R8 -1
     CMP R7 R8
     BEQ execve_strings_done
 
     ; source string = argv[i] starting from last arg string
-    ;MUL R8 R7 4
     MOV R8 R7
-    SHL R8 R8 2             ;*4+ptr 
+    SHL R8 R8 2             ;R7(i)*4+argv ptr => R9(&argv[i]) 
     ADD R9 R4 R8
-    LDW R10 [R9]            ;last argv string ptr
+    LDW R10 [R9]            ;get string ptr from last argv[argc-1] (in first iteration)
 
     ;-------------------------------------------------------------
     ; strlen()
@@ -813,14 +814,13 @@ execve_strlen:
     ; remember destination pointer
     MOV R8 R7
     SHL R8 R8 2                 ;R7 argv string number in argv array
-    ADD R9 R11 R8
-    STW R5 [R9]                 ;R5(R11) points to temp storage
+    ADD R9 R11 R8               ;r9=&temp argv[i]  which is = R7(i)*4+&temp argv[] array storage
+    STW R5 [R9]                 ;R5->[R9] string pointer on user stack
 
     ; memcpy()
-
     LI R8 0
 
-execve_copy_string:             ; first copy strings ptrs from (argv array) to temp stogare strings 
+execve_copy_string:             ; first copy strings ptrs from (argv array) to temp storage 
                                 ; from last string to first - opposite order
     LDB R2 [R10 + R8]           ; R10 execv argv &string[i]  (last to first)
     STB R2 [R5 + R8]            ; R5 same in tmp
@@ -828,7 +828,7 @@ execve_copy_string:             ; first copy strings ptrs from (argv array) to t
     CMP R2 0
     BEQ execve_copy_done
 
-    ADD R8 R8 1
+    ADD R8 R8 1                 ; to next char in string
     B execve_copy_string
 
 execve_copy_done:
@@ -864,7 +864,7 @@ execve_strings_done:            ;copy argv strings array to temp storage in oppo
     ADD R9 R5 4             ; R9 - move 'writing head' to next element argv in user stack
                             ; R5 - initial user stack pointer
     ;-------------------------------------------------------------
-    ; Copy argv pointers
+    ; argv data copied. now - Copy argv pointers
     ;-------------------------------------------------------------
     LI R7 0
 
@@ -874,11 +874,11 @@ execve_copy_argv:
     BEQ execve_copy_argv_done
     
     MOV R8 R7
-    SHL R8 R8 2 
+    SHL R8 R8 2              ; R7 argv index
 
-    LDW R12 [R11 + R8]       ;we copy stings pointers here not actual strings!
-
-    STW R12 [R9 + R8]
+    LDW R12 [R11 + R8]       ; we copy stings pointers here (not actual strings!)
+                             ; R11 - &execve_tmp_argv
+    STW R12 [R9 + R8]        ; R9 - write head on user stack
 
     ADD R7 R7 1
     B execve_copy_argv
