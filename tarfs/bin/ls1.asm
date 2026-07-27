@@ -40,8 +40,7 @@ main:
     CMP R8 2                ; Need at least one argument (argv[1])
     BLT usage
 
-    ; Initialize the allocator (must do this first!)
-    CALL malloc_init
+    
 
     LI R10 1                ; R10 = current argument index (argv[1])
     LI R6 0                 ; R6 = return code (0 = success)

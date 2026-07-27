@@ -7277,9 +7277,9 @@ child_process:
     SVC SYS_WRITE
 
 
-    ;LI R1 echo_path
-    ;LI R2 echo_argv
-    ;LI R3 0
+    LI R1 echo_path
+    LI R2 echo_argv
+    LI R3 0
 
     ;LI R1 cat_path
     ;LI R2 cat_argv
