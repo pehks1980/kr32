@@ -13,6 +13,7 @@ from assembler import Assembler
 ROOT = Path(__file__).resolve().parent.parent
 TARFS_ROOT = ROOT / "tarfs"
 OUT = ROOT / "tarfs_generated.inc"
+LST_ROOT = ROOT / "lst"
 
 
 def octal_size(length):
@@ -56,6 +57,11 @@ def normalize_path(path: Path):
     return rel.lstrip("/")
 
 
+def listing_path_for_source(path: Path):
+    rel = path.resolve().relative_to(TARFS_ROOT.resolve())
+    return LST_ROOT / rel.with_suffix(".lst.asm")
+
+
 def read_source_bytes(path: Path):
     if path.suffix == ".asm":
         src = subprocess.run(
@@ -67,7 +73,9 @@ def read_source_bytes(path: Path):
         ).stdout.splitlines(True)
         asm = Assembler()
         lines = src
-        asm.build(lines, out="/tmp/tarfs_build.img", write_output=False)
+        listing_path = listing_path_for_source(path)
+        listing_path.parent.mkdir(parents=True, exist_ok=True)
+        asm.build(lines, out="/tmp/tarfs_build.img", write_output=False, listing_out=listing_path)
         start = 0x043000
         end = asm.pc
         return bytes(asm.memory[start:end])

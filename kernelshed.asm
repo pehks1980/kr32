@@ -924,6 +924,9 @@ execve_copy_argv_done:
 
     B trap_restore                     ; restore kernel trapframe and start user execution at user_code_va
 
+; as it should be clear 
+; if fail occured we rollback depending at what stage fail occured and free used resources
+; then we exit back to child process with fail exit code
 execve_read_fail:
     MOV R1 R11
     BL page_free                  ; free the failed new code page
@@ -1002,7 +1005,7 @@ execve_badfault:
 ; Supports up to 16 arguments.
 ;-------------------------------------------------------------
 execve_tmp_argv:
-    .SPACE 64        ; 16 × 4-byte pointers
+    .SPACE 64        ; up to 16 × 4-byte argv pointers
 
 syscall_fork:
     ;================================================================
@@ -6259,7 +6262,7 @@ task_create_status_ready:
     ; Publish the task only after every required resource and mapping exists.
     TASK_SET_STATE R10, TASK_READY
 
-    ; Initialize program break
+    ; Initialize program break pointer to HEAP_START in User_Data_VA
     LI R1 HEAP_START
     TASK_SET_BREAK R10, R1
 

@@ -33,6 +33,71 @@ def parse_addr_or_reg(cpu, value):
     return parse_int(text)
 
 
+def default_listing_path(asm_path):
+    path = Path(asm_path)
+    return str(Path("lst") / path.with_suffix(".lst.asm").name)
+
+
+def user_listing_path(value):
+    if not value:
+        return None
+    path = Path(value)
+    if path.suffixes[-2:] == [".lst", ".asm"] or path.is_absolute() or path.parts[:1] == ("lst",):
+        return str(path)
+    if len(path.parts) == 1:
+        path = Path("bin") / path
+    return str(Path("lst") / path.with_suffix(".lst.asm"))
+
+
+def strip_asm_comment(line):
+    return line.split(";", 1)[0].strip()
+
+
+def infer_exec_listing_path(asm_path):
+    try:
+        lines = Path(asm_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    labels = {}
+    current_label = None
+    for line in lines:
+        code = strip_asm_comment(line)
+        if not code:
+            continue
+        label_match = re.match(r"^([A-Za-z_.$][\w.$]*):\s*(.*)$", code)
+        if label_match:
+            current_label = label_match.group(1)
+            labels.setdefault(current_label, None)
+            code = label_match.group(2).strip()
+            if not code:
+                continue
+        asciiz_match = re.match(r'^\.ASCIIZ\s+"([^"]*)"', code, re.IGNORECASE)
+        if asciiz_match and current_label:
+            labels[current_label] = asciiz_match.group(1)
+
+    exec_label = None
+    for line in lines:
+        code = strip_asm_comment(line)
+        if not code:
+            continue
+        label_match = re.match(r"^([A-Za-z_.$][\w.$]*):\s*(.*)$", code)
+        if label_match:
+            code = label_match.group(2).strip()
+            if not code:
+                continue
+        li_match = re.match(r"^LI\s+R1\s+([A-Za-z_.$][\w.$]*)$", code, re.IGNORECASE)
+        if li_match:
+            exec_label = li_match.group(1)
+            continue
+        if re.match(r"^SVC\s+SYS_EXECVE\b", code, re.IGNORECASE) and exec_label:
+            exec_path = labels.get(exec_label)
+            if exec_path:
+                return user_listing_path(exec_path)
+
+    return None
+
+
 def parse_watch_mem(value):
     parts = value.split(":")
     if len(parts) == 1:
@@ -71,8 +136,10 @@ class KM32TUI:
     ]
 
     LISTING_ADDR_RE = re.compile(r"^0x([0-9A-Fa-f]{8})\s+(.*)$")
+    USER_CODE_START = 0x00043000
+    USER_CODE_END = 0x00044000
 
-    def __init__(self, cpu, trace=False, lst_path=None, key_probe=False):
+    def __init__(self, cpu, trace=False, lst_path=None, user_lst_path=None, key_probe=False):
         self.cpu = cpu
         self.trace = trace
         self.key_probe = key_probe
@@ -87,15 +154,16 @@ class KM32TUI:
         self.output_win = None
         self.cmd_win = None
         self.lst_path = Path(lst_path) if lst_path else None
-        self.listing_lines = []
-        self.listing_addr_to_index = {}
-        self.listing_addrs = []
+        self.user_lst_path = Path(user_lst_path) if user_lst_path else None
+        self.kernel_listing = self._empty_listing(self.lst_path)
+        self.user_listing = self._empty_listing(self.user_lst_path)
         self.listing_focus = False
         self.force_full_redraw = True
         self.esc_pending = False
         self.mem_view = None
         self.probe_lines = ["Key probe mode", "Press keys to inspect codes. q to exit."]
-        self._load_listing()
+        self.kernel_listing = self._load_listing(self.lst_path)
+        self.user_listing = self._load_listing(self.user_lst_path)
         self.prev_info_state = None
         # do not override CPU trace_output/quiet here; main() controls them
 
@@ -152,20 +220,29 @@ class KM32TUI:
             except curses.error:
                 pass
 
-    def _load_listing(self):
-        if not self.lst_path:
-            return
+    def _empty_listing(self, path):
+        return {"path": path, "lines": [], "addr_to_index": {}, "addrs": []}
+
+    def _load_listing(self, path):
+        listing = self._empty_listing(path)
+        if not path:
+            return listing
         try:
-            self.listing_lines = self.lst_path.read_text().splitlines()
+            listing["lines"] = path.read_text().splitlines()
         except OSError as exc:
             self.status = f"lst disabled: {exc}"
-            self.listing_lines = []
-            return
-        for idx, line in enumerate(self.listing_lines):
+            return listing
+        for idx, line in enumerate(listing["lines"]):
             match = self.LISTING_ADDR_RE.match(line)
             if match:
-                self.listing_addr_to_index[int(match.group(1), 16)] = idx
-        self.listing_addrs = sorted(self.listing_addr_to_index)
+                listing["addr_to_index"][int(match.group(1), 16)] = idx
+        listing["addrs"] = sorted(listing["addr_to_index"])
+        return listing
+
+    def _active_listing(self):
+        if self.USER_CODE_START <= self.cpu.pc < self.USER_CODE_END and self.user_listing["lines"]:
+            return self.user_listing
+        return self.kernel_listing
 
     def _loop(self):
         if self.key_probe:
@@ -254,7 +331,7 @@ class KM32TUI:
             self.stdscr.refresh()
             return False
 
-        show_listing = bool(self.listing_lines) and disasm_w >= 70
+        show_listing = bool(self._active_listing()["lines"]) and disasm_w >= 70
         if show_listing:
             if self.listing_focus:
                 cpu_disasm_w = max(24, min(disasm_w // 4, 34))
@@ -280,7 +357,9 @@ class KM32TUI:
 
         self.disasm_win.addstr(0, 2, " DISASM ", self.colors["title"])
         if self.list_win:
-            self.list_win.addstr(0, 2, f" {self.lst_path.name} ", self.colors["title"])
+            listing_path = self._active_listing()["path"]
+            title = listing_path.name if listing_path else "listing"
+            self.list_win.addstr(0, 2, f" {title} ", self.colors["title"])
         self.info_win.addstr(0, 2, " CPU INFO ", self.colors["title"])
         self.output_win.addstr(0, 2, " OUTPUT ", self.colors["title"])
         self.cmd_win.addstr(0, 2, " COMMAND ", self.colors["title"])
@@ -435,27 +514,31 @@ class KM32TUI:
                     self.disasm_win.addstr(y, 1, line_text, self.colors["addr"])
 
     def _draw_listing(self):
+        listing = self._active_listing()
+        listing_lines = listing["lines"]
         height, width = self.list_win.getmaxyx()
         max_lines = height - 2
-        center = self._listing_index_for_pc(self.cpu.pc)
+        center = self._listing_index_for_pc(self.cpu.pc, listing)
         start = max(0, center - max_lines // 2)
-        end = min(len(self.listing_lines), start + max_lines)
+        end = min(len(listing_lines), start + max_lines)
         if end - start < max_lines:
             start = max(0, end - max_lines)
         for idx, src_idx in enumerate(range(start, end), start=1):
-            line = self.listing_lines[src_idx]
+            line = listing_lines[src_idx]
             self.list_win.move(idx, 1)
             self.list_win.clrtoeol()
             is_pc = self._line_addr(line) == self.cpu.pc
             self._draw_listing_line(idx, line, width - 2, self.colors["pc"] if is_pc else None)
 
-    def _listing_index_for_pc(self, pc):
-        if pc in self.listing_addr_to_index:
-            return self.listing_addr_to_index[pc]
-        pos = bisect_right(self.listing_addrs, pc) - 1
+    def _listing_index_for_pc(self, pc, listing):
+        addr_to_index = listing["addr_to_index"]
+        addrs = listing["addrs"]
+        if pc in addr_to_index:
+            return addr_to_index[pc]
+        pos = bisect_right(addrs, pc) - 1
         if pos < 0:
             return 0
-        return self.listing_addr_to_index[self.listing_addrs[pos]]
+        return addr_to_index[addrs[pos]]
 
     def _line_addr(self, line):
         match = self.LISTING_ADDR_RE.match(line)
@@ -959,7 +1042,8 @@ def main():
     parser.add_argument("--breakpoint", "-b", action="append", default=[], help="add a breakpoint address")
     parser.add_argument("--watch-reg", action="append", default=[], help="watch register number")
     parser.add_argument("--watch-mem", action="append", default=[], help="watch memory address[:size]")
-    parser.add_argument("--lst", nargs="?", const="kernelshed.lst.asm", help="show listing file beside CPU disassembly")
+    parser.add_argument("--lst", nargs="?", const=True, help="show listing file beside CPU disassembly")
+    parser.add_argument("--lst-user", metavar="PATH", help="userland listing to show while PC is in the exec page")
     parser.add_argument("--trace", action="store_true", help="enable CPU trace during execution")
     parser.add_argument("--tracevirt", action="store_true", help="trace virtual->physical address translations")
     parser.add_argument("--traceint", action="store_true", help="trace trap/interrupt delivery")
@@ -968,6 +1052,8 @@ def main():
     args = parser.parse_args()
 
     image_path = Path(args.image)
+    lst_path = default_listing_path(args.asm) if args.lst is True else args.lst
+    user_lst_path = user_listing_path(args.lst_user) or (infer_exec_listing_path(args.asm) if args.lst else None)
     if not args.no_build:
         if args.asm == "kernelshed.asm":
             print("[BUILD] Preprocessing kernelshed.asm using preprocess_cmacros.py...")
@@ -978,7 +1064,7 @@ def main():
             src_file = args.asm
             
         src = Path(src_file).read_text().splitlines()
-        Assembler().build(src, out=str(image_path))
+        Assembler().build(src, out=str(image_path), listing_out=lst_path)
     elif not image_path.exists():
         raise SystemExit(f"error: image file {image_path} does not exist")
 
@@ -1006,7 +1092,7 @@ def main():
         cpu.running = True
         cpu.run(cpu.pc, trace=args.trace)
 
-    ui = KM32TUI(cpu, trace=args.trace, lst_path=args.lst)
+    ui = KM32TUI(cpu, trace=args.trace, lst_path=lst_path, user_lst_path=user_lst_path)
     ui.start()
 
 

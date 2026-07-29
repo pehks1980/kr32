@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import cmd
+import re
 import shlex
 from pathlib import Path
 
@@ -33,6 +34,71 @@ def parse_addr_or_reg(cpu, value):
         if 0 <= idx < 32:
             return cpu.r(idx)
     return parse_int(text)
+
+
+def default_listing_path(asm_path):
+    path = Path(asm_path)
+    return str(Path("lst") / path.with_suffix(".lst.asm").name)
+
+
+def user_listing_path(value):
+    if not value:
+        return None
+    path = Path(value)
+    if path.suffixes[-2:] == [".lst", ".asm"] or path.is_absolute() or path.parts[:1] == ("lst",):
+        return str(path)
+    if len(path.parts) == 1:
+        path = Path("bin") / path
+    return str(Path("lst") / path.with_suffix(".lst.asm"))
+
+
+def strip_asm_comment(line):
+    return line.split(";", 1)[0].strip()
+
+
+def infer_exec_listing_path(asm_path):
+    try:
+        lines = Path(asm_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    labels = {}
+    current_label = None
+    for line in lines:
+        code = strip_asm_comment(line)
+        if not code:
+            continue
+        label_match = re.match(r"^([A-Za-z_.$][\w.$]*):\s*(.*)$", code)
+        if label_match:
+            current_label = label_match.group(1)
+            labels.setdefault(current_label, None)
+            code = label_match.group(2).strip()
+            if not code:
+                continue
+        asciiz_match = re.match(r'^\.ASCIIZ\s+"([^"]*)"', code, re.IGNORECASE)
+        if asciiz_match and current_label:
+            labels[current_label] = asciiz_match.group(1)
+
+    exec_label = None
+    for line in lines:
+        code = strip_asm_comment(line)
+        if not code:
+            continue
+        label_match = re.match(r"^([A-Za-z_.$][\w.$]*):\s*(.*)$", code)
+        if label_match:
+            code = label_match.group(2).strip()
+            if not code:
+                continue
+        li_match = re.match(r"^LI\s+R1\s+([A-Za-z_.$][\w.$]*)$", code, re.IGNORECASE)
+        if li_match:
+            exec_label = li_match.group(1)
+            continue
+        if re.match(r"^SVC\s+SYS_EXECVE\b", code, re.IGNORECASE) and exec_label:
+            exec_path = labels.get(exec_label)
+            if exec_path:
+                return user_listing_path(exec_path)
+
+    return None
 
 
 def parse_watch_mem(value):
@@ -300,9 +366,13 @@ def main():
     parser.add_argument("--run", action="store_true", help="run immediately until breakpoint/halt before entering shell")
     parser.add_argument("--tui", action="store_true", help="use curses-based TUI debugger")
     parser.add_argument("--key-probe", action="store_true", help="start the TUI in key probe mode")
+    parser.add_argument("--lst", nargs="?", const=True, help="show listing file beside CPU disassembly in TUI mode")
+    parser.add_argument("--lst-user", metavar="PATH", help="userland listing to show while PC is in the exec page")
     args = parser.parse_args()
 
     image_path = Path(args.image)
+    lst_path = default_listing_path(args.asm) if args.lst is True else args.lst
+    user_lst_path = user_listing_path(args.lst_user) or (infer_exec_listing_path(args.asm) if args.lst else None)
     if not args.no_build:
         if args.asm == "kernelshed.asm":
             print("[BUILD] Preprocessing kernelshed.asm using preprocess_cmacros.py...")
@@ -313,7 +383,7 @@ def main():
             src_file = args.asm
             
         src = Path(src_file).read_text().splitlines()
-        Assembler().build(src, out=str(image_path))
+        Assembler().build(src, out=str(image_path), listing_out=lst_path)
     elif not image_path.exists():
         raise SystemExit(f"error: image file {image_path} does not exist")
 
@@ -333,7 +403,7 @@ def main():
     if args.tui:
         if KM32TUI is None:
             raise SystemExit("TUI support is unavailable. Make sure vmdbg_tui.py is present.")
-        ui = KM32TUI(cpu, trace=args.trace, key_probe=args.key_probe)
+        ui = KM32TUI(cpu, trace=args.trace, lst_path=lst_path, user_lst_path=user_lst_path, key_probe=args.key_probe)
         if args.run:
             cpu.stop_reason = None
             cpu.stop_info = None

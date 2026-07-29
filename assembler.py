@@ -2,6 +2,7 @@ import argparse
 import ast
 import struct
 import sys
+from pathlib import Path
 
 # =========================================================
 # KR32-RISC OPCODES
@@ -759,19 +760,29 @@ class Assembler:
     # -----------------------------------------------------
     # BUILD IMAGE
     # -----------------------------------------------------
-    def print_listing(self):
+    def listing_text(self):
+        lines = []
         for entry in self.listing:
             if entry["type"] == "label":
-                print(entry["source"])
+                lines.append(entry["source"])
             elif entry["type"] == "comment":
-                print(entry["source"])
+                lines.append(entry["source"])
             elif entry["type"] == "instruction":
                 addr = entry["addr"]
-                print(f"0x{addr:08X}   {entry['source']}")
+                lines.append(f"0x{addr:08X}   {entry['source']}")
             else:
-                print(entry["source"])
+                lines.append(entry["source"])
+        return "\n".join(lines) + ("\n" if lines else "")
 
-    def build(self, src, out="memory.img", list_listing=False, write_output=True):
+    def print_listing(self):
+        print(self.listing_text(), end="")
+
+    def write_listing(self, path):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.listing_text(), encoding="utf-8")
+
+    def build(self, src, out="memory.img", list_listing=False, write_output=True, listing_out=None):
         self.labels = {}
         self.lines = []
         self.consts = {}
@@ -793,6 +804,9 @@ class Assembler:
         if list_listing:
             self.print_listing()
 
+        if listing_out:
+            self.write_listing(listing_out)
+
         if write_output:
             print(f"[ASM] Built {out} ({self.pc} bytes)")
         else:
@@ -809,6 +823,8 @@ if __name__ == "__main__":
                         help="print a physical-address assembly listing to stdout")
     parser.add_argument("--list-only", action="store_true",
                         help="print the listing without writing the binary image")
+    parser.add_argument("--list-file", metavar="PATH",
+                        help="write a physical-address assembly listing to PATH")
     args = parser.parse_args()
 
     with open(args.src, "r", encoding="utf-8") as f:
@@ -820,4 +836,5 @@ if __name__ == "__main__":
         out=args.output,
         list_listing=args.list or args.list_only,
         write_output=not args.list_only,
+        listing_out=args.list_file,
     )

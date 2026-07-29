@@ -418,14 +418,14 @@ malloc_loop:
     LI R2 block_table     ; R2 = base address of block_table
     LI R3 BLOCK_DESC      ; R3 = size of one descriptor (12 bytes)
     MUL R3 R4 R3          ; R3 = index * 12 (offset into table)
-    ADD R2 R2 R3          ; R2 = address of block_table[index]
+    ADD R2 R2 R3          ; R2 = &block[index]
     
     ; Check if this block is free (USED flag = 0)
-    LDW R3 [R2 + BLOCK_USED]  ; Load the USED flag
+    LDW R3 [R2 + BLOCK_USED]  ; Load the &block[index].block_used flag
     CMP R3 0              ; Is it 0 (free)?
     BNE malloc_next       ; If not free (used), skip to next block
     
-    ; Check if this block is large enough for our request
+    ; free. Check if this block is large enough for our request
     LDW R3 [R2 + BLOCK_SIZE]  ; Load the block size
     CMP R3 R5             ; Is block size >= requested size?
     BGE malloc_found      ; Yes! We found a suitable block
@@ -475,7 +475,7 @@ malloc_add:
     LI R2 block_table
     LI R3 BLOCK_DESC
     MUL R3 R4 R3
-    ADD R2 R2 R3
+    ADD R2 R2 R3        ; &block[indexR4]
     
     ; Check if this slot is free (USED flag = 0)
     LDW R3 [R2 + BLOCK_USED]
@@ -545,12 +545,12 @@ free_loop:
     
     ; Get descriptor address
     LI R2 block_table
-    LI R3 BLOCK_DESC
-    MUL R3 R4 R3
-    ADD R2 R2 R3
+    LI R3 BLOCK_DESC      ; length of one block descriptor
+    MUL R3 R4 R3          ; r4 block idx
+    ADD R2 R2 R3          ; R2 = &block[i]
     
     ; Check if this block's address matches the pointer
-    LDW R3 [R2 + BLOCK_ADDR]  ; R3 = block address
+    LDW R3 [R2 + BLOCK_ADDR]  ; R3 =  &block[i].block address
     CMP R3 R1             ; Is this our block?
     BEQ free_found        ; Yes, we found it!
     
@@ -563,7 +563,7 @@ free_found:
     ; Mark it as free so malloc can use it again
     
     LI R3 0               ; R3 = 0 (free)
-    STW R3 [R2 + BLOCK_USED]  ; block.used = 0
+    STW R3 [R2 + BLOCK_USED]  ; &block[i].used = 0
     
     ; NOTE: We do NOT clear the address or size
     ; They stay in the table and will be overwritten when reused
