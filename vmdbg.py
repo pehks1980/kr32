@@ -52,6 +52,17 @@ def user_listing_path(value):
     return str(Path("lst") / path.with_suffix(".lst.asm"))
 
 
+def program_listing_path(value):
+    if not value:
+        return None
+    path = Path(value.lstrip("/"))
+    if path.suffixes[-2:] == [".lst", ".asm"]:
+        return str(path if path.parts[:1] == ("lst",) else Path("lst") / path)
+    if len(path.parts) == 1:
+        path = Path("bin") / path
+    return str(Path("lst") / path.with_suffix(".lst.asm"))
+
+
 def strip_asm_comment(line):
     return line.split(";", 1)[0].strip()
 
@@ -96,7 +107,7 @@ def infer_exec_listing_path(asm_path):
         if re.match(r"^SVC\s+SYS_EXECVE\b", code, re.IGNORECASE) and exec_label:
             exec_path = labels.get(exec_label)
             if exec_path:
-                return user_listing_path(exec_path)
+                return program_listing_path(exec_path)
 
     return None
 
@@ -409,6 +420,12 @@ def main():
             cpu.stop_info = None
             cpu.running = True
             cpu.run(cpu.pc, trace=args.trace)
+            if not ui.user_lst_path:
+                startup_lst_path = program_listing_path(getattr(cpu, "last_execve_path", None))
+                if startup_lst_path:
+                    ui.user_lst_path = Path(startup_lst_path)
+                    ui.user_listing = ui._load_listing(ui.user_lst_path)
+                    ui.active_execve_path = str(ui.user_lst_path)
         ui.start()
         return
 

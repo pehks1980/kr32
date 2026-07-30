@@ -49,6 +49,17 @@ def user_listing_path(value):
     return str(Path("lst") / path.with_suffix(".lst.asm"))
 
 
+def program_listing_path(value):
+    if not value:
+        return None
+    path = Path(value.lstrip("/"))
+    if path.suffixes[-2:] == [".lst", ".asm"]:
+        return str(path if path.parts[:1] == ("lst",) else Path("lst") / path)
+    if len(path.parts) == 1:
+        path = Path("bin") / path
+    return str(Path("lst") / path.with_suffix(".lst.asm"))
+
+
 def strip_asm_comment(line):
     return line.split(";", 1)[0].strip()
 
@@ -93,7 +104,7 @@ def infer_exec_listing_path(asm_path):
         if re.match(r"^SVC\s+SYS_EXECVE\b", code, re.IGNORECASE) and exec_label:
             exec_path = labels.get(exec_label)
             if exec_path:
-                return user_listing_path(exec_path)
+                return program_listing_path(exec_path)
 
     return None
 
@@ -155,6 +166,7 @@ class KM32TUI:
         self.cmd_win = None
         self.lst_path = Path(lst_path) if lst_path else None
         self.user_lst_path = Path(user_lst_path) if user_lst_path else None
+        self.active_execve_path = None
         self.kernel_listing = self._empty_listing(self.lst_path)
         self.user_listing = self._empty_listing(self.user_lst_path)
         self.listing_focus = False
@@ -164,6 +176,8 @@ class KM32TUI:
         self.probe_lines = ["Key probe mode", "Press keys to inspect codes. q to exit."]
         self.kernel_listing = self._load_listing(self.lst_path)
         self.user_listing = self._load_listing(self.user_lst_path)
+        if self.user_lst_path:
+            self.active_execve_path = str(self.user_lst_path)
         self.prev_info_state = None
         # do not override CPU trace_output/quiet here; main() controls them
 
@@ -243,6 +257,24 @@ class KM32TUI:
         if self.USER_CODE_START <= self.cpu.pc < self.USER_CODE_END and self.user_listing["lines"]:
             return self.user_listing
         return self.kernel_listing
+
+    def _sync_execve_listing(self):
+        exec_path = getattr(self.cpu, "last_execve_path", None)
+        if not exec_path:
+            return
+        lst_path = program_listing_path(exec_path)
+        if lst_path == self.active_execve_path:
+            return
+        self.user_lst_path = Path(lst_path)
+        self.user_listing = self._load_listing(self.user_lst_path)
+        self.active_execve_path = lst_path
+        if self.user_listing["lines"]:
+            self.status = f"execve {exec_path}: loaded {lst_path}"
+            self.output_lines = [self.status]
+        else:
+            self.status = f"execve {exec_path}: no listing at {lst_path}"
+            self.output_lines = [self.status]
+        self.force_full_redraw = True
 
     def _loop(self):
         if self.key_probe:
@@ -810,6 +842,8 @@ class KM32TUI:
                 return False
             if op in ("restart", "reset"):
                 self.cpu.reset()
+                self.active_execve_path = None
+                self.user_listing = self._load_listing(self.user_lst_path)
                 self.status = f"restarted debug session, PC=0x{self.cpu.pc:08X}"
                 self.output_lines = [self.status]
                 return False
@@ -818,8 +852,10 @@ class KM32TUI:
                 self.cpu.stop_info = None
                 self.cpu.running = True
                 self.cpu.run(self.cpu.pc, trace=self.trace)
-                self.status = f"ran to stop {self._format_stop_reason()}"
-                self.output_lines = [self.status]
+                self._sync_execve_listing()
+                if not self.status.startswith("execve "):
+                    self.status = f"ran to stop {self._format_stop_reason()}"
+                    self.output_lines = [self.status]
                 return False
             if op in ("t", "toggle"):
                 addr = self.cpu.pc if len(parts) == 1 else parse_int(parts[1])
@@ -921,10 +957,12 @@ class KM32TUI:
     def _step(self, count):
         for _ in range(count):
             cont = self.cpu.step(trace=self.trace)
+            self._sync_execve_listing()
             if not cont:
                 break
         self._refresh_mem_view()
-        self.status = f"stepped {count} instr{'s' if count != 1 else ''}, PC=0x{self.cpu.pc:08X}"
+        if not self.status.startswith("execve "):
+            self.status = f"stepped {count} instr{'s' if count != 1 else ''}, PC=0x{self.cpu.pc:08X}"
         if self.mem_view is None:
             self.output_lines = [self.status]
 
@@ -957,8 +995,10 @@ class KM32TUI:
             self.cpu.stop_info = None
             self.cpu.running = True
             self.cpu.run(self.cpu.pc, trace=self.trace)
+            self._sync_execve_listing()
             self._refresh_mem_view()
-            self.status = f"stepped over BL, PC=0x{self.cpu.pc:08X}"
+            if not self.status.startswith("execve "):
+                self.status = f"stepped over BL, PC=0x{self.cpu.pc:08X}"
             if self.mem_view is None:
                 self.output_lines = [self.status]
         finally:
@@ -1091,6 +1131,8 @@ def main():
         cpu.stop_info = None
         cpu.running = True
         cpu.run(cpu.pc, trace=args.trace)
+        if not user_lst_path:
+            user_lst_path = program_listing_path(getattr(cpu, "last_execve_path", None))
 
     ui = KM32TUI(cpu, trace=args.trace, lst_path=lst_path, user_lst_path=user_lst_path)
     ui.start()

@@ -5510,6 +5510,18 @@ init_scheduler:
     BEQ init_scheduler_fail
 
     ; ----------------------------------
+    ; task_init
+    ; ----------------------------------
+
+    LI R1 TASK_INIT_START
+    LI R2 1
+    LI R3 0
+    BL task_create
+
+    CMP R1 0
+    BEQ init_scheduler_fail
+
+    ; ----------------------------------
     ; task A
     ; ----------------------------------
 
@@ -5525,29 +5537,29 @@ init_scheduler:
     ; task B
     ; ----------------------------------
 
-    LI R1 TASK_B_START
-    LI R2 2
-    LI R3 0
-    BL task_create
+    ;LI R1 TASK_B_START
+    ;LI R2 2
+    ;LI R3 0
+    ;BL task_create
 
-    CMP R1 0
-    BEQ init_scheduler_fail
+    ;CMP R1 0
+    ;BEQ init_scheduler_fail
 
     ; ----------------------------------
     ; task C -check gettime brk,sbrk syscalls
     ; ----------------------------------
 
-    LI R1 TASK_C_START
-    LI R2 3
-    LI R3 0
-    BL task_create
+    ;LI R1 TASK_C_START
+    ;LI R2 3
+    ;LI R3 0
+    ;BL task_create
 
-    CMP R1 0
-    BEQ init_scheduler_fail
+    ;CMP R1 0
+    ;BEQ init_scheduler_fail
 
     ; Initialize the dynamic fork PID allocator after bootstrap tasks.
     LI R1 task_count
-    LI R2 4                     ; last task+1 for now
+    LI R2 2                     ; last task_pid+1 for now (task 0 and task 1) next id is 2
     STW R2 [R1]
 
     ; ------------------------------------------------
@@ -7220,8 +7232,8 @@ TASK_C_START:
     SVC SYS_FORK
 
     CMP R1 0
-    BEQ child_process
-    BLT fork_error
+    BEQ child_process_c
+    BLT fork_error_c
     MOV R5 R1          ; Parent keeps child PID
 
 parent_process:
@@ -7248,7 +7260,7 @@ pr_fin:
     SVC SYS_WAITPID
 
     CMP R1 0
-    BLT wait_error
+    BLT wait_error_c
 
     ; Child exited normally
     LI R1 STDOUT_FD
@@ -7264,14 +7276,14 @@ pr_fin:
     
     B exit_success
 
-wait_error:
+wait_error_c:
     LI R1 STDOUT_FD
-    LI R2 wait_error_msg
+    LI R2 wait_error_msg_с
     LI R3 14
     SVC SYS_WRITE
     B exit_failure
 
-child_process:
+child_process_c:
     ; Child process - write in a tight loop so it overlaps with parent
 
     LI R1 STDOUT_FD
@@ -7296,7 +7308,7 @@ child_process:
     ; returns if error with execve
 
     LI R1 STDOUT_FD
-    LI R2 exec_failed_msg
+    LI R2 exec_failed_msg_c
     LI R3 13
     SVC SYS_WRITE
     
@@ -7317,9 +7329,9 @@ sleep_error:
     LI R1 1              ; Exit with error code
     SVC SYS_EXIT
 
-fork_error:
+fork_error_c:
     LI R1 STDOUT_FD
-    LI R2 fork_error_msg
+    LI R2 fork_error_msg_c
     LI R3 11
     SVC SYS_WRITE
     B exit_failure
@@ -7348,7 +7360,7 @@ parent_wait_msg:
 parent_done_msg:
     .ASCIIZ "PARENT DONE\r\n"
 
-wait_error_msg:
+wait_error_msg_с:
     .ASCIIZ "WAITPID FAIL\r\n"
 
 child_start_msg:
@@ -7359,9 +7371,9 @@ child_end_msg:
 
 sleep_error_msg:
     .ASCIIZ "SLEEP FAIL\r\n"
-exec_failed_msg:
+exec_failed_msg_c:
     .ASCIIZ "EXECV FAIL\r\n"
-fork_error_msg:
+fork_error_msg_c:
     .ASCIIZ "FORK FAIL\r\n"
 ;no first slash yet!
 ;==========
@@ -7427,5 +7439,119 @@ ls_argv:
     .WORD ls_arg2
     .WORD 0
 
+
+; ================================================================
+; task_init – PID 1 initial process
+; ================================================================
+; This is the first user‑space process created by the kernel.
+; It acts as a simple init:
+;   - fork() a child
+;   - child execs /bin/sh (the interactive shell)
+;   - parent waits for the shell to exit, then restarts it
+; ================================================================
+
+.org 0x1C000
+TASK_INIT_START:
+
+    ; Optional: print a startup message
+    LI R1 STDOUT_FD
+    LI R2 init_start_msg
+    LI R3 12
+    SVC SYS_WRITE
+
+init_loop:
+    ; ------------------------------------------------------------
+    ; Fork a new child
+    ; ------------------------------------------------------------
+    SVC SYS_FORK
+    CMP R1 0
+    BEQ child_process
+    BLT fork_error
+
+    ; ------------------------------------------------------------
+    ; Parent process: wait for the child to terminate
+    ; ------------------------------------------------------------
+    MOV R5 R1                ; Save child PID (not strictly needed)
+    LI R1 -1                 ; Wait for any child
+    LI R2 0                  ; No status pointer needed
+    SVC SYS_WAITPID
+    CMP R1 0
+    BLT wait_error
+
+    ; Child exited normally – restart the shell
+    LI R1 STDOUT_FD
+    LI R2 restart_msg
+    LI R3 14
+    SVC SYS_WRITE
+
+    B init_loop              ; Forever
+
+    ; ------------------------------------------------------------
+    ; Child process: replace itself with /bin/sh
+    ; ------------------------------------------------------------
+child_process:
+    LI R1 sh_path
+    LI R2 sh_argv
+    LI R3 0                  ; No environment
+    SVC SYS_EXECVE
+
+    ; If execve returns, it failed
+    LI R1 STDOUT_FD
+    LI R2 exec_failed_msg
+    LI R3 13
+    SVC SYS_WRITE
+
+    LI R1 1                  ; Exit with error
+    SVC SYS_EXIT
+
+    ; ------------------------------------------------------------
+    ; Error handlers (simple: print and halt)
+    ; ------------------------------------------------------------
+fork_error:
+    LI R1 STDOUT_FD
+    LI R2 fork_error_msg
+    LI R3 11
+    SVC SYS_WRITE
+    LI R1 1
+    SVC SYS_EXIT
+
+wait_error:
+    LI R1 STDOUT_FD
+    LI R2 wait_error_msg
+    LI R3 14
+    SVC SYS_WRITE
+    ; Continue looping even on wait error (maybe child vanished)
+    B init_loop
+
+    ; ------------------------------------------------------------
+    ; Data section
+    ; ------------------------------------------------------------
+init_start_msg:
+    .ASCIIZ "INIT START\r\n"
+
+restart_msg:
+    .ASCIIZ "RESTART SHELL\r\n"
+
+exec_failed_msg:
+    .ASCIIZ "EXECVE FAIL\r\n"
+
+fork_error_msg:
+    .ASCIIZ "FORK FAIL\r\n"
+
+wait_error_msg:
+    .ASCIIZ "WAITPID ERR\r\n"
+
+; Path and argument vector for /bin/sh
+; Assumes root filesystem has /bin/sh
+sh_path:
+    .ASCIIZ "bin/sh"
+; argv[0] is the program name
+sh_arg0:
+    .ASCIIZ "sh"
+; argv[0] = path to executable
+; argv[1] = NULL (terminator)
+sh_argv:
+    .WORD sh_path
+    .WORD 0
 
 #include "tarfs_generated.inc"

@@ -131,6 +131,8 @@ class CPU:
         self.trace_events = False
         self.quiet = False
         self.current_instr = None
+        self.last_execve_path = None
+        self.last_execve_pc = None
         self.trap_return_pc = 0
         self.trap_saved_r1 = 0
         self.trap_saved_r2 = 0
@@ -1037,6 +1039,26 @@ class CPU:
         if b0 is None or b1 is None or b2 is None or b3 is None:
             return None
         return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+
+    def mem_peek_cstr(self, addr, max_len=256):
+        data = bytearray()
+        for offset in range(max_len):
+            byte = self.mem_peek_u8(addr + offset, access="r")
+            if byte is None:
+                return None
+            if byte == 0:
+                try:
+                    return data.decode("ascii")
+                except UnicodeDecodeError:
+                    return None
+            data.append(byte)
+        return None
+
+    def _record_execve_debug_info(self, syscall_pc):
+        path = self.mem_peek_cstr(self.r(1))
+        if path:
+            self.last_execve_path = path
+            self.last_execve_pc = syscall_pc
     #-----------------------------------------------------
     # hexdump and physical_hexdump: Helpers to display memory contents in a human
     # readable format, showing both hexadecimal byte values and their ASCII representation.
@@ -1406,6 +1428,8 @@ class CPU:
             #----------------------------------------
 
             elif op == 0x40:
+                if a == 13:
+                    self._record_execve_debug_info(instr_pc)
                 self.raise_trap(TRAP_SYSCALL, a, resume_pc=self.pc)
 
             elif op == 0x56:
