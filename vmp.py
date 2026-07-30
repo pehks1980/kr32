@@ -1619,18 +1619,21 @@ class CPU:
     # -----------------------------------------------------
     # RUN LOOP
     # -----------------------------------------------------
-    def run(self, start=0, trace=False):
+    def run(self, start=0, trace=False, max_steps=None):
         self.pc = start
         self.running = True
 
         steps = 0
-        MAX_STEPS = 10_000_000
 
         # If we're resuming AT a breakpoint, skip it on the first iteration so
         # 'continue' makes forward progress instead of immediately re-stopping.
         skip_initial_bp = self.pc in self.breakpoints
 
         while self.running:
+            if max_steps is not None and steps >= max_steps:
+                self.stop_reason = ("max_steps", steps)
+                self.stop_info = {"steps": steps, "pc": self.pc}
+                break
             if self.pc in self.breakpoints and not skip_initial_bp:
                 self.stop_reason = ("breakpoint", self.pc)
                 self.stop_info = {"pc": self.pc}

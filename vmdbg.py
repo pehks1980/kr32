@@ -419,7 +419,7 @@ def main():
             cpu.stop_reason = None
             cpu.stop_info = None
             cpu.running = True
-            cpu.run(cpu.pc, trace=args.trace)
+            cpu.run(cpu.pc, trace=args.trace, max_steps=KM32TUI.TUI_RUN_STEP_BUDGET)
             if not ui.user_lst_path:
                 startup_lst_path = program_listing_path(getattr(cpu, "last_execve_path", None))
                 if startup_lst_path:

@@ -120,6 +120,7 @@ def parse_watch_mem(value):
 
 class KM32TUI:
     HELP_TEXT = "Enter/s=step n=next r=run restart=reset t=toggle b=break cb=clear c=continue d=disasm m=mem i=info w=watch u=unwatch cw=unwatch v=toggle-view regs=regs h=help q=quit"
+    TUI_RUN_STEP_BUDGET = 500_000
     HELP_LINES = [
         "Commands:",
         "  Enter         - step 1 instruction",
@@ -134,6 +135,7 @@ class KM32TUI:
         "  d ADDR [CNT]  - disassemble CNT instructions from ADDR",
         "  m ADDR [SIZE] - dump physical memory at PA (default 128 bytes)",
         "  vm ADDR [SIZE] - dump virtual memory at VA (default 128 bytes)",
+        "  input TEXT     - inject TEXT plus newline into UART RX",
         "  i breakpoints - show breakpoint list",
         "  i watchpoints - show watchpoints",
         "  v             - toggle listing pane layout",
@@ -792,6 +794,8 @@ class KM32TUI:
         if isinstance(reason, tuple) and len(reason) == 2:
             if reason[0] == "breakpoint":
                 return f"breakpoint @ 0x{reason[1]:08X}"
+            if reason[0] == "max_steps":
+                return f"step budget reached ({reason[1]})"
             return f"{reason[0]} @ 0x{reason[1]:08X}"
         return str(reason)
 
@@ -851,11 +855,19 @@ class KM32TUI:
                 self.cpu.stop_reason = None
                 self.cpu.stop_info = None
                 self.cpu.running = True
-                self.cpu.run(self.cpu.pc, trace=self.trace)
+                self.cpu.run(self.cpu.pc, trace=self.trace, max_steps=self.TUI_RUN_STEP_BUDGET)
                 self._sync_execve_listing()
                 if not self.status.startswith("execve "):
                     self.status = f"ran to stop {self._format_stop_reason()}"
                     self.output_lines = [self.status]
+                return False
+            if op in ("input", "type"):
+                fields = command.split(maxsplit=1)
+                text = fields[1] if len(fields) == 2 else ""
+                for byte in (text + "\n").encode("ascii", errors="replace"):
+                    self.cpu.uart.rx_fifo.append(byte)
+                self.status = f"queued UART input: {text!r}"
+                self.output_lines = [self.status]
                 return False
             if op in ("t", "toggle"):
                 addr = self.cpu.pc if len(parts) == 1 else parse_int(parts[1])
@@ -994,7 +1006,7 @@ class KM32TUI:
             self.cpu.stop_reason = None
             self.cpu.stop_info = None
             self.cpu.running = True
-            self.cpu.run(self.cpu.pc, trace=self.trace)
+            self.cpu.run(self.cpu.pc, trace=self.trace, max_steps=self.TUI_RUN_STEP_BUDGET)
             self._sync_execve_listing()
             self._refresh_mem_view()
             if not self.status.startswith("execve "):
@@ -1130,7 +1142,7 @@ def main():
         cpu.stop_reason = None
         cpu.stop_info = None
         cpu.running = True
-        cpu.run(cpu.pc, trace=args.trace)
+        cpu.run(cpu.pc, trace=args.trace, max_steps=KM32TUI.TUI_RUN_STEP_BUDGET)
         if not user_lst_path:
             user_lst_path = program_listing_path(getattr(cpu, "last_execve_path", None))
 
