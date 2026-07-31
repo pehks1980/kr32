@@ -14,7 +14,7 @@
 ;   R13       = SP (stack pointer)
 ;   R14       = FP (frame pointer)
 ;   R15       = LR (return link)
-;   Map check  - Last Adress: 0x0000A146  Last OS page 0x0000B000
+;   Map check  - Last Adress: 0x0000A64E  Last OS page 0x0000C000
 
 #include "errno.inc"
 
@@ -155,7 +155,7 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    ;DEBUG 1
+    DEBUG 1
     B idle_loop
 
 
@@ -589,7 +589,7 @@ syscall_table:
     .WORD syscall_sleep         ; SVC 15
     .WORD syscall_waitpid       ; SVC 16
 
-syscall_execve:
+syscall_execve1:
     ;================================================================
     ; execve(path, argv, envp)
     ; R1 = user path
@@ -1006,6 +1006,584 @@ execve_badfault:
 ;-------------------------------------------------------------
 execve_tmp_argv:
     .SPACE 64        ; up to 16 × 4-byte argv pointers
+
+;=============================================================
+; exec temporary workspace
+;=============================================================
+
+.EQU EXEC_MAX_ARGS,      16      
+.EQU EXEC_MAX_PATH,           128
+.EQU EXEC_MAX_STRINGS,        512
+;store pathname
+exec_path:
+    .SPACE EXEC_MAX_PATH
+;store arg count
+exec_argc:
+    .WORD 0
+;store offsets in exec_strings - starting string indexes (not ptrs) 
+exec_argv_offsets:          ; eg 0,8
+    .SPACE EXEC_MAX_ARGS * 4
+;offset after last string - length (bytes) of blob exec_string
+exec_strings_used:  ; eg 13
+    .WORD 0
+;strings\0args\0
+exec_strings:
+    .SPACE EXEC_MAX_STRINGS
+
+;=============================================================
+; exec stack image workspace
+;=============================================================
+;exec_stack_image->
+;+----------------+
+;| argc           |
+;| argv[0]        |
+;| argv[1]        |
+;| ...            |
+;| NULL           |
+;| strings...     |
+;+----------------+
+;exec_stack_used (len)
+
+;max stack image 
+.EQU EXEC_STACK_SIZE,    1024
+
+exec_stack_image:
+    .SPACE EXEC_STACK_SIZE
+
+exec_stack_used:
+    .WORD 0
+
+;============================================
+; better execve
+;============================================
+
+syscall_execve:
+    ;================================================================
+    ; execve(path, argv, envp)
+    ; R1 = user path
+    ; R2 = user argv (NULL-terminated vector of user string pointers)
+    ; R3 = user envp (ignored for now)
+    ;
+    ; overview and why its better then previous what serous obstacles it is able to overcome
+
+    LDW R8 [SP + TF_R1]        ; user path pointer
+    LDW R9 [SP + TF_R2]        ; user argv pointer
+    MOV R11 R9                 ; save to R11
+
+    LI  R1 exec_path
+    MOV R2 R8
+    LI  R3 EXEC_MAX_PATH
+    BL copy_user_string        ;copy path string to ws 
+    CMP R1 0
+    BEQ execve_badfault
+
+    ;init execve ws
+    LI R1 exec_argc
+    LI R2 0
+    STW R2 [R1]
+
+    ;count argc 
+
+    MOV R8 R9               ; user argv
+    LI  R6 0                ; argc
+;count ptrs in array of ptrs argv till 0 -null end
+argc_loop:
+    CMP R8 0                ;if no argv 0-null
+    BEQ argc_done
+    LDW R3 [R8]
+    CMP R3 0                ;if end
+    BEQ argc_done
+    CMP R6 EXEC_MAX_ARGS    ;if too much MAX argc count
+    BGE exec_badfault
+    ADD R6 R6 1
+    ADD R8 R8 4
+    B argc_loop
+argc_done:
+    LI R1 exec_argc         ;store it to ws
+    STW R6 [R1]
+
+    MOV R9 R6               ;R9 argc R11 user argv pointer
+    MOV R8 R11
+    BL  copy_argv_strings   ;fill arrays in ws from argvs
+    CMP R1 0
+    BNE exec_fail
+
+    LI R1 exec_path
+    BL exec_load_binary
+    CMP R1 0
+    BEQ exec_fail
+
+    MOV R11 R1        ; new code page
+    MOV R12 R2        ; old code page
+    BL exec_build_stack_image
+    CMP R1 0
+    BNE exec_rollback
+
+    MOV R1 R11
+    MOV R2 R12
+
+    B exec_commit_image
+
+exec_badfault:
+    NOP
+exec_fail:
+    NOP
+exec_rollback:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]
+    B trap_restore
+;=============================================================
+; exec_commit_image
+;
+; Commit a successfully loaded executable.
+;
+; IN:
+;   R1 = new code page PA
+;   R2 = old code page PA (0 if none)
+;
+; Uses:
+;   exec_stack_image
+;   exec_stack_used
+;   exec_argc
+;
+; Does not return on success.
+;=============================================================
+
+exec_commit_image:
+
+  ;  PUSH LR
+  ;  PUSH R8
+  ;  PUSH R9
+  ;  PUSH R10
+  ;  PUSH R11
+  ;  PUSH R12
+
+    MOV R11 R1              ; new page
+    MOV R12 R2              ; old page
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5,R4
+
+    LI  R1 exec_stack_used
+    LDW R8 [R1]
+    LI  R9 USER_STACK_TOP
+    SUB R9 R9 R8            ; final user SP
+    MOV R1 R9               ;  R2->R9 len R8 - cpy our image for stack
+    LI  R2 exec_stack_image
+    MOV R3 R8
+    BL memcpy
+
+    LI R1 USER_CODE_VA      ; commit task state
+    TASK_SET_PC R5,R1
+    TASK_SET_CODE_PAGE R5,R11
+    MOV R1 R9
+    TASK_SET_USP R5,R1
+    LI R1 HEAP_START
+    TASK_SET_BREAK R5,R1
+
+    TASK_GET_PTBR R1,R5
+    LI R2 USER_CODE_VA
+    MOV R3 R11
+    LI R4 KERNEL_USER_ALL   ; map code page RX subject to permissions on X (now all X)
+    BL map_page_rt
+
+    CMP R12 0               ; free old pa page (R12) if have
+    BEQ no_old_page
+    MOV R1 R12
+    BL page_free
+no_old_page:
+
+    LI  R1 exec_argc
+    LDW R2 [R1]
+    STW R2 [SP+TF_R1]
+
+    MOV R1 R9
+    ADD R1 R1 4
+    STW R1 [SP+TF_R2]       ; user sp with image on top + 4 so it points to &argv image
+    
+    LI R1 0                 ; envp
+    STW R1 [SP+TF_R3]
+
+    STW R9 [SP+TF_USP]      ; user sp
+
+    LI R1 0
+    STW R1 [SP+TF_R4]
+    STW R1 [SP+TF_R5]
+    STW R1 [SP+TF_R6]
+    STW R1 [SP+TF_R7]
+    STW R1 [SP+TF_R8]
+    STW R1 [SP+TF_R9]
+    STW R1 [SP+TF_R10]
+    STW R1 [SP+TF_R11]
+    STW R1 [SP+TF_R12]
+
+    LI R1 USER_CODE_VA
+    STW R1 [SP+TF_SEPC]
+
+  ;  POP R12
+  ;  POP R11
+  ;  POP R10
+  ;  POP R9
+  ;  POP R8
+  ;  POP LR
+
+    B trap_restore
+
+
+
+;====================================================================
+; exec_build_stack_image
+;
+; Build initial process stack entirely in kernel memory.
+;
+; Stack layout:
+;
+;   +----------------------------+
+;   | argc                       |
+;   | argv[0]                    |
+;   | argv[1]                    |
+;   | ...                        |
+;   | argv[argc] = NULL          |
+;   | string blob                |
+;   +----------------------------+
+;
+; INPUT:
+;   exec_argc
+;   exec_strings
+;   exec_strings_used
+;   exec_argv_offsets[]
+;
+; OUTPUT:
+;   exec_stack_image
+;   exec_stack_used
+;
+; RETURNS:
+;   R1 = 0 success
+;   R1 = ERR_NOMEM
+;====================================================================
+
+exec_build_stack_image:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    LI   R1 exec_argc   ;argc
+    LDW  R6 [R1]
+
+    MOV  R7 R6          ;pointer_bytes = (argc+2)*4
+    ADD  R7 R7 2
+    SHL  R7 R7 2
+
+    LI   R1 exec_strings_used   ; strings blob len
+    LDW  R8 [R1]
+
+    ;----------------------------------------------------------
+    ; total = pointer_bytes(len argv ptr array + 4b argc) + string_bytes(len string blobs)
+    ;----------------------------------------------------------
+
+    ADD  R9 R7 R8
+    ; check for MAX
+    LI   R1 EXEC_STACK_SIZE
+    CMP  R9 R1
+    BGT  exec_stack_nomem
+
+    LI   R1 exec_stack_used     ; save used size
+    STW  R9 [R1]
+
+    LI   R10 exec_stack_image   ;stack base for image
+    ; building image for stack as on picture
+    STW  R6 [R10]   ;argc
+
+    ; copy string blob
+    MOV  R1 R10
+    ADD  R1 R1 R7   ; skip room for pointer_bytes see picture
+    LI   R2 exec_strings
+    MOV  R3 R8      ; blob len
+    BL   memcpy
+
+    ;----------------------------------------------------------
+    ; future user addresses
+    ;----------------------------------------------------------
+
+    LI   R11 USER_STACK_TOP
+    SUB  R11 R11 R9             ; r9 total image len, R11 start address image in the user stack
+    MOV  R12 R11
+    ADD  R12 R12 R7             ; r12 pointer bytes ptr in image in stack - start of string blob
+
+    ;----------------------------------------------------------
+    ; argv table build
+    ;----------------------------------------------------------
+
+    ADD  R10 R10 4              ; argv[0] starts after argc
+    LI   R4 exec_argv_offsets   ; args offsetss array
+    LI   R5 0           
+argv_loop:
+    CMP  R5 R6                  ; argc
+    BEQ  argv_done              ; if finished 
+    MOV  R1 R5
+    SHL  R1 R1 2
+    LDW  R2 [R4+R1]             ; get arg[i] offset
+    ADD  R2 R2 R12              ; compute R2 - blobs string adress for this arg[i] 
+    STW  R2 [R10+R1]            ; store this address to argv array in image
+    ADD  R5 R5 1
+    B    argv_loop
+argv_done:
+    MOV  R1 R6
+    SHL  R1 R1 2
+
+    LI   R2 0
+    STW  R2 [R10+R1]            ; put null here: argv[argc] = NULL
+    ;success
+    LI   R1 0
+    POP  R12
+    POP  R11
+    POP  R10
+    POP  R9
+    POP  R8
+    POP  LR
+    RET
+
+exec_stack_nomem:
+    LI   R1 ERR_NOMEM
+    POP  R12
+    POP  R11
+    POP  R10
+    POP  R9
+    POP  R8
+    POP  LR
+    RET
+
+;=============================================================
+; exec_load_binary
+;
+; Load executable into USER_CODE_VA.
+;
+; IN:
+;   R1 = kernel pathname
+;
+; OUT:
+;   R1 = new code page PA
+;   R2 = old code page PA
+;
+;   R1 = 0 on failure
+;   R2 = errno
+;
+;=============================================================
+exec_load_binary:
+    PUSH LR
+    PUSH R7
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    BL vfs_lookup   ; lookup inode for the file 
+    CMP R1 0
+    BEQ load_noent
+    MOV R9 R1
+
+    LDW R1 [R9 + INODE_TYPE]    ;check inode type/size
+    LI R2 INODE_DIR
+    CMP R1 R2
+    BEQ load_noexec
+    LDW R3 [R9 + INODE_SIZE]
+    LI R4 PAGE_SIZE
+    CMP R3 R4
+    BGT load_noexec
+
+    BL file_alloc               ;allocate file
+    CMP R1 0
+    BEQ load_nomem
+    MOV R10 R1                  ; savr file ptr R10
+    MOV R1 R10
+    MOV R2 R9
+    LI R3 FD_FLAG_READ
+    BL file_init
+
+    BL page_alloc               ; pa page for code
+    CMP R1 0
+    BEQ load_file_fail
+
+    MOV R11 R1                  ;new pa page code
+
+    GET_CURR_TASK_IDX R4        ;current task
+    GET_TASK_PTR R5,R4
+    TASK_GET_CODE_PAGE R12,R5   ; save old pa code page from this task to R12
+
+    TASK_GET_PTBR R1,R5
+    LI R2 USER_CODE_VA
+    MOV R3 R11                  ;new pa code page
+    LI R4 USER_RW
+    BL map_page_rt              ;map it for loading to USER_CODE_VA
+
+    TASK_GET_DATA_PAGE R1,R5    ; tasks va data_page
+    CMP R1 0
+    BEQ load_read
+    LI R3 PAGE_SIZE
+    BL mem_zero                 ; clean task data_page
+
+load_read:
+    MOV R1 R10                  ; file* with program
+    LI R2 USER_CODE_VA
+    LI R3 PAGE_SIZE
+    BL file_read
+    CMP R1 0
+    BLT load_read_fail
+    MOV R1 R10                  ; release file*
+    BL file_put
+    ; all loaedd R1 - new code page pa R2 - old code page pa
+    MOV R1 R11
+    MOV R2 R12
+
+exec_lb_exit:                   ;common! exit!
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP LR
+    RET
+; in error generally depending on state rollback allocated resources
+load_read_fail:
+    ; in this case release file and pa code page 
+    MOV R1 R10
+    BL file_put
+    MOV R1 R11
+    BL page_free
+    LI R1 0
+    LI R2 ERR_IO
+    B  exec_lb_exit
+
+load_file_fail:
+    MOV R1 R10
+    BL file_put
+
+load_nomem:
+    LI R1 0
+    LI R2 ERR_NOMEM
+    B  exec_lb_exit
+
+load_noexec:
+    MOV R1 R10
+    CMP R1 0
+    BEQ noexec_skip
+    BL file_put
+
+noexec_skip:
+    LI R1 0
+    LI R2 ERR_NOEXEC
+    B  exec_lb_exit
+
+load_noent:
+    LI R1 0
+    LI R2 ERR_NOENT
+    B  exec_lb_exit
+
+
+;=============================================================
+; Copy argv strings into kernel workspace
+;
+; IN:
+;   R8 = user argv[]
+;   R9 = argc
+;
+; OUT:
+;   exec_strings
+;   exec_argv_offsets[]
+;   exec_strings_used
+;
+; destroys:
+;   R7-R12
+;=============================================================
+copy_argv_strings:
+
+    PUSH LR
+    PUSH R7
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+    ;init this at first
+    LI R1 exec_strings_used
+    LI R2 0
+    STW R2 [R1]
+
+    LI   R11 exec_strings      ; destination blob
+    LI   R12 0                 ; current offset
+    LI   R7 0                  ; argv index
+                               ;  R8 = user argv[]
+                               ;  R9 = argc
+exec_capture_next_arg:
+    ; finished?
+    CMP  R7 R9
+    BEQ  exec_capture_done     ; if all agvs processed
+
+    ;---------------------------------------------
+    ; load argv[i] (ptr to string)
+    ;---------------------------------------------
+    LDW  R10 [R8]
+
+    CMP  R10 0
+    BEQ  exec_capture_fault     ;if argv[i]==null
+
+    ;---------------------------------------------
+    ; save offset
+    ;
+    ; exec_argv_offsets[i]=current_offset (in R12)
+    ;---------------------------------------------
+    LI   R1 exec_argv_offsets
+    MOV  R2 R7  ;i
+    SHL  R2 R2 2
+    ADD  R1 R1 R2
+    STW  R12 [R1]
+
+exec_copy_string:
+    ;---------------------------------------------
+    ; copy one character r10 argv[i] (ptr to string) R11 ptr to exec strings
+    ;---------------------------------------------
+    LDB  R3 [R10]
+    STB  R3 [R11]
+    ADD  R10 R10 1
+    ADD  R11 R11 1
+    ADD  R12 R12 1
+    ; blob overflow?
+    LI   R1 EXEC_MAX_STRINGS
+    CMP  R12 R1
+    BGT  exec_capture_fault    
+    CMP  R3 0
+    BNE  exec_copy_string           ; end of string?
+    ADD  R8 R8 4    ;to next argv[] string    
+    ADD  R7 R7 1    ;i=i+1
+    B    exec_capture_next_arg
+
+exec_capture_done:
+    LI   R1 exec_strings_used
+    STW  R12 [R1]           ; current offset after last string
+    LI  R1 0
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP LR
+    RET
+exec_capture_fault:
+    LI   R1 ERR_FAULT
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP LR
+    RET
 
 syscall_fork:
     ;================================================================
@@ -1457,6 +2035,86 @@ copy_path_done:
 copy_path_fail:
     POP R1                     ; discard original kernel path pointer
     LI R1 0
+    POP LR
+    RET
+
+;====================================================================
+; copy_user_string
+;
+; Copy NUL-terminated string from user memory into kernel buffer.
+;
+; IN:
+;   R1 = kernel destination
+;   R2 = user source
+;   R3 = maximum bytes (including terminating NUL)
+;
+; OUT:
+;   R1 = bytes copied (including terminating NUL)
+;   R1 = 0 on failure
+;
+; Clobbers:
+;   R4-R11
+;====================================================================
+
+copy_user_string:
+
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+
+    MOV R8 R1          ; kernel dst
+    MOV R9 R2          ; user src
+    MOV R10 R3         ; max length
+    LI  R11 0          ; bytes copied
+
+copy_user_loop:
+    ; reached max?
+    CMP R11 R10
+    BGE copy_user_fail
+
+    ; validate one byte
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    MOV R1 R9
+    LI  R2 1
+    LI  R3 0           ; read access
+    BL user_buffer_valid_range
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    CMP R1 1
+    BNE copy_user_fail
+
+    ; copy byte
+    LDB R4 [R9]
+    STB R4 [R8]
+    ;cpy ctr
+    ADD R11 R11 1
+    CMP R4 0    ;if string ends (null)
+    BEQ copy_user_done
+
+    ADD R8 R8 1 ;advance
+    ADD R9 R9 1
+    B copy_user_loop
+copy_user_done:
+    MOV R1 R11
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+copy_user_fail:
+    LI  R1 0
+    POP R11
+    POP R10
+    POP R9
+    POP R8
     POP LR
     RET
 
@@ -5549,8 +6207,8 @@ init_scheduler:
     ; task C -check gettime brk,sbrk syscalls
     ; ----------------------------------
 
-    ;LI R1 TASK_C_START
-    ;LI R2 3
+  ;  LI R1 TASK_C_START
+   ; LI R2 2
     ;LI R3 0
     ;BL task_create
 
@@ -5988,6 +6646,25 @@ pz_loop:
     B pz_loop
 
 pz_done:
+    RET
+
+;=================================================================
+; memory copy at the given address (R1)<(R2) R3 = amount
+;=================================================================
+
+memcpy:
+
+cpy_loop:
+    CMP R3 0
+    BEQ cpy_done
+    LDB R4 [R2]
+    STB R4 [R1]
+    ADD R1 R1 1
+    ADD R2 R2 1
+    SUB R3 R3 1
+    B cpy_loop
+
+cpy_done:
     RET
 
 ; ================================================================
@@ -7292,17 +7969,17 @@ child_process_c:
     SVC SYS_WRITE
 
 
-    LI R1 echo_path
-    LI R2 echo_argv
-    LI R3 0
-
-    ;LI R1 cat_path
-    ;LI R2 cat_argv
+    ;LI R1 echo_path
+    ;LI R2 echo_argv
     ;LI R3 0
 
-    LI R1 ls_path
-    LI R2 ls_argv
+    LI R1 cat_path
+    LI R2 cat_argv
     LI R3 0
+
+    ;LI R1 ls_path
+    ;LI R2 ls_argv
+    ;LI R3 0
 
     SVC SYS_EXECVE
     ; returns if error with execve
@@ -7413,9 +8090,12 @@ cat_arg2:
     .ASCIIZ "lib/libc.inc"
 
 cat_argv:
-    .WORD cat_path
-    .WORD cat_arg1
-    .WORD cat_arg2
+    .WORD 0
+    .WORD 0
+
+   ; .WORD cat_path
+   ; .WORD cat_arg1
+   ; .WORD cat_arg2
     .WORD 0
 
 ;==========
@@ -7548,7 +8228,7 @@ sh_path:
 ; argv[0] is the program name
 sh_arg0:
     .ASCIIZ "sh"
-; argv[0] = path to executable
+; argv[0] = "bin/sh"
 ; argv[1] = NULL (terminator)
 sh_argv:
     .WORD sh_path

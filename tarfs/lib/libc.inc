@@ -51,20 +51,21 @@ _start:
     LDW R1 [SP]          ; argc
     ADD R2 SP 4          ; argv
     LI R3 0              ; envp = NULL
-    PUSH R1
-    PUSH R2
-    PUSH R3
+ ;   PUSH R1
+ ;   PUSH R2
+ ;   PUSH R3
     ; Initialize the allocator (must do this first!)
-    CALL malloc_init
-    POP  R3
-    POP  R2
-    POP  R1
+ ;   CALL malloc_init
+ ;   POP  R3
+ ;   POP  R2
+ ;   POP  R1
     BL main              ; call main loop - ls cat echo etc
-    PUSH R1              ; exit 0 - success 1 - error
-    LI R1 1              ; put to sleep so parent waitpid can work
-    SVC SYS_SLEEP
-    POP  R1
-    ;LI R1 42
+  ;  LI R1 1
+  ;  PUSH R1              ; exit 0 - success 1 - error
+  ;  LI R1 1              ; put to sleep so parent waitpid can work
+  ;  SVC SYS_SLEEP
+  ;  POP  R1
+    LI R1 42
     SVC SYS_EXIT
 
 ;==============================================================================

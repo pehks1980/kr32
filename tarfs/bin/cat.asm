@@ -16,7 +16,7 @@
 ; OUT: R1 = 0 on success, 1 if any file could not be opened
 ;==============================================================================
 main:
-    ;NOP
+    RET
     ;DEBUG 2                 ; testing INVLPG and tlb cache
 
     PUSH LR
@@ -37,6 +37,7 @@ main:
     MOV R9 R2               ; R9 = argv
 
     CMP R8 2                ; Need at least one argument (argv[1])
+
     BLT usage
 
     LI R10 1                ; R10 = current argument index (argv[1])
@@ -103,10 +104,12 @@ open_failed:
     B file_loop
 
 file_done:
+    DEBUG 2                 ; inspect stack/register state before epilogue
     ; free buffer
     LI  R2 256
     ADD SP SP R2
 
+    DEBUG 2                 ; inspect stack/register state after buffer cleanup
     MOV R1 R6               ; return code
     POP R12
     POP R11
@@ -119,6 +122,7 @@ file_done:
     RET
 
 usage:
+    DEBUG 2                 ; usage path should also preserve stack cleanly
     LI R1 cat_usage_str
     BL puts
     LI R6 1                 ; error
