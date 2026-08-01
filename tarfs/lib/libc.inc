@@ -60,12 +60,14 @@ _start:
  ;   POP  R2
  ;   POP  R1
     BL main              ; call main loop - ls cat echo etc
-  ;  LI R1 1
-  ;  PUSH R1              ; exit 0 - success 1 - error
-  ;  LI R1 1              ; put to sleep so parent waitpid can work
-  ;  SVC SYS_SLEEP
-  ;  POP  R1
-    LI R1 42
+    ;Debug 2
+    LI R1 0
+    PUSH R1              ; exit 0 - success 1 - error
+    LI R1 1              ; put to sleep so parent waitpid can work
+    SVC SYS_SLEEP
+    Debug 2
+    POP  R1
+  ;  LI R1 42
     SVC SYS_EXIT
 
 ;==============================================================================
