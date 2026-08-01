@@ -59,8 +59,9 @@ _start:
  ;   POP  R3
  ;   POP  R2
  ;   POP  R1
+    Debug 2
     BL main              ; call main loop - ls cat echo etc
-    ;Debug 2
+    Debug 2
     LI R1 0
     PUSH R1              ; exit 0 - success 1 - error
     LI R1 1              ; put to sleep so parent waitpid can work

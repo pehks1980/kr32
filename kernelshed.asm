@@ -155,7 +155,7 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
-    DEBUG 1
+   ; DEBUG 1
     B idle_loop
 
 
@@ -8232,6 +8232,25 @@ sh_arg0:
 ; argv[1] = NULL (terminator)
 sh_argv:
     .WORD sh_path
+    .WORD 0
+
+;==========
+ls1_path:
+    .ASCIIZ "bin/ls1"
+
+ls1_arg0:
+    .ASCIIZ "ls1"
+
+ls1_arg1:
+    .ASCIIZ "etc/"
+
+ls1_arg2:
+    .ASCIIZ "lib/"
+
+ls1_argv:
+    .WORD ls1_path
+    .WORD ls1_arg1
+    .WORD ls1_arg2
     .WORD 0
 
 #include "tarfs_generated.inc"
