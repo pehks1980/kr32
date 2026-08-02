@@ -2,6 +2,7 @@ import argparse
 import sys
 import time
 from token import OP
+from collections import deque
 
 from mmu import (
     MMU,
@@ -131,6 +132,8 @@ class CPU:
         self.trace_events = False
         self.quiet = False
         self.current_instr = None
+        self.instr_history_limit = 8
+        self.instr_history = deque(maxlen=self.instr_history_limit)
         self.last_execve_path = None
         self.last_execve_pc = None
         self.trap_return_pc = 0
@@ -844,7 +847,14 @@ class CPU:
 
         if self.traceint or self.trace_fault:
             if self.trace_output:
-                print(f"[TRAP] vector={vector} value=0x{value:08X} pc=0x{fault_pc:08X} handler_base=0x{self.idt_base_pa:08X}")
+                print(
+                    f"[TRAP] vector={vector} value=0x{value:08X} pc=0x{fault_pc:08X}"
+                    f" handler_base=0x{self.idt_base_pa:08X}{self._task_trace_summary()}"
+                )
+                history = self._format_instr_history()
+                if history:
+                    print("[TRAP BACKTRACE]")
+                    print(history)
                 if self.current_instr is not None:
                     op = (self.current_instr >> 24) & 0xFF
                     a  = (self.current_instr >> 16) & 0xFF
@@ -1059,6 +1069,48 @@ class CPU:
         if path:
             self.last_execve_path = path
             self.last_execve_pc = syscall_pc
+
+    def _task_trace_summary(self):
+        try:
+            from debug import _task_context
+            ctx = _task_context(self)
+        except Exception:
+            ctx = None
+
+        if not ctx:
+            return ""
+
+        return (
+            f" task[idx={ctx['idx']} pid={ctx['pid']} state={ctx['state']}"
+            f" ptbr=0x{ctx['ptbr'] or 0:08X} pc=0x{ctx['pc'] or 0:08X}"
+            f" usp=0x{ctx['usp'] or 0:08X} ksp=0x{ctx['ksp'] or 0:08X}"
+            f" resume={ctx['resume']} wait={ctx['wait']}"
+            f" code=0x{ctx['code_page'] or 0:08X}"
+            f" data=0x{ctx['data_page'] or 0:08X}"
+            f" ustack=0x{ctx['ustack_page'] or 0:08X}]"
+        )
+
+    def _format_instr_history(self, limit=None):
+        if not self.instr_history:
+            return ""
+        if limit is None:
+            limit = self.instr_history_limit
+        lines = []
+        for pc, instr in list(self.instr_history)[-limit:]:
+            if instr is None:
+                lines.append(f"  0x{pc:08X}: <no instruction>")
+                continue
+            op = (instr >> 24) & 0xFF
+            a = (instr >> 16) & 0xFF
+            b = (instr >> 8) & 0xFF
+            c = instr & 0xFF
+            if op in (0x05, 0x06, 0x07, 0x0F, 0x12, 0x13, 0x14, 0x15, 0x1A, 0x1B, 0x1C, 0x1D, 0x30):
+                ext = self.mem_peek_u32(pc + 4, access="x")
+                if ext is not None:
+                    lines.append(f"  0x{pc:08X}: {self.disasm(op, a, b, c, ext)}")
+                    continue
+            lines.append(f"  0x{pc:08X}: {self.disasm(op, a, b, c)}")
+        return "\n".join(lines)
     #-----------------------------------------------------
     # hexdump and physical_hexdump: Helpers to display memory contents in a human
     # readable format, showing both hexadecimal byte values and their ASCII representation.
@@ -1212,6 +1264,7 @@ class CPU:
 
             instr = self.fetch()
             self.current_instr = instr
+            self.instr_history.append((instr_pc, instr))
 
             op = (instr >> 24) & 0xFF
             a = (instr >> 16) & 0xFF
@@ -1441,8 +1494,6 @@ class CPU:
                         dump_all(self)
                     else:
                         dump_debug2(self, self.debug_dump_range)
-                    if debug_delay:
-                        time.sleep(debug_delay)
                     self.raise_trap(TRAP_DEBUG, debug_delay, resume_pc=self.pc)
                 elif debug_delay:
                     time.sleep(debug_delay)
@@ -1707,6 +1758,12 @@ def main():
         help="print timer, UART, and pending IRQ event messages"
     )
     parser.add_argument(
+        "--traceback",
+        type=int,
+        default=8,
+        help="number of prior instructions to include in trap backtrace"
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="print VM boot and halt status messages"
@@ -1734,6 +1791,8 @@ def main():
     cpu.trace_fault = args.tracefault
     cpu.trace_handler = args.tracehandler
     cpu.trace_events = args.traceevents
+    cpu.instr_history_limit = max(1, args.traceback)
+    cpu.instr_history = deque(maxlen=cpu.instr_history_limit)
     cpu.quiet = not args.verbose
     if args.dump and args.debug == 2:
         cpu.debug_dump_range = (int(args.dump[0], 0), int(args.dump[1], 0))

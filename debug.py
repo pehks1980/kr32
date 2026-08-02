@@ -40,6 +40,12 @@ def _read_u32_phys(vm, paddr):
     return int.from_bytes(vm.physical_memory[paddr:paddr + 4], "little")
 
 
+def _read_u8_phys(vm, paddr):
+    if paddr is None or paddr < 0 or paddr >= len(vm.physical_memory):
+        return None
+    return vm.physical_memory[paddr]
+
+
 def _pte_for(vm, ptbr, vaddr):
     if ptbr is None or vaddr is None:
         return None
@@ -178,6 +184,19 @@ def _task_context(vm):
     }
 
 
+def _page_refcount(vm, paddr):
+    if paddr in (None, 0):
+        return None
+    page_refcounts = _sym("page_refcounts")
+    page_alloc_base = _sym("PAGE_ALLOC_BASE")
+    if page_refcounts is None or page_alloc_base is None:
+        return None
+    if paddr < page_alloc_base:
+        return None
+    idx = (paddr - page_alloc_base) // vm.mmu.page_size
+    return _read_u8_phys(vm, page_refcounts + idx)
+
+
 def dump_task_context(vm):
     """Dump scheduler/task metadata relevant to the active address space."""
     ctx = _task_context(vm)
@@ -203,6 +222,21 @@ def dump_task_context(vm):
         f"  pages: code=0x{ctx['code_page'] or 0:08x} "
         f"data=0x{ctx['data_page'] or 0:08x} ustack=0x{ctx['ustack_page'] or 0:08x}"
     )
+    code_ref = _page_refcount(vm, ctx["code_page"])
+    ustack_ref = _page_refcount(vm, ctx["ustack_page"])
+    data_ref = _page_refcount(vm, ctx["data_page"])
+    print(
+        f"  refs: code={code_ref if code_ref is not None else '-'} "
+        f"data={data_ref if data_ref is not None else '-'} "
+        f"ustack={ustack_ref if ustack_ref is not None else '-'}"
+    )
+    last_execve_path = getattr(vm, "last_execve_path", None)
+    if last_execve_path:
+        last_execve_pc = getattr(vm, "last_execve_pc", None)
+        print(
+            f"  last execve: path={last_execve_path!r}"
+            f" pc=0x{last_execve_pc or 0:08x}"
+        )
     print()
 
 
@@ -316,6 +350,8 @@ def dump_trap_state(vm):
     print(f"  Trap return PC: 0x{vm.trap_return_pc:08x}")
     print(f"  Trap cause: {vm.trap_cause}")
     print(f"  Trap value: 0x{vm.trap_value:08x}")
+    dump_task_context(vm)
+    dump_address_context(vm)
     print()
 
 

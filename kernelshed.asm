@@ -253,7 +253,7 @@ init_idt:
 ; Initialize Page Tables
 ; ================================================================
 
-init_page_tables:
+init_page_tables0:
     PUSH LR
 
     ; Page tables are created by task_create. Boot only initializes the
@@ -261,6 +261,28 @@ init_page_tables:
     LI R1 page_bitmap
     LI R3 16
     BL mem_zero
+
+    POP LR
+    RET
+
+init_page_tables:
+    PUSH LR
+
+    ; Clear the refcount array
+    LI R1 page_refcounts
+    LI R3 MAX_PHYS_PAGES          ; 128 bytes = 128 pages: 1 byte for ea page (4k)
+    BL mem_zero                   ; 0 - free, 1 - allocated
+
+    ; Reserve the TAR image page (physical 0xA0000)
+    ; index = (0xA0000 - PAGE_ALLOC_BASE) / 4096
+    ; PAGE_ALLOC_BASE = 0x50000
+    ; (0xA0000 - 0x50000) = 0x50000 = 327680
+    ; 327680 / 4096 = 80
+    LI R2 80
+    LI R1 page_refcounts
+    ADD R1 R1 R2
+    LI R3 1
+    STB R3 [R1]     ;1 = allocated (80 pages for tar image
 
     POP LR
     RET
@@ -524,6 +546,7 @@ trap_entry:
 handle_divide_zero:
     ; TODO: handle divide by zero
     
+    DEBUG 1
     B trap_restore
 
 handle_invalid_instr:
@@ -708,7 +731,7 @@ execve_data_ok:
     CMP R12 0                       ; R12 = old code page PA for execve program from task metadata
     BEQ execve_commit_done          ; if no previous code page, skip freeing it
     MOV R1 R12
-    BL page_free                    ; free the old exec code page now that the new one is committed
+    BL page_put                    ; free the old exec code page now that the new one is committed
 
 execve_commit_done:
     ; Build a fresh Unix-style initial stack:
@@ -929,7 +952,7 @@ execve_copy_argv_done:
 ; then we exit back to child process with fail exit code
 execve_read_fail:
     MOV R1 R11
-    BL page_free                  ; free the failed new code page
+    BL page_put                    ; put-free the failed new code page
 
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4           ; reload task ptr before restoring USER_CODE_VA mapping
@@ -1181,6 +1204,19 @@ exec_commit_image:
     LI R1 HEAP_START
     TASK_SET_BREAK R5,R1
 
+    ; Make sure the task's fixed user stack page is still mapped RW before
+    ; returning to user mode. execve rewrites the stack contents, but the
+    ; page-table entry must remain valid even if the task was previously
+    ; switched through another path.
+    TASK_GET_PTBR R1,R5
+    TASK_GET_USTACK_PAGE R3,R5
+    CMP R3 0
+    BEQ exec_commit_skip_stack_map
+    LI R2 USER_STACK_VA
+    LI R4 USER_RW
+    BL map_page_rt
+
+exec_commit_skip_stack_map:
     TASK_GET_PTBR R1,R5
     LI R2 USER_CODE_VA
     MOV R3 R11
@@ -1190,7 +1226,7 @@ exec_commit_image:
     CMP R12 0               ; free old pa page (R12) if have
     BEQ no_old_page
     MOV R1 R12
-    BL page_free
+    BL page_put             ; free page
 no_old_page:
 
     LI  R1 exec_argc
@@ -1454,7 +1490,7 @@ load_read_fail:
     MOV R1 R10
     BL file_put
     MOV R1 R11
-    BL page_free
+    BL page_put        ;free page
     LI R1 0
     LI R2 ERR_IO
     B  exec_lb_exit
@@ -6457,6 +6493,9 @@ restore_kernel_context:         ;in case new task was stopped in kernel jump to 
 .EQU MAX_PHYS_PAGES 128
 .EQU PAGE_ALLOC_END  0x000D0000
 
+; new page allocation data with refcounts and bitmap for 128 pages of 4KB each (512KB total)
+page_refcounts:
+    .SPACE MAX_PHYS_PAGES        ; one byte per page, initialized to 0
 
 ; 0 = free
 ; 1 = allocated
@@ -6494,7 +6533,7 @@ page_bitmap:
 
 ;================================================================
 
-page_alloc:
+page_alloc0:
     PUSH  R5
     PUSH  R6
     PUSH  R7
@@ -6577,13 +6616,129 @@ pa_fail:
     POP R5  
     RET
 
+
+;new page allocation routine with refcounts and bitmap for 128 pages of 4KB each (512KB total)
+
+page_alloc:
+    PUSH R6
+    PUSH R7
+    PUSH R8
+    PUSH R9
+
+    LI R2 0                     ; page index
+
+pa1_loop:
+    LI R1 MAX_PHYS_PAGES
+    CMP R2 R1
+    BGE pa1_fail
+
+    LI R1 page_refcounts
+    ;ADD R5 R1 R2               ; address of refcount for this page
+    LDB R6 [R1 + R2]           ; load refcount
+    CMP R6 0
+    BEQ pa1_found
+
+    ADD R2 R2 1
+    B pa1_loop
+
+pa1_found:
+    LI R6 1
+    STB R6 [R1 + R2]          ; set refcount = 1
+
+    LI R9 PAGE_ALLOC_BASE   
+    MOV R1 R2
+    SHL R1 R1 12                ; index * PAGE_SIZE (4kB)
+    ADD R1 R1 R9                ; physical address = PAGE_ALLOC_BASE + page_index * PAGE_SIZE
+
+    POP R9
+    POP R8
+    POP R7
+    POP R6                     ; R1 = physical address of allocated page
+    RET
+
+pa1_fail:
+    LI R1 0                     ; no free pages
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    RET
+
+;=================================================================
+; page_get - increment refcount for a physical page
+; in R1 = physical page address
+; out R1 = physical page address (unchanged)
+;=================================================================  
+
+page_get:
+    ; R1 = physical address
+    ; Returns nothing; ignores invalid addresses
+    CMP R1 0
+    BEQ page_get_done
+
+    ; Check lower bound
+    LI R2 PAGE_ALLOC_BASE
+    CMP R1 R2
+    BLT page_get_done
+
+    ; Check upper bound (exclusive)
+    LI R2 PAGE_ALLOC_END
+    CMP R1 R2
+    BGE page_get_done
+
+    ; Calculate index
+    LI R2 PAGE_ALLOC_BASE 
+    SUB R2 R1 R2       ; R1 pa  
+    SHR R2 R2 12       ; R2 = page index in refcounts array
+    LI R3 page_refcounts
+    ADD R3 R3 R2
+    LDB R4 [R3]
+    ADD R4 R4 1                 ; increment refcount
+    STB R4 [R3]
+page_get_done:
+    RET
+
+;=================================================================
+; page_put - decrement refcount for a physical page
+; in R1 = physical page address
+; out R1 = physical page address (unchanged)
+;=================================================================  
+
+page_put:
+    ; R1 = physical address
+    CMP R1 0                        ;if address is 0 - ignore
+    BEQ page_put_done
+
+    LI R2 PAGE_ALLOC_BASE           ;check R1 is valid
+    CMP R1 R2
+    BLT page_put_done
+
+    LI R2 PAGE_ALLOC_END
+    CMP R1 R2
+    BGE page_put_done
+
+    LI R2 PAGE_ALLOC_BASE 
+    SUB R2 R1 R2      
+    SHR R2 R2 12        ; R2 = page index in refcounts array
+    LI R3 page_refcounts
+    ADD R3 R3 R2
+    LDB R4 [R3]
+    CMP R4 0
+    BEQ page_put_done               ;if refcount already 0 - ignore it was freed already
+    SUB R4 R4 1                     ;decrement refcount
+    STB R4 [R3]
+    ; If refcount becomes 0, the page is now free (no further action needed)
+page_put_done:
+    RET
+
+
 ;================================================================
 ; Page deallocation routines
 ; in R1 = physical page address to free
 ; index = (addr - BASE)/4096
 ;================================================================
 
-page_free:
+page_free0:
     PUSH  R5
     PUSH  R6
     PUSH  R7
@@ -6630,21 +6785,14 @@ page_free:
 ;=================================================================
 
 mem_zero:
-
     LI R2 0
-
 pz_loop:
-
     CMP R3 0
     BEQ pz_done
-
     STB R2 [R1]
-
     ADD R1 R1 1
     SUB R3 R3 1
-
     B pz_loop
-
 pz_done:
     RET
 
@@ -6663,7 +6811,6 @@ cpy_loop:
     ADD R2 R2 1
     SUB R3 R3 1
     B cpy_loop
-
 cpy_done:
     RET
 
@@ -6977,43 +7124,43 @@ task_create_fail:
     TASK_GET_PTBR R1, R10
     CMP R1 0
     BEQ task_create_free_ustack
-    BL page_free
+    BL page_put         
 
 task_create_free_ustack:
     TASK_GET_USTACK_PAGE R1, R10
     CMP R1 0
     BEQ task_create_free_kstack
-    BL page_free
+    BL page_put
 
 task_create_free_kstack:
     TASK_GET_KSTACK_PAGE R1, R10
     CMP R1 0
     BEQ task_create_free_fd
-    BL page_free
+    BL page_put
 
 task_create_free_fd:
     TASK_GET_FD_TABLE R1, R10
     CMP R1 0
     BEQ task_create_free_kwr
-    BL page_free
+    BL page_put
 
 task_create_free_kwr:
     TASK_GET_KBUF_WR R1, R10
     CMP R1 0
     BEQ task_create_free_krd
-    BL page_free
+    BL page_put
 
 task_create_free_krd:
     TASK_GET_KBUF_RD R1, R10
     CMP R1 0
     BEQ task_create_free_data
-    BL page_free
+    BL page_put
 
 task_create_free_data:
     TASK_GET_DATA_PAGE R1, R10
     CMP R1 0
     BEQ task_create_clear_slot
-    BL page_free
+    BL page_put
 
 task_create_clear_slot:
     MOV R1 R10
@@ -7091,9 +7238,16 @@ task_clone_current:
     LI R3 PAGE_SIZE
     BL page_copy
 
-    ; Preserve the current exec code page pointer if the parent uses execve.
-    TASK_GET_CODE_PAGE R2, R7
-    TASK_SET_CODE_PAGE R10, R2
+    ; child will inherit code page pa from parent 
+    TASK_GET_CODE_PAGE R2, R7   ; R2 = parent's code page PA
+    TASK_SET_CODE_PAGE R10, R2  ; set child's code page PA to parent's code page PA
+    ; Now increment refcount for the shared code page (if code page is allocated). 
+    ;(it is in case when execve was called before fork or when fork-execve, then fork-execve, then fork-execve etc. - all children share the same code page)
+    CMP R2 0
+    BEQ skip_code_get
+    MOV R1 R2
+    BL page_get     ;increment refcount for the shared code page (if code page is allocated)
+skip_code_get:
 
     ; The child has inherited the parent's kernel and code mappings.
     ; We will override the user stack and data mappings below.
@@ -7265,7 +7419,7 @@ task_destroy:
     BEQ td_skip_ptbr    ; if task has no page table, it also has no resources to free, so skip to clearing slot and returning
     
     MOV R1 R2
-    BL page_free        ; free process page table 
+    BL page_put        ; put-free process page table 
 
 td_skip_ptbr:
 
@@ -7273,7 +7427,7 @@ td_skip_ptbr:
     CMP R2 0
     BEQ td_skip_ustack  ; if task has no user stack page, it also has no kernel stack page, fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
     MOV R1 R2
-    BL page_free
+    BL page_put        ; put-free user stack page
 
 td_skip_ustack:
 
@@ -7281,7 +7435,7 @@ td_skip_ustack:
     CMP R2 0
     BEQ td_skip_kstack  ; if task has no kernel stack page, it also has no fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
     MOV R1 R2
-    BL page_free
+    BL page_put        ; put-free kernel stack page
 
 td_skip_kstack:
 
@@ -7289,7 +7443,7 @@ td_skip_kstack:
     CMP R2 0
     BEQ td_skip_fd    ; if task has no fd table page, it also has no user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning   
     MOV R1 R2
-    BL page_free
+    BL page_put        ; put-free fd table page
 
 td_skip_fd:
 
@@ -7297,7 +7451,7 @@ td_skip_fd:
     CMP R2 0
     BEQ td_skip_kwr   ; if task has no kernel write buffer page, it may still have kernel read buffer and user data page to free, but it has no user buffers to free because user buffers are allocated and mapped together in one page and there is no way to have user buffers without having kernel write buffer because we allocate kernel write buffer first before allocating and mapping user buffers in task_create, so if there is no kernel write buffer we can skip freeing user buffers and just move to checking and freeing kernel read buffer and user data page if they exist and then move to clearing slot and returning
     MOV R1 R2
-    BL page_free
+    BL page_put       ; put free KBUF_WR Page
 
 td_skip_kwr:
 
@@ -7305,7 +7459,7 @@ td_skip_kwr:
     CMP R2 0
     BEQ td_skip_krd  ; if task has no kernel read buffer page, it may still have user data page to free, but it has no user buffers to free for the same reason as in td_skip_kwr, so if there is no kernel read buffer we can skip freeing user buffers and just move to checking and freeing user data page if it exists and then move to clearing slot and returning
     MOV R1 R2
-    BL page_free
+    BL page_put       ; put free KBUF_RD Page
 
 td_skip_krd:
 
@@ -7313,7 +7467,7 @@ td_skip_krd:
     CMP R2 0
     BEQ td_skip_code
     MOV R1 R2
-    BL page_free
+    BL page_put        ; put-free user data page
 
 td_skip_code:
 
@@ -7321,7 +7475,7 @@ td_skip_code:
     CMP R2 0
     BEQ td_done
     MOV R1 R2
-    BL page_free
+    BL page_put        ; put-free user code page
 
 td_done:
 
@@ -7753,7 +7907,7 @@ write_loop1:
     LI R2 USER_WRITE_BUF    ; user buff
     LI R3 14                ; len
     SVC SYS_WRITE
-    DEBUG 1
+    ;DEBUG 1
     pop R1
     sub R1 R1 1
     cmp r1 0

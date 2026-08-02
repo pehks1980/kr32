@@ -329,7 +329,7 @@ init_idt:
 ; Initialize Page Tables
 ; ================================================================
 
-init_page_tables:
+init_page_tables0:
 0x000020FC       PUSH LR
 
     ; Page tables are created by task_create. Boot only initializes the
@@ -341,121 +341,143 @@ init_page_tables:
 0x00002118       POP LR
 0x0000211C       RET
 
+init_page_tables:
+0x00002120       PUSH LR
+
+    ; Clear the refcount array
+0x00002124       LI R1 page_refcounts
+0x0000212C       LI R3 MAX_PHYS_PAGES          ; 128 bytes = 128 pages: 1 byte for ea page (4k)
+0x00002134       BL mem_zero                   ; 0 - free, 1 - allocated
+
+    ; Reserve the TAR image page (physical 0xA0000)
+    ; index = (0xA0000 - PAGE_ALLOC_BASE) / 4096
+    ; PAGE_ALLOC_BASE = 0x50000
+    ; (0xA0000 - 0x50000) = 0x50000 = 327680
+    ; 327680 / 4096 = 80
+0x0000213C       LI R2 80
+0x00002144       LI R1 page_refcounts
+0x0000214C       ADD R1 R1 R2
+0x00002150       LI R3 1
+0x00002158       STB R3 [R1]     ;1 = allocated (80 pages for tar image
+
+0x0000215C       POP LR
+0x00002160       RET
+
 ; ================================================================
 ; Map common kernel pages into the given page table (PTBR in R1)
 ; ================================================================
 
 map_common_kernel:
-0x00002120       PUSH LR
-0x00002124       PUSH R12
+0x00002164       PUSH LR
+0x00002168       PUSH R12
 
     ; Boot page, kernel/trap code, static kernel data, and MMIO are
     ; identity-mapped into every address space.
-0x00002128       LI R2 0x00000000      ;page 0 - boot (0000)
-0x00002130       LI R3 0x00000000
-0x00002138       LI R4 KERNEL_FLAGS
-0x00002140       bl map_page
+0x0000216C       LI R2 0x00000000      ;page 0 - boot (0000)
+0x00002174       LI R3 0x00000000
+0x0000217C       LI R4 KERNEL_FLAGS
+0x00002184       bl map_page
 
     ; Kernel-only helpers: copy routines and page-table inspection
-0x00002148       LI R2 0x00001000      ; page for kernel buffers
-0x00002150       LI R3 0x00001000
-0x00002158       LI R4 KERNEL_FLAGS
-0x00002160       BL map_page
+0x0000218C       LI R2 0x00001000      ; page for kernel buffers
+0x00002194       LI R3 0x00001000
+0x0000219C       LI R4 KERNEL_FLAGS
+0x000021A4       BL map_page
 
-0x00002168       LI R2 0x00002000      ;page 1,2,3 = kernel code (2000,3000,4000)
-0x00002170       LI R3 0x00002000
-0x00002178       LI R4 KERNEL_FLAGS
-0x00002180       BL map_page
+0x000021AC       LI R2 0x00002000      ;page 1,2,3 = kernel code (2000,3000,4000)
+0x000021B4       LI R3 0x00002000
+0x000021BC       LI R4 KERNEL_FLAGS
+0x000021C4       BL map_page
 
-0x00002188       LI R2 0x00003000
-0x00002190       LI R3 0x00003000
-0x00002198       LI R4 KERNEL_FLAGS
-0x000021A0       BL map_page
+0x000021CC       LI R2 0x00003000
+0x000021D4       LI R3 0x00003000
+0x000021DC       LI R4 KERNEL_FLAGS
+0x000021E4       BL map_page
 
-0x000021A8       LI R2 0x00004000
-0x000021B0       LI R3 0x00004000
-0x000021B8       LI R4 KERNEL_FLAGS
-0x000021C0       BL map_page
+0x000021EC       LI R2 0x00004000
+0x000021F4       LI R3 0x00004000
+0x000021FC       LI R4 KERNEL_FLAGS
+0x00002204       BL map_page
 
-0x000021C8       LI R2 0x00005000
-0x000021D0       LI R3 0x00005000
-0x000021D8       LI R4 KERNEL_FLAGS
-0x000021E0       BL map_page
+0x0000220C       LI R2 0x00005000
+0x00002214       LI R3 0x00005000
+0x0000221C       LI R4 KERNEL_FLAGS
+0x00002224       BL map_page
 
-0x000021E8       LI R2 0x00006000
-0x000021F0       LI R3 0x00006000
-0x000021F8       LI R4 KERNEL_FLAGS
-0x00002200       BL map_page
+0x0000222C       LI R2 0x00006000
+0x00002234       LI R3 0x00006000
+0x0000223C       LI R4 KERNEL_FLAGS
+0x00002244       BL map_page
 
-0x00002208       LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
-0x00002210       LI R3 0x00007000
-0x00002218       LI R4 KERNEL_FLAGS
-0x00002220       BL map_page
+0x0000224C       LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
+0x00002254       LI R3 0x00007000
+0x0000225C       LI R4 KERNEL_FLAGS
+0x00002264       BL map_page
 
-0x00002228       LI R2 0x00008000      ; page 4 (number is page table entry one) tasks data
-0x00002230       LI R3 0x00008000
-0x00002238       LI R4 KERNEL_FLAGS
-0x00002240       BL map_page
+0x0000226C       LI R2 0x00008000      ; page 4 (number is page table entry one) tasks data
+0x00002274       LI R3 0x00008000
+0x0000227C       LI R4 KERNEL_FLAGS
+0x00002284       BL map_page
 
-0x00002248       LI R2 0x00009000      ; add page (number is page table entry one) tasks data
-0x00002250       LI R3 0x00009000
-0x00002258       LI R4 KERNEL_FLAGS
-0x00002260       BL map_page
+0x0000228C       LI R2 0x00009000      ; add page (number is page table entry one) tasks data
+0x00002294       LI R3 0x00009000
+0x0000229C       LI R4 KERNEL_FLAGS
+0x000022A4       BL map_page
 
-0x00002268       LI R2 0x0000A000      ; add page (number is page table entry one) tasks data
-0x00002270       LI R3 0x0000A000
-0x00002278       LI R4 KERNEL_FLAGS
-0x00002280       BL map_page
+0x000022AC       LI R2 0x0000A000      ; add page (number is page table entry one) tasks data
+0x000022B4       LI R3 0x0000A000
+0x000022BC       LI R4 KERNEL_FLAGS
+0x000022C4       BL map_page
 
-0x00002288       LI R2 0x0000B000      ; add page (number is page table entry one) tasks data
-0x00002290       LI R3 0x0000B000
-0x00002298       LI R4 KERNEL_FLAGS
-0x000022A0       BL map_page
+0x000022CC       LI R2 0x0000B000      ; add page (number is page table entry one) tasks data
+0x000022D4       LI R3 0x0000B000
+0x000022DC       LI R4 KERNEL_FLAGS
+0x000022E4       BL map_page
 
-0x000022A8       LI R2 0x0000C000      ; add page (number is page table entry one) tasks data
-0x000022B0       LI R3 0x0000C000
-0x000022B8       LI R4 KERNEL_FLAGS
-0x000022C0       BL map_page
+0x000022EC       LI R2 0x0000C000      ; add page (number is page table entry one) tasks data
+0x000022F4       LI R3 0x0000C000
+0x000022FC       LI R4 KERNEL_FLAGS
+0x00002304       BL map_page
 
 
 
     ; Map MMIO pages (UART, Timer/PIT, and PIC) into kernel address space
-0x000022C8       LI R2 0x00100000      ; UART physical and virtual base
-0x000022D0       LI R3 0x00100000
-0x000022D8       LI R4 KERNEL_FLAGS
-0x000022E0       BL map_page
+0x0000230C       LI R2 0x00100000      ; UART physical and virtual base
+0x00002314       LI R3 0x00100000
+0x0000231C       LI R4 KERNEL_FLAGS
+0x00002324       BL map_page
 
-0x000022E8       LI R2 0x00101000      ; PIT physical and virtual base
-0x000022F0       LI R3 0x00101000
-0x000022F8       LI R4 KERNEL_FLAGS
-0x00002300       BL map_page
+0x0000232C       LI R2 0x00101000      ; PIT physical and virtual base
+0x00002334       LI R3 0x00101000
+0x0000233C       LI R4 KERNEL_FLAGS
+0x00002344       BL map_page
 
-0x00002308       LI R2 0x00102000      ; PIC physical and virtual base
-0x00002310       LI R3 0x00102000
-0x00002318       LI R4 KERNEL_FLAGS
-0x00002320       BL map_page
+0x0000234C       LI R2 0x00102000      ; PIC physical and virtual base
+0x00002354       LI R3 0x00102000
+0x0000235C       LI R4 KERNEL_FLAGS
+0x00002364       BL map_page
 
     ; Dynamically allocated page tables, kernel stacks, fd tables and
     ; kernel buffers are addressed by their physical address in kernel
     ; code. Keep the complete allocator pool identity-mapped and
     ; supervisor-only in every address space.
-0x00002328       LI R12 PAGE_ALLOC_BASE
-0x00002330       LI R7 PAGE_ALLOC_END
+0x0000236C       LI R12 PAGE_ALLOC_BASE
+0x00002374       LI R7 PAGE_ALLOC_END
 map_common_dynamic_loop:
-0x00002338       CMP R12 R7
-0x0000233C       BGE map_common_dynamic_done
-0x00002344       MOV R2 R12
-0x00002348       MOV R3 R12
-0x0000234C       LI R4 KERNEL_FLAGS
-0x00002354       BL map_page
-0x0000235C       LI R6 PAGE_SIZE
-0x00002364       ADD R12 R12 R6
-0x00002368       B map_common_dynamic_loop
+0x0000237C       CMP R12 R7
+0x00002380       BGE map_common_dynamic_done
+0x00002388       MOV R2 R12
+0x0000238C       MOV R3 R12
+0x00002390       LI R4 KERNEL_FLAGS
+0x00002398       BL map_page
+0x000023A0       LI R6 PAGE_SIZE
+0x000023A8       ADD R12 R12 R6
+0x000023AC       B map_common_dynamic_loop
 map_common_dynamic_done:
 
-0x00002370       POP R12
-0x00002374       POP LR
-0x00002378       RET
+0x000023B4       POP R12
+0x000023B8       POP LR
+0x000023BC       RET
 
 ;================================================================
 ; Map a single page: VA in R2, PA in R3, flags in R
@@ -464,29 +486,29 @@ map_common_dynamic_done:
 map_page:
     ; R1=PTBR, R2=VA, R3=PA, R4=flags. The PTE format stores the physical
     ; page base in bits [31:12] and KR32 permission bits in [11:0].
-0x0000237C       PUSH R5
-0x00002380       PUSH R6
-0x00002384       SHR R5 R2 12               ; VPN
-0x00002388       SHL R5 R5 2                ; page-table byte offset
-0x0000238C       OR R6 R3 R4                ; PTE = PA page base | flags
-0x00002390       STW R6 [R1 + R5]
-0x00002394       POP R6
-0x00002398       POP R5
-0x0000239C       RET
+0x000023C0       PUSH R5
+0x000023C4       PUSH R6
+0x000023C8       SHR R5 R2 12               ; VPN
+0x000023CC       SHL R5 R5 2                ; page-table byte offset
+0x000023D0       OR R6 R3 R4                ; PTE = PA page base | flags
+0x000023D4       STW R6 [R1 + R5]
+0x000023D8       POP R6
+0x000023DC       POP R5
+0x000023E0       RET
 
 map_page_rt:
     ; Runtime page-table update. Same ABI as map_page, but also invalidates
     ; the cached translation for R2 so permission changes take effect now.
-0x000023A0       PUSH R5
-0x000023A4       PUSH R6
-0x000023A8       SHR R5 R2 12               ; VPN
-0x000023AC       SHL R5 R5 2                ; page-table byte offset
-0x000023B0       OR R6 R3 R4                ; PTE = PA page base | flags
-0x000023B4       STW R6 [R1 + R5]
-0x000023B8       INVLPG R2
-0x000023BC       POP R6
-0x000023C0       POP R5
-0x000023C4       RET
+0x000023E4       PUSH R5
+0x000023E8       PUSH R6
+0x000023EC       SHR R5 R2 12               ; VPN
+0x000023F0       SHL R5 R5 2                ; page-table byte offset
+0x000023F4       OR R6 R3 R4                ; PTE = PA page base | flags
+0x000023F8       STW R6 [R1 + R5]
+0x000023FC       INVLPG R2
+0x00002400       POP R6
+0x00002404       POP R5
+0x00002408       RET
 
 ; ================================================================
 ; Initialize MMIO devices (PIC, PIT, UART)
@@ -496,39 +518,39 @@ init_mmio_devices:
     ; ----------------------------------------------------
     ; Setup MMIO PIC: Enable IRQ 0 (timer) and IRQ 1 (uart)
     ; ----------------------------------------------------
-0x000023C8       LI R1 0x00102000
-0x000023D0       LI R2 3                 ; IRQ 0 = bit 0, IRQ 1 = bit 1, so mask = 0b11 = 3 to enable both
-0x000023D8       STW R2 [R1 + 0]         ; PIC_MASK = 3 (INT 0 & 1 enabled)
+0x0000240C       LI R1 0x00102000
+0x00002414       LI R2 3                 ; IRQ 0 = bit 0, IRQ 1 = bit 1, so mask = 0b11 = 3 to enable both
+0x0000241C       STW R2 [R1 + 0]         ; PIC_MASK = 3 (INT 0 & 1 enabled)
 
     ; ----------------------------------------------------
     ; Setup MMIO PIT: Set period to 2000 ms and enable ticks
     ; ----------------------------------------------------
-0x000023DC       LI R1 0x00101000
-0x000023E4       LI R2 2000
-0x000023EC       STW R2 [R1 + 0]         ; PIT_PERIOD = 2000 ms
-0x000023F0       LI R2 3                 ; PIT_ENABLE = bit 0, INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
-0x000023F8       STW R2 [R1 + 4]         ; PIT_CTRL = 3 (PIT_ENABLE | INT_ENABLE)
+0x00002420       LI R1 0x00101000
+0x00002428       LI R2 2000
+0x00002430       STW R2 [R1 + 0]         ; PIT_PERIOD = 2000 ms
+0x00002434       LI R2 3                 ; PIT_ENABLE = bit 0, INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
+0x0000243C       STW R2 [R1 + 4]         ; PIT_CTRL = 3 (PIT_ENABLE | INT_ENABLE)
 
     ; ----------------------------------------------------
     ; Setup MMIO UART: Enable RX/TX interrupts
     ; ----------------------------------------------------
-0x000023FC       LI R1 0x00100000
-0x00002404       LI R2 3                 ; UART_RX_INT_ENABLE = bit 0, UART_TX_INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
-0x0000240C       STW R2 [R1 + 8]         ; UART_CTRL = 3 (RX_INT_ENABLE | TX_INT_ENABLE)
+0x00002440       LI R1 0x00100000
+0x00002448       LI R2 3                 ; UART_RX_INT_ENABLE = bit 0, UART_TX_INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
+0x00002450       STW R2 [R1 + 8]         ; UART_CTRL = 3 (RX_INT_ENABLE | TX_INT_ENABLE)
 
-0x00002410       RET
+0x00002454       RET
 
 ; ================================================================
 ; Enable MMU and Interrupts
 ; ================================================================
 enable_vm:
-0x00002414       ENABLEMMU               ;enable MMU with current PTBR (set in init_page_tables)
+0x00002458       ENABLEMMU               ;enable MMU with current PTBR (set in init_page_tables)
     ; Interrupts are enabled by SRET from the first task trapframe.
     ; Keeping them disabled during boot avoids taking an IRQ before
     ; SSCRATCH contains a valid per-task kernel stack pointer.
     ;ENABLEINT
     ;DEBUG
-0x00002418       RET
+0x0000245C       RET
 
 
 ; ================================================================
@@ -540,79 +562,80 @@ trap_entry:
     ; After:  SP=kernel stack, SSCRATCH=interrupted task SP.
     ; so sp = u-sp, sscratch=k-sp => sp=k-sp, scratch=u-sp
     ;
-0x0000241C       CSRRW SP SSCRATCH SP
+0x00002460       CSRRW SP SSCRATCH SP
 
     ; Save interrupted GPR state on the kernel stack. SP itself is
     ; saved explicitly below from SSCRATCH, because SP now points to
     ; the kernel trapframe rather than the interrupted task stack.
-0x00002420       PUSH R1
-0x00002424       PUSH R2
-0x00002428       PUSH R3
-0x0000242C       PUSH R4
-0x00002430       PUSH R5
-0x00002434       PUSH R6
-0x00002438       PUSH R7
-0x0000243C       PUSH R8
-0x00002440       PUSH R9
-0x00002444       PUSH R10
-0x00002448       PUSH R11
-0x0000244C       PUSH R12
-0x00002450       PUSH R14
-0x00002454       PUSH R15
+0x00002464       PUSH R1
+0x00002468       PUSH R2
+0x0000246C       PUSH R3
+0x00002470       PUSH R4
+0x00002474       PUSH R5
+0x00002478       PUSH R6
+0x0000247C       PUSH R7
+0x00002480       PUSH R8
+0x00002484       PUSH R9
+0x00002488       PUSH R10
+0x0000248C       PUSH R11
+0x00002490       PUSH R12
+0x00002494       PUSH R14
+0x00002498       PUSH R15
 
     ; Save interrupted task SP plus privileged trap state.
-0x00002458       CSRR R1 SSCRATCH
-0x0000245C       PUSH R1
-0x00002460       CSRR R1 SEPC
-0x00002464       PUSH R1
-0x00002468       CSRR R1 SFLAGS
-0x0000246C       PUSH R1
-0x00002470       CSRR R1 SSTATUS
-0x00002474       PUSH R1
-0x00002478       CSRR R1 SCAUSE
-0x0000247C       PUSH R1
-0x00002480       CSRR R1 STVAL
-0x00002484       PUSH R1
+0x0000249C       CSRR R1 SSCRATCH
+0x000024A0       PUSH R1
+0x000024A4       CSRR R1 SEPC
+0x000024A8       PUSH R1
+0x000024AC       CSRR R1 SFLAGS
+0x000024B0       PUSH R1
+0x000024B4       CSRR R1 SSTATUS
+0x000024B8       PUSH R1
+0x000024BC       CSRR R1 SCAUSE
+0x000024C0       PUSH R1
+0x000024C4       CSRR R1 STVAL
+0x000024C8       PUSH R1
 
     ; Dispatch based on scause.
-0x00002488       CSRR R1 SCAUSE
-0x0000248C       CMP R1 0
-0x00002490       BEQ handle_divide_zero
+0x000024CC       CSRR R1 SCAUSE
+0x000024D0       CMP R1 0
+0x000024D4       BEQ handle_divide_zero
 
-0x00002498       CMP R1 1
-0x0000249C       BEQ handle_invalid_instr
+0x000024DC       CMP R1 1
+0x000024E0       BEQ handle_invalid_instr
 
-0x000024A4       CMP R1 2
-0x000024A8       BEQ handle_page_fault
+0x000024E8       CMP R1 2
+0x000024EC       BEQ handle_page_fault
 
-0x000024B0       CMP R1 3
-0x000024B4       BEQ handle_syscall
+0x000024F4       CMP R1 3
+0x000024F8       BEQ handle_syscall
 
-0x000024BC       CMP R1 6
-0x000024C0       BEQ handle_debug
+0x00002500       CMP R1 6
+0x00002504       BEQ handle_debug
 
-0x000024C8       CMP R1 16
-0x000024CC       BEQ handle_irq
+0x0000250C       CMP R1 16
+0x00002510       BEQ handle_irq
 
     ; Unknown cause - halt
-0x000024D4       HLT
+0x00002518       HLT
 
 handle_divide_zero:
     ; TODO: handle divide by zero
 
-0x000024D8       B trap_restore
+0x0000251C       DEBUG 1
+0x00002520       B trap_restore
 
 handle_invalid_instr:
     ; TODO: handle invalid instruction
 
-0x000024E0       B trap_restore
+0x00002528       B trap_restore
 
 handle_page_fault:
     ; R2 contains fault address
     ; TODO: handle page fault
-0x000024E8       HLT
+0x00002530       HLT
 
-0x000024EC       B trap_restore
+0x00002534       B trap_restore
 
 handle_syscall:
     ;=================================================================
@@ -623,24 +646,24 @@ handle_syscall:
     ; so SVC is a special BL to OS call -)
     ;=================================================================
 
-0x000024F4       CSRR R2 STVAL
+0x0000253C       CSRR R2 STVAL
 
-0x000024F8       CMP R2 SYS_COUNT
-0x000024FC       BGE syscall_unknown
+0x00002540       CMP R2 SYS_COUNT
+0x00002544       BGE syscall_unknown
 
-0x00002504       LI R3 syscall_table         ;compute entry by SVC x number and execute call function call on address on R5
-0x0000250C       SHL R4 R2 2
-0x00002510       LDW R5 [R3 + R4]
-0x00002514       JR R5
+0x0000254C       LI R3 syscall_table         ;compute entry by SVC x number and execute call function call on address on R5
+0x00002554       SHL R4 R2 2
+0x00002558       LDW R5 [R3 + R4]
+0x0000255C       JR R5
 
 syscall_unknown:
 ;================================================================
 ; For unknown syscalls, return an errno in R1 and restore.
 ;================================================================
 
-0x00002518       LI R1 ERR_NOSYS
-0x00002520       STW R1 [SP + TF_R1]
-0x00002524       B trap_restore
+0x00002560       LI R1 ERR_NOSYS
+0x00002568       STW R1 [SP + TF_R1]
+0x0000256C       B trap_restore
 
 ;================================================================
 ; SYSCALL HANDLERS
@@ -688,123 +711,123 @@ syscall_execve1:
     ; errno in R1 through the normal trap_restore path.
     ;================================================================
 
-0x00002570       LDW R8 [SP + TF_R1]        ; user path pointer
+0x000025B8       LDW R8 [SP + TF_R1]        ; user path pointer
 
-0x00002574       LDW R9 [SP + TF_R2]        ; user argv pointer
-0x00002578       PUSH R9
+0x000025BC       LDW R9 [SP + TF_R2]        ; user argv pointer
+0x000025C0       PUSH R9
 
-0x0000257C       MOV R1 R8
-0x00002580       BL copy_path_from_user
-0x00002588       CMP R1 0
-0x0000258C       BEQ execve_badfault
+0x000025C4       MOV R1 R8
+0x000025C8       BL copy_path_from_user
+0x000025D0       CMP R1 0
+0x000025D4       BEQ execve_badfault
 
-0x00002594       MOV R12 R1                ; kernel pointer to copied pathname
+0x000025DC       MOV R12 R1                ; kernel pointer to copied pathname
 
-0x00002598       MOV R1 R12
-0x0000259C       BL vfs_lookup             ; lookup inode for the file
-0x000025A4       CMP R1 0
-0x000025A8       BEQ execve_noent
-
-0x000025B0       MOV R9 R1                 ; inode*
-0x000025B4       LDW R1 [R9 + INODE_TYPE]
-0x000025B8       LI R2 INODE_DIR
-0x000025C0       CMP R1 R2
-0x000025C4       BEQ execve_noexec           ; if the inode is a directory, we cannot execute it
-
-0x000025CC       LDW R3 [R9 + INODE_SIZE]
-0x000025D0       LI R4 PAGE_SIZE         ; 4096 bytes
-0x000025D8       CMP R3 R4
-0x000025DC       BGT execve_noexec       ; if the inode size is greater than a page, we cannot execute it
-
-0x000025E4       BL file_alloc
+0x000025E0       MOV R1 R12
+0x000025E4       BL vfs_lookup             ; lookup inode for the file
 0x000025EC       CMP R1 0
-0x000025F0       BEQ execve_nomem         ; if we cannot allocate a file for this inode, return error
+0x000025F0       BEQ execve_noent
 
-0x000025F8       MOV R10 R1                ; file*
-0x000025FC       MOV R1 R10
-0x00002600       MOV R2 R9
-0x00002604       LI R3 FD_FLAG_READ
-0x0000260C       BL file_init            ; initialize the file structure for reading the executable
+0x000025F8       MOV R9 R1                 ; inode*
+0x000025FC       LDW R1 [R9 + INODE_TYPE]
+0x00002600       LI R2 INODE_DIR
+0x00002608       CMP R1 R2
+0x0000260C       BEQ execve_noexec           ; if the inode is a directory, we cannot execute it
 
-0x00002614       BL page_alloc           ; allocate a new page for the executable code of execve program
-0x0000261C       CMP R1 0
-0x00002620       BEQ execve_noexec_file
+0x00002614       LDW R3 [R9 + INODE_SIZE]
+0x00002618       LI R4 PAGE_SIZE         ; 4096 bytes
+0x00002620       CMP R3 R4
+0x00002624       BGT execve_noexec       ; if the inode size is greater than a page, we cannot execute it
 
-0x00002628       MOV R11 R1                ; new code page PA for execve program
+0x0000262C       BL file_alloc
+0x00002634       CMP R1 0
+0x00002638       BEQ execve_nomem         ; if we cannot allocate a file for this inode, return error
+
+0x00002640       MOV R10 R1                ; file*
+0x00002644       MOV R1 R10
+0x00002648       MOV R2 R9
+0x0000264C       LI R3 FD_FLAG_READ
+0x00002654       BL file_init            ; initialize the file structure for reading the executable
+
+0x0000265C       BL page_alloc           ; allocate a new page for the executable code of execve program
+0x00002664       CMP R1 0
+0x00002668       BEQ execve_noexec_file
+
+0x00002670       MOV R11 R1                ; new code page PA for execve program
 
 ; macro: GET_CURR_TASK_IDX R4    ; get current task index
-0x0000262C   LI R1 CURRENT_TASK
-0x00002634   LDW R4 [R1]
+0x00002674   LI R1 CURRENT_TASK
+0x0000267C   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00002638   LI R1 TASK_SIZE
-0x00002640   MUL R3 R4 R1
-0x00002644   LI R5 tasks
-0x0000264C   ADD R5 R5 R3
+0x00002680   LI R1 TASK_SIZE
+0x00002688   MUL R3 R4 R1
+0x0000268C   LI R5 tasks
+0x00002694   ADD R5 R5 R3
 
 ; macro: TASK_GET_CODE_PAGE R12, R5 ; preserve old exec code page PA for rollback / cleanup
-0x00002650   LDW R12 [R5 + TASK_CODE_PAGE]
+0x00002698   LDW R12 [R5 + TASK_CODE_PAGE]
 ; macro: TASK_GET_PTBR R1, R5       ; R1 = PTBR of current task
-0x00002654   LDW R1 [R5 + TASK_PTBR]
-0x00002658       LI R2 USER_CODE_VA         ; R2 = code page VA for execve program
-0x00002660       MOV R3 R11                 ; R3 = code page PA for execve program
-0x00002664       LI R4 USER_RW              ; R4 = temporary RW permissions so we can load the page
-0x0000266C       BL map_page_rt             ; runtime map executable page RW at USER_CODE_VA for loading
+0x0000269C   LDW R1 [R5 + TASK_PTBR]
+0x000026A0       LI R2 USER_CODE_VA         ; R2 = code page VA for execve program
+0x000026A8       MOV R3 R11                 ; R3 = code page PA for execve program
+0x000026AC       LI R4 USER_RW              ; R4 = temporary RW permissions so we can load the page
+0x000026B4       BL map_page_rt             ; runtime map executable page RW at USER_CODE_VA for loading
 
 ; macro: TASK_GET_DATA_PAGE R1, R5  ; get data page PA for current task
-0x00002674   LDW R1 [R5 + TASK_DATA_PAGE]
-0x00002678       CMP R1 0
-0x0000267C       BEQ execve_data_ok         ; if the task has no data page, skip clearing it
-0x00002684       LI R3 PAGE_SIZE
-0x0000268C       BL mem_zero                ; zero the current task data page before execve starts
+0x000026BC   LDW R1 [R5 + TASK_DATA_PAGE]
+0x000026C0       CMP R1 0
+0x000026C4       BEQ execve_data_ok         ; if the task has no data page, skip clearing it
+0x000026CC       LI R3 PAGE_SIZE
+0x000026D4       BL mem_zero                ; zero the current task data page before execve starts
 
 execve_data_ok:
 
-0x00002694       MOV R1 R10              ; file* of execve program
-0x00002698       LI R2 USER_CODE_VA      ; VA of code page for execve program
-0x000026A0       LI R3 PAGE_SIZE         ; size of code page for execve program
-0x000026A8       BL file_read            ; load executable into USER_CODE_VA
-0x000026B0       CMP R1 0
-0x000026B4       BLT execve_read_fail    ; if read fails, restore old exec code page and return error
+0x000026DC       MOV R1 R10              ; file* of execve program
+0x000026E0       LI R2 USER_CODE_VA      ; VA of code page for execve program
+0x000026E8       LI R3 PAGE_SIZE         ; size of code page for execve program
+0x000026F0       BL file_read            ; load executable into USER_CODE_VA
+0x000026F8       CMP R1 0
+0x000026FC       BLT execve_read_fail    ; if read fails, restore old exec code page and return error
 
-0x000026BC       MOV R1 R10              ; file* of execve program
-0x000026C0       BL file_put             ; release file resources after successful load
+0x00002704       MOV R1 R10              ; file* of execve program
+0x00002708       BL file_put             ; release file resources after successful load
 
 ; macro: GET_CURR_TASK_IDX R4    ; this was real mistake here! I forgot to retore current task ptr
-0x000026C8   LI R1 CURRENT_TASK
-0x000026D0   LDW R4 [R1]
+0x00002710   LI R1 CURRENT_TASK
+0x00002718   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4     ; reload task ptr after calls that may clobber caller-saved R5
-0x000026D4   LI R1 TASK_SIZE
-0x000026DC   MUL R3 R4 R1
-0x000026E0   LI R5 tasks
-0x000026E8   ADD R5 R5 R3
+0x0000271C   LI R1 TASK_SIZE
+0x00002724   MUL R3 R4 R1
+0x00002728   LI R5 tasks
+0x00002730   ADD R5 R5 R3
                             ; we also added INVLPG - for good! - history comments
     ; commit new exec state after successful file load
-0x000026EC       LI R1 USER_CODE_VA
+0x00002734       LI R1 USER_CODE_VA
 ; macro: TASK_SET_PC R5, R1              ; start execution at USER_CODE_VA
-0x000026F4   STW R1 [R5 + TASK_PC]
+0x0000273C   STW R1 [R5 + TASK_PC]
 ; macro: TASK_SET_CODE_PAGE R5, R11      ; remember physical page backing this user code
-0x000026F8   STW R11 [R5 + TASK_CODE_PAGE]
-0x000026FC       LI R1 USER_STACK_TOP
+0x00002740   STW R11 [R5 + TASK_CODE_PAGE]
+0x00002744       LI R1 USER_STACK_TOP
 ; macro: TASK_SET_USP R5, R1             ; reset user stack pointer
-0x00002704   STW R1 [R5 + TASK_USP]
-0x00002708       LI R1 HEAP_START
+0x0000274C   STW R1 [R5 + TASK_USP]
+0x00002750       LI R1 HEAP_START
 ; macro: TASK_SET_BREAK R5, R1           ; reset program break into the task's data page
-0x00002710   STW R1 [R5 + TASK_BREAK]
+0x00002758   STW R1 [R5 + TASK_BREAK]
 
     ; Remap the new code page read-only before handing control over
 ; macro: TASK_GET_PTBR R1, R5            ; get PTBR of current task
-0x00002714   LDW R1 [R5 + TASK_PTBR]
-0x00002718       LI R2 USER_CODE_VA              ; VA of code page for execve program
-0x00002720       MOV R3 R11                      ; PA of code page for execve program
-0x00002724       LI R4 KERNEL_USER_ALL
-0x0000272C       BL map_page_rt                  ; switch the new code page from RW to RX
+0x0000275C   LDW R1 [R5 + TASK_PTBR]
+0x00002760       LI R2 USER_CODE_VA              ; VA of code page for execve program
+0x00002768       MOV R3 R11                      ; PA of code page for execve program
+0x0000276C       LI R4 KERNEL_USER_ALL
+0x00002774       BL map_page_rt                  ; switch the new code page from RW to RX
 
    ; DEBUG 2
 
-0x00002734       CMP R12 0                       ; R12 = old code page PA for execve program from task metadata
-0x00002738       BEQ execve_commit_done          ; if no previous code page, skip freeing it
-0x00002740       MOV R1 R12
-0x00002744       BL page_free                    ; free the old exec code page now that the new one is committed
+0x0000277C       CMP R12 0                       ; R12 = old code page PA for execve program from task metadata
+0x00002780       BEQ execve_commit_done          ; if no previous code page, skip freeing it
+0x00002788       MOV R1 R12
+0x0000278C       BL page_put                    ; free the old exec code page now that the new one is committed
 
 execve_commit_done:
     ; Build a fresh Unix-style initial stack:
@@ -812,24 +835,24 @@ execve_commit_done:
     ; The new program can read argc/argv from the stack, and we also mirror
     ; argc/argv into R1/R2 for convenience.
 
-0x0000274C       POP R4                         ; remember argv ptr from start of syscall_execve
-0x00002750       LI R6 0                        ; R6 = argc counter
+0x00002794       POP R4                         ; remember argv ptr from start of syscall_execve
+0x00002798       LI R6 0                        ; R6 = argc counter
 
     ; Step 1: Count argc - walk on argv ptrs count argc till  we find NULL check above
-0x00002758       MOV R7 R4
+0x000027A0       MOV R7 R4
 execve_argv_count_loop:
-0x0000275C       CMP R7 0
-0x00002760       BEQ execve_argv_count_done
-0x00002768       LDW R8 [R7]
-0x0000276C       CMP R8 0
-0x00002770       BEQ execve_argv_count_done
+0x000027A4       CMP R7 0
+0x000027A8       BEQ execve_argv_count_done
+0x000027B0       LDW R8 [R7]
+0x000027B4       CMP R8 0
+0x000027B8       BEQ execve_argv_count_done
 
-0x00002778       CMP R6 16                      ;MAX argc count
-0x0000277C       BGE execve_badfault
+0x000027C0       CMP R6 16                      ;MAX argc count
+0x000027C4       BGE execve_badfault
 
-0x00002784       ADD R6 R6 1
-0x00002788       ADD R7 R7 4
-0x0000278C       B execve_argv_count_loop
+0x000027CC       ADD R6 R6 1
+0x000027D0       ADD R7 R7 4
+0x000027D4       B execve_argv_count_loop
 
 execve_argv_count_done:
     ; Now we know argc = R6, argv = R4
@@ -864,73 +887,73 @@ execve_argv_count_done:
     ; Start copying strings from top of user stack downward.
     ; R5 = current string cursor
     ;-------------------------------------------------------------
-0x00002794       LI  R5 USER_STACK_TOP
+0x000027DC       LI  R5 USER_STACK_TOP
 
     ;-------------------------------------------------------------
     ; Temporary kernel array for argv pointers.
     ; argv_tmp[16]
     ;-------------------------------------------------------------
-0x0000279C       LI  R11 execve_tmp_argv
+0x000027E4       LI  R11 execve_tmp_argv
 
     ;-------------------------------------------------------------
     ; Copy strings in reverse order so they naturally pack downward.
     ;-------------------------------------------------------------
-0x000027A4       MOV R7 R6
-0x000027A8       SUB R7 R7 1             ; [argc]-1
+0x000027EC       MOV R7 R6
+0x000027F0       SUB R7 R7 1             ; [argc]-1
 
 execve_copy_reverse:        ; R7(i) = (argc-1 ... 0)
-0x000027AC       LI  R8 -1
-0x000027B4       CMP R7 R8
-0x000027B8       BEQ execve_strings_done
+0x000027F4       LI  R8 -1
+0x000027FC       CMP R7 R8
+0x00002800       BEQ execve_strings_done
 
     ; source string = argv[i] starting from last arg string
-0x000027C0       MOV R8 R7
-0x000027C4       SHL R8 R8 2             ;R7(i)*4+argv ptr => R9(&argv[i])
-0x000027C8       ADD R9 R4 R8
-0x000027CC       LDW R10 [R9]            ;get string ptr from last argv[argc-1] (in first iteration)
+0x00002808       MOV R8 R7
+0x0000280C       SHL R8 R8 2             ;R7(i)*4+argv ptr => R9(&argv[i])
+0x00002810       ADD R9 R4 R8
+0x00002814       LDW R10 [R9]            ;get string ptr from last argv[argc-1] (in first iteration)
 
     ;-------------------------------------------------------------
     ; strlen()
     ; R12 = length including terminating NUL
     ;-------------------------------------------------------------
-0x000027D0       LI R12 0                ;str len ctr - compute this argv string len (+ 0)
+0x00002818       LI R12 0                ;str len ctr - compute this argv string len (+ 0)
 
 execve_strlen:
 
-0x000027D8       LDB R2 [R10 + R12]
-0x000027DC       ADD R12 R12 1
-0x000027E0       CMP R2 0
-0x000027E4       BNE execve_strlen
+0x00002820       LDB R2 [R10 + R12]
+0x00002824       ADD R12 R12 1
+0x00002828       CMP R2 0
+0x0000282C       BNE execve_strlen
 
     ; reserve space - on user stack top this argv string destination
 
-0x000027EC       SUB R5 R5 R12               ; R5 dest addres argv string copy to gets updated by lenght of each string
+0x00002834       SUB R5 R5 R12               ; R5 dest addres argv string copy to gets updated by lenght of each string
                                 ; to be copied to tmp
 
     ; remember destination pointer
-0x000027F0       MOV R8 R7
-0x000027F4       SHL R8 R8 2                 ;R7 argv string number in argv array
-0x000027F8       ADD R9 R11 R8               ;r9=&temp argv[i]  which is = R7(i)*4+&temp argv[] array storage
-0x000027FC       STW R5 [R9]                 ;R5->[R9] string pointer on user stack
+0x00002838       MOV R8 R7
+0x0000283C       SHL R8 R8 2                 ;R7 argv string number in argv array
+0x00002840       ADD R9 R11 R8               ;r9=&temp argv[i]  which is = R7(i)*4+&temp argv[] array storage
+0x00002844       STW R5 [R9]                 ;R5->[R9] string pointer on user stack
 
     ; memcpy()
-0x00002800       LI R8 0
+0x00002848       LI R8 0
 
 execve_copy_string:             ; first copy strings ptrs from (argv array) to temp storage
                                 ; from last string to first - opposite order
-0x00002808       LDB R2 [R10 + R8]           ; R10 execv argv &string[i]  (last to first)
-0x0000280C       STB R2 [R5 + R8]            ; R5 same in tmp
+0x00002850       LDB R2 [R10 + R8]           ; R10 execv argv &string[i]  (last to first)
+0x00002854       STB R2 [R5 + R8]            ; R5 same in tmp
 
-0x00002810       CMP R2 0
-0x00002814       BEQ execve_copy_done
+0x00002858       CMP R2 0
+0x0000285C       BEQ execve_copy_done
 
-0x0000281C       ADD R8 R8 1                 ; to next char in string
-0x00002820       B execve_copy_string
+0x00002864       ADD R8 R8 1                 ; to next char in string
+0x00002868       B execve_copy_string
 
 execve_copy_done:
 
-0x00002828       SUB R7 R7 1                 ; to copy next string
-0x0000282C       B execve_copy_reverse
+0x00002870       SUB R7 R7 1                 ; to copy next string
+0x00002874       B execve_copy_reverse
 
 execve_strings_done:            ;copy argv strings array to temp storage in opposite order is done
 
@@ -943,168 +966,168 @@ execve_strings_done:            ;copy argv strings array to temp storage in oppo
     ;
     ; stack_words = argc + 2
     ;-------------------------------------------------------------
-0x00002834       MOV R7 R6
-0x00002838       ADD R7 R7 2
+0x0000287C       MOV R7 R6
+0x00002880       ADD R7 R7 2
 
-0x0000283C       MOV R8 R7
-0x00002840       SHL R8 R8 2
+0x00002884       MOV R8 R7
+0x00002888       SHL R8 R8 2
 
-0x00002844       SUB R5 R5 R8            ;update R5 by stack words
+0x0000288C       SUB R5 R5 R8            ;update R5 by stack words
 
     ;-------------------------------------------------------------
     ; R5 now becomes initial user stack pointer.
     ;-------------------------------------------------------------
 
-0x00002848       STW R6 [R5]             ; put argc to user stack see picture above (Reserve space for:)
+0x00002890       STW R6 [R5]             ; put argc to user stack see picture above (Reserve space for:)
 
-0x0000284C       ADD R9 R5 4             ; R9 - move 'writing head' to next element argv in user stack
+0x00002894       ADD R9 R5 4             ; R9 - move 'writing head' to next element argv in user stack
                             ; R5 - initial user stack pointer
     ;-------------------------------------------------------------
     ; argv data copied. now - Copy argv pointers
     ;-------------------------------------------------------------
-0x00002850       LI R7 0
+0x00002898       LI R7 0
 
 execve_copy_argv:
 
-0x00002858       CMP R7 R6
-0x0000285C       BEQ execve_copy_argv_done
+0x000028A0       CMP R7 R6
+0x000028A4       BEQ execve_copy_argv_done
 
-0x00002864       MOV R8 R7
-0x00002868       SHL R8 R8 2              ; R7 argv index
+0x000028AC       MOV R8 R7
+0x000028B0       SHL R8 R8 2              ; R7 argv index
 
-0x0000286C       LDW R12 [R11 + R8]       ; we copy stings pointers here (not actual strings!)
+0x000028B4       LDW R12 [R11 + R8]       ; we copy stings pointers here (not actual strings!)
                              ; R11 - &execve_tmp_argv
-0x00002870       STW R12 [R9 + R8]        ; R9 - write head on user stack
+0x000028B8       STW R12 [R9 + R8]        ; R9 - write head on user stack
 
-0x00002874       ADD R7 R7 1
-0x00002878       B execve_copy_argv
+0x000028BC       ADD R7 R7 1
+0x000028C0       B execve_copy_argv
 
 execve_copy_argv_done:
 
     ; argv[argc] = NULL
-0x00002880       MOV R8 R6
-0x00002884       SHL R8 R8 2
-0x00002888       ADD R10 R9 R8
+0x000028C8       MOV R8 R6
+0x000028CC       SHL R8 R8 2
+0x000028D0       ADD R10 R9 R8
 
-0x0000288C       LI R12 0
-0x00002894       STW R12 [R10]               ; write NuLL - finish form user stack frame (arguments part!)
+0x000028D4       LI R12 0
+0x000028DC       STW R12 [R10]               ; write NuLL - finish form user stack frame (arguments part!)
 
     ;-------------------------------------------------------------
     ; Prepare trapframe for new process.
     ;-------------------------------------------------------------
 
-0x00002898       STW R6 [SP + TF_R1]      ; argc
+0x000028E0       STW R6 [SP + TF_R1]      ; argc
 
-0x0000289C       MOV R1 R9
-0x000028A0       STW R1 [SP + TF_R2]      ; argv
+0x000028E4       MOV R1 R9
+0x000028E8       STW R1 [SP + TF_R2]      ; argv
 
-0x000028A4       LI R1 0
-0x000028AC       STW R1 [SP + TF_R3]      ; envp
+0x000028EC       LI R1 0
+0x000028F4       STW R1 [SP + TF_R3]      ; envp
 
-0x000028B0       STW R5 [SP + TF_USP]     ; initial user SP
+0x000028F8       STW R5 [SP + TF_USP]     ; initial user SP
 
 
     ; Prepare a fresh user register state for the new program.
-0x000028B4       LI R1 0
-0x000028BC       STW R1 [SP + TF_R4]
-0x000028C0       STW R1 [SP + TF_R5]
-0x000028C4       STW R1 [SP + TF_R6]
-0x000028C8       STW R1 [SP + TF_R7]
-0x000028CC       STW R1 [SP + TF_R8]
-0x000028D0       STW R1 [SP + TF_R9]
-0x000028D4       STW R1 [SP + TF_R10]
-0x000028D8       STW R1 [SP + TF_R11]
-0x000028DC       STW R1 [SP + TF_R12]
-0x000028E0       LI R1   USER_CODE_VA               ; user execve program entry point
-0x000028E8       STW R1 [SP + TF_SEPC]              ; set SEPC to the new program entry point
+0x000028FC       LI R1 0
+0x00002904       STW R1 [SP + TF_R4]
+0x00002908       STW R1 [SP + TF_R5]
+0x0000290C       STW R1 [SP + TF_R6]
+0x00002910       STW R1 [SP + TF_R7]
+0x00002914       STW R1 [SP + TF_R8]
+0x00002918       STW R1 [SP + TF_R9]
+0x0000291C       STW R1 [SP + TF_R10]
+0x00002920       STW R1 [SP + TF_R11]
+0x00002924       STW R1 [SP + TF_R12]
+0x00002928       LI R1   USER_CODE_VA               ; user execve program entry point
+0x00002930       STW R1 [SP + TF_SEPC]              ; set SEPC to the new program entry point
 
-0x000028EC       B trap_restore                     ; restore kernel trapframe and start user execution at user_code_va
+0x00002934       B trap_restore                     ; restore kernel trapframe and start user execution at user_code_va
 
 ; as it should be clear
 ; if fail occured we rollback depending at what stage fail occured and free used resources
 ; then we exit back to child process with fail exit code
 execve_read_fail:
-0x000028F4       MOV R1 R11
-0x000028F8       BL page_free                  ; free the failed new code page
+0x0000293C       MOV R1 R11
+0x00002940       BL page_put                    ; put-free the failed new code page
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00002900   LI R1 CURRENT_TASK
-0x00002908   LDW R4 [R1]
+0x00002948   LI R1 CURRENT_TASK
+0x00002950   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4           ; reload task ptr before restoring USER_CODE_VA mapping
-0x0000290C   LI R1 TASK_SIZE
-0x00002914   MUL R3 R4 R1
-0x00002918   LI R5 tasks
-0x00002920   ADD R5 R5 R3
+0x00002954   LI R1 TASK_SIZE
+0x0000295C   MUL R3 R4 R1
+0x00002960   LI R5 tasks
+0x00002968   ADD R5 R5 R3
 
-0x00002924       CMP R12 0
-0x00002928       BEQ execve_restore_no_prev
+0x0000296C       CMP R12 0
+0x00002970       BEQ execve_restore_no_prev
 ; macro: TASK_GET_PTBR R1, R5
-0x00002930   LDW R1 [R5 + TASK_PTBR]
-0x00002934       LI R2 USER_CODE_VA
-0x0000293C       MOV R3 R12
-0x00002940       LI R4 USER_RX
-0x00002948       BL map_page_rt                ; restore previous exec page mapping at USER_CODE_VA
-0x00002950       MOV R1 R12
+0x00002978   LDW R1 [R5 + TASK_PTBR]
+0x0000297C       LI R2 USER_CODE_VA
+0x00002984       MOV R3 R12
+0x00002988       LI R4 USER_RX
+0x00002990       BL map_page_rt                ; restore previous exec page mapping at USER_CODE_VA
+0x00002998       MOV R1 R12
 ; macro: TASK_SET_CODE_PAGE R5, R12    ; restore previous exec code page pointer
-0x00002954   STW R12 [R5 + TASK_CODE_PAGE]
-0x00002958       B execve_restore_done
+0x0000299C   STW R12 [R5 + TASK_CODE_PAGE]
+0x000029A0       B execve_restore_done
 
 execve_restore_no_prev:
 ; macro: TASK_GET_PTBR R1, R5
-0x00002960   LDW R1 [R5 + TASK_PTBR]
-0x00002964       LI R2 USER_CODE_VA
-0x0000296C       LI R3 0
-0x00002974       LI R4 0
-0x0000297C       BL map_page_rt                ; unmap USER_CODE_VA if there was no previous code page
-0x00002984       LI R1 0
+0x000029A8   LDW R1 [R5 + TASK_PTBR]
+0x000029AC       LI R2 USER_CODE_VA
+0x000029B4       LI R3 0
+0x000029BC       LI R4 0
+0x000029C4       BL map_page_rt                ; unmap USER_CODE_VA if there was no previous code page
+0x000029CC       LI R1 0
 ; macro: TASK_SET_CODE_PAGE R5, R1
-0x0000298C   STW R1 [R5 + TASK_CODE_PAGE]
+0x000029D4   STW R1 [R5 + TASK_CODE_PAGE]
 
 execve_restore_done:
-0x00002990       MOV R1 R10
-0x00002994       BL file_put
+0x000029D8       MOV R1 R10
+0x000029DC       BL file_put
 
-0x0000299C       POP R1                      ;save stack
-0x000029A0       LI R1 ERR_NOEXEC
-0x000029A8       STW R1 [SP + TF_R1]
-0x000029AC       B trap_restore
+0x000029E4       POP R1                      ;save stack
+0x000029E8       LI R1 ERR_NOEXEC
+0x000029F0       STW R1 [SP + TF_R1]
+0x000029F4       B trap_restore
 
 execve_nomem_file:
-0x000029B4       MOV R1 R10
-0x000029B8       BL file_put
+0x000029FC       MOV R1 R10
+0x00002A00       BL file_put
 
-0x000029C0       POP R1
-0x000029C4       LI R1 ERR_NOMEM
-0x000029CC       STW R1 [SP + TF_R1]
-0x000029D0       B trap_restore
+0x00002A08       POP R1
+0x00002A0C       LI R1 ERR_NOMEM
+0x00002A14       STW R1 [SP + TF_R1]
+0x00002A18       B trap_restore
 
 execve_nomem:
-0x000029D8       POP R1
-0x000029DC       LI R1 ERR_NOMEM
-0x000029E4       STW R1 [SP + TF_R1]
-0x000029E8       B trap_restore
+0x00002A20       POP R1
+0x00002A24       LI R1 ERR_NOMEM
+0x00002A2C       STW R1 [SP + TF_R1]
+0x00002A30       B trap_restore
 
 execve_noexec_file:
 
-0x000029F0       MOV R1 R10
-0x000029F4       BL file_put
+0x00002A38       MOV R1 R10
+0x00002A3C       BL file_put
 execve_noexec:
-0x000029FC       POP R1
-0x00002A00       LI R1 ERR_NOEXEC
-0x00002A08       STW R1 [SP + TF_R1]
-0x00002A0C       B trap_restore
+0x00002A44       POP R1
+0x00002A48       LI R1 ERR_NOEXEC
+0x00002A50       STW R1 [SP + TF_R1]
+0x00002A54       B trap_restore
 
 execve_noent:
-0x00002A14       POP R1
-0x00002A18       LI R1 ERR_NOENT
-0x00002A20       STW R1 [SP + TF_R1]
-0x00002A24       B trap_restore
+0x00002A5C       POP R1
+0x00002A60       LI R1 ERR_NOENT
+0x00002A68       STW R1 [SP + TF_R1]
+0x00002A6C       B trap_restore
 
 execve_badfault:
-0x00002A2C       POP R1
-0x00002A30       LI R1 ERR_FAULT
-0x00002A38       STW R1 [SP + TF_R1]
-0x00002A3C       B trap_restore
+0x00002A74       POP R1
+0x00002A78       LI R1 ERR_FAULT
+0x00002A80       STW R1 [SP + TF_R1]
+0x00002A84       B trap_restore
 
 ;-------------------------------------------------------------
 ; Temporary argv pointer storage during execve
@@ -1172,72 +1195,72 @@ syscall_execve:
     ;
     ; overview and why its better then previous what serous obstacles it is able to overcome
 
-0x00003150       LDW R8 [SP + TF_R1]        ; user path pointer
-0x00003154       LDW R9 [SP + TF_R2]        ; user argv pointer
-0x00003158       MOV R11 R9                 ; save to R11
+0x00003198       LDW R8 [SP + TF_R1]        ; user path pointer
+0x0000319C       LDW R9 [SP + TF_R2]        ; user argv pointer
+0x000031A0       MOV R11 R9                 ; save to R11
 
-0x0000315C       LI  R1 exec_path
-0x00003164       MOV R2 R8
-0x00003168       LI  R3 EXEC_MAX_PATH
-0x00003170       BL copy_user_string        ;copy path string to ws
-0x00003178       CMP R1 0
-0x0000317C       BEQ execve_badfault
+0x000031A4       LI  R1 exec_path
+0x000031AC       MOV R2 R8
+0x000031B0       LI  R3 EXEC_MAX_PATH
+0x000031B8       BL copy_user_string        ;copy path string to ws
+0x000031C0       CMP R1 0
+0x000031C4       BEQ execve_badfault
 
     ;init execve ws
-0x00003184       LI R1 exec_argc
-0x0000318C       LI R2 0
-0x00003194       STW R2 [R1]
+0x000031CC       LI R1 exec_argc
+0x000031D4       LI R2 0
+0x000031DC       STW R2 [R1]
 
     ;count argc
 
-0x00003198       MOV R8 R9               ; user argv
-0x0000319C       LI  R6 0                ; argc
+0x000031E0       MOV R8 R9               ; user argv
+0x000031E4       LI  R6 0                ; argc
 ;count ptrs in array of ptrs argv till 0 -null end
 argc_loop:
-0x000031A4       CMP R8 0                ;if no argv 0-null
-0x000031A8       BEQ argc_done
-0x000031B0       LDW R3 [R8]
-0x000031B4       CMP R3 0                ;if end
-0x000031B8       BEQ argc_done
-0x000031C0       CMP R6 EXEC_MAX_ARGS    ;if too much MAX argc count
-0x000031C4       BGE exec_badfault
-0x000031CC       ADD R6 R6 1
-0x000031D0       ADD R8 R8 4
-0x000031D4       B argc_loop
+0x000031EC       CMP R8 0                ;if no argv 0-null
+0x000031F0       BEQ argc_done
+0x000031F8       LDW R3 [R8]
+0x000031FC       CMP R3 0                ;if end
+0x00003200       BEQ argc_done
+0x00003208       CMP R6 EXEC_MAX_ARGS    ;if too much MAX argc count
+0x0000320C       BGE exec_badfault
+0x00003214       ADD R6 R6 1
+0x00003218       ADD R8 R8 4
+0x0000321C       B argc_loop
 argc_done:
-0x000031DC       LI R1 exec_argc         ;store it to ws
-0x000031E4       STW R6 [R1]
+0x00003224       LI R1 exec_argc         ;store it to ws
+0x0000322C       STW R6 [R1]
 
-0x000031E8       MOV R9 R6               ;R9 argc R11 user argv pointer
-0x000031EC       MOV R8 R11
-0x000031F0       BL  copy_argv_strings   ;fill arrays in ws from argvs
-0x000031F8       CMP R1 0
-0x000031FC       BNE exec_fail
+0x00003230       MOV R9 R6               ;R9 argc R11 user argv pointer
+0x00003234       MOV R8 R11
+0x00003238       BL  copy_argv_strings   ;fill arrays in ws from argvs
+0x00003240       CMP R1 0
+0x00003244       BNE exec_fail
 
-0x00003204       LI R1 exec_path
-0x0000320C       BL exec_load_binary
-0x00003214       CMP R1 0
-0x00003218       BEQ exec_fail
+0x0000324C       LI R1 exec_path
+0x00003254       BL exec_load_binary
+0x0000325C       CMP R1 0
+0x00003260       BEQ exec_fail
 
-0x00003220       MOV R11 R1        ; new code page
-0x00003224       MOV R12 R2        ; old code page
-0x00003228       BL exec_build_stack_image
-0x00003230       CMP R1 0
-0x00003234       BNE exec_rollback
+0x00003268       MOV R11 R1        ; new code page
+0x0000326C       MOV R12 R2        ; old code page
+0x00003270       BL exec_build_stack_image
+0x00003278       CMP R1 0
+0x0000327C       BNE exec_rollback
 
-0x0000323C       MOV R1 R11
-0x00003240       MOV R2 R12
+0x00003284       MOV R1 R11
+0x00003288       MOV R2 R12
 
-0x00003244       B exec_commit_image
+0x0000328C       B exec_commit_image
 
 exec_badfault:
-0x0000324C       NOP
+0x00003294       NOP
 exec_fail:
-0x00003250       NOP
+0x00003298       NOP
 exec_rollback:
-0x00003254       LI R1 ERR_FAULT
-0x0000325C       STW R1 [SP + TF_R1]
-0x00003260       B trap_restore
+0x0000329C       LI R1 ERR_FAULT
+0x000032A4       STW R1 [SP + TF_R1]
+0x000032A8       B trap_restore
 ;=============================================================
 ; exec_commit_image
 ;
@@ -1264,78 +1287,93 @@ exec_commit_image:
   ;  PUSH R11
   ;  PUSH R12
 
-0x00003268       MOV R11 R1              ; new page
-0x0000326C       MOV R12 R2              ; old page
+0x000032B0       MOV R11 R1              ; new page
+0x000032B4       MOV R12 R2              ; old page
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00003270   LI R1 CURRENT_TASK
-0x00003278   LDW R4 [R1]
+0x000032B8   LI R1 CURRENT_TASK
+0x000032C0   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5,R4
-0x0000327C   LI R1 TASK_SIZE
-0x00003284   MUL R3 R4 R1
-0x00003288   LI R5 tasks
-0x00003290   ADD R5 R5 R3
+0x000032C4   LI R1 TASK_SIZE
+0x000032CC   MUL R3 R4 R1
+0x000032D0   LI R5 tasks
+0x000032D8   ADD R5 R5 R3
 
-0x00003294       LI  R1 exec_stack_used
-0x0000329C       LDW R8 [R1]
-0x000032A0       LI  R9 USER_STACK_TOP
-0x000032A8       SUB R9 R9 R8            ; final user SP
-0x000032AC       MOV R1 R9               ;  R2->R9 len R8 - cpy our image for stack
-0x000032B0       LI  R2 exec_stack_image
-0x000032B8       MOV R3 R8
-0x000032BC       BL memcpy
+0x000032DC       LI  R1 exec_stack_used
+0x000032E4       LDW R8 [R1]
+0x000032E8       LI  R9 USER_STACK_TOP
+0x000032F0       SUB R9 R9 R8            ; final user SP
+0x000032F4       MOV R1 R9               ;  R2->R9 len R8 - cpy our image for stack
+0x000032F8       LI  R2 exec_stack_image
+0x00003300       MOV R3 R8
+0x00003304       BL memcpy
 
-0x000032C4       LI R1 USER_CODE_VA      ; commit task state
+0x0000330C       LI R1 USER_CODE_VA      ; commit task state
 ; macro: TASK_SET_PC R5,R1
-0x000032CC   STW R1 [R5 + TASK_PC]
+0x00003314   STW R1 [R5 + TASK_PC]
 ; macro: TASK_SET_CODE_PAGE R5,R11
-0x000032D0   STW R11 [R5 + TASK_CODE_PAGE]
-0x000032D4       MOV R1 R9
+0x00003318   STW R11 [R5 + TASK_CODE_PAGE]
+0x0000331C       MOV R1 R9
 ; macro: TASK_SET_USP R5,R1
-0x000032D8   STW R1 [R5 + TASK_USP]
-0x000032DC       LI R1 HEAP_START
+0x00003320   STW R1 [R5 + TASK_USP]
+0x00003324       LI R1 HEAP_START
 ; macro: TASK_SET_BREAK R5,R1
-0x000032E4   STW R1 [R5 + TASK_BREAK]
+0x0000332C   STW R1 [R5 + TASK_BREAK]
 
+    ; Make sure the task's fixed user stack page is still mapped RW before
+    ; returning to user mode. execve rewrites the stack contents, but the
+    ; page-table entry must remain valid even if the task was previously
+    ; switched through another path.
 ; macro: TASK_GET_PTBR R1,R5
-0x000032E8   LDW R1 [R5 + TASK_PTBR]
-0x000032EC       LI R2 USER_CODE_VA
-0x000032F4       MOV R3 R11
-0x000032F8       LI R4 KERNEL_USER_ALL   ; map code page RX subject to permissions on X (now all X)
-0x00003300       BL map_page_rt
+0x00003330   LDW R1 [R5 + TASK_PTBR]
+; macro: TASK_GET_USTACK_PAGE R3,R5
+0x00003334   LDW R3 [R5 + TASK_USTACK_PAGE]
+0x00003338       CMP R3 0
+0x0000333C       BEQ exec_commit_skip_stack_map
+0x00003344       LI R2 USER_STACK_VA
+0x0000334C       LI R4 USER_RW
+0x00003354       BL map_page_rt
 
-0x00003308       CMP R12 0               ; free old pa page (R12) if have
-0x0000330C       BEQ no_old_page
-0x00003314       MOV R1 R12
-0x00003318       BL page_free
+exec_commit_skip_stack_map:
+; macro: TASK_GET_PTBR R1,R5
+0x0000335C   LDW R1 [R5 + TASK_PTBR]
+0x00003360       LI R2 USER_CODE_VA
+0x00003368       MOV R3 R11
+0x0000336C       LI R4 KERNEL_USER_ALL   ; map code page RX subject to permissions on X (now all X)
+0x00003374       BL map_page_rt
+
+0x0000337C       CMP R12 0               ; free old pa page (R12) if have
+0x00003380       BEQ no_old_page
+0x00003388       MOV R1 R12
+0x0000338C       BL page_put             ; free page
 no_old_page:
 
-0x00003320       LI  R1 exec_argc
-0x00003328       LDW R2 [R1]
-0x0000332C       STW R2 [SP+TF_R1]
+0x00003394       LI  R1 exec_argc
+0x0000339C       LDW R2 [R1]
+0x000033A0       STW R2 [SP+TF_R1]
 
-0x00003330       MOV R1 R9
-0x00003334       ADD R1 R1 4
-0x00003338       STW R1 [SP+TF_R2]       ; user sp with image on top + 4 so it points to &argv image
+0x000033A4       MOV R1 R9
+0x000033A8       ADD R1 R1 4
+0x000033AC       STW R1 [SP+TF_R2]       ; user sp with image on top + 4 so it points to &argv image
 
-0x0000333C       LI R1 0                 ; envp
-0x00003344       STW R1 [SP+TF_R3]
+0x000033B0       LI R1 0                 ; envp
+0x000033B8       STW R1 [SP+TF_R3]
 
-0x00003348       STW R9 [SP+TF_USP]      ; user sp
+0x000033BC       STW R9 [SP+TF_USP]      ; user sp
 
-0x0000334C       LI R1 0
-0x00003354       STW R1 [SP+TF_R4]
-0x00003358       STW R1 [SP+TF_R5]
-0x0000335C       STW R1 [SP+TF_R6]
-0x00003360       STW R1 [SP+TF_R7]
-0x00003364       STW R1 [SP+TF_R8]
-0x00003368       STW R1 [SP+TF_R9]
-0x0000336C       STW R1 [SP+TF_R10]
-0x00003370       STW R1 [SP+TF_R11]
-0x00003374       STW R1 [SP+TF_R12]
+0x000033C0       LI R1 0
+0x000033C8       STW R1 [SP+TF_R4]
+0x000033CC       STW R1 [SP+TF_R5]
+0x000033D0       STW R1 [SP+TF_R6]
+0x000033D4       STW R1 [SP+TF_R7]
+0x000033D8       STW R1 [SP+TF_R8]
+0x000033DC       STW R1 [SP+TF_R9]
+0x000033E0       STW R1 [SP+TF_R10]
+0x000033E4       STW R1 [SP+TF_R11]
+0x000033E8       STW R1 [SP+TF_R12]
 
-0x00003378       LI R1 USER_CODE_VA
-0x00003380       STW R1 [SP+TF_SEPC]
+0x000033EC       LI R1 USER_CODE_VA
+0x000033F4       STW R1 [SP+TF_SEPC]
 
   ;  POP R12
   ;  POP R11
@@ -1344,7 +1382,7 @@ no_old_page:
   ;  POP R8
   ;  POP LR
 
-0x00003384       B trap_restore
+0x000033F8       B trap_restore
 
 
 
@@ -1380,98 +1418,98 @@ no_old_page:
 ;====================================================================
 
 exec_build_stack_image:
-0x0000338C       PUSH LR
-0x00003390       PUSH R8
-0x00003394       PUSH R9
-0x00003398       PUSH R10
-0x0000339C       PUSH R11
-0x000033A0       PUSH R12
+0x00003400       PUSH LR
+0x00003404       PUSH R8
+0x00003408       PUSH R9
+0x0000340C       PUSH R10
+0x00003410       PUSH R11
+0x00003414       PUSH R12
 
-0x000033A4       LI   R1 exec_argc   ;argc
-0x000033AC       LDW  R6 [R1]
+0x00003418       LI   R1 exec_argc   ;argc
+0x00003420       LDW  R6 [R1]
 
-0x000033B0       MOV  R7 R6          ;pointer_bytes = (argc+2)*4
-0x000033B4       ADD  R7 R7 2
-0x000033B8       SHL  R7 R7 2
+0x00003424       MOV  R7 R6          ;pointer_bytes = (argc+2)*4
+0x00003428       ADD  R7 R7 2
+0x0000342C       SHL  R7 R7 2
 
-0x000033BC       LI   R1 exec_strings_used   ; strings blob len
-0x000033C4       LDW  R8 [R1]
+0x00003430       LI   R1 exec_strings_used   ; strings blob len
+0x00003438       LDW  R8 [R1]
 
     ;----------------------------------------------------------
     ; total = pointer_bytes(len argv ptr array + 4b argc) + string_bytes(len string blobs)
     ;----------------------------------------------------------
 
-0x000033C8       ADD  R9 R7 R8
+0x0000343C       ADD  R9 R7 R8
     ; check for MAX
-0x000033CC       LI   R1 EXEC_STACK_SIZE
-0x000033D4       CMP  R9 R1
-0x000033D8       BGT  exec_stack_nomem
+0x00003440       LI   R1 EXEC_STACK_SIZE
+0x00003448       CMP  R9 R1
+0x0000344C       BGT  exec_stack_nomem
 
-0x000033E0       LI   R1 exec_stack_used     ; save used size
-0x000033E8       STW  R9 [R1]
+0x00003454       LI   R1 exec_stack_used     ; save used size
+0x0000345C       STW  R9 [R1]
 
-0x000033EC       LI   R10 exec_stack_image   ;stack base for image
+0x00003460       LI   R10 exec_stack_image   ;stack base for image
     ; building image for stack as on picture
-0x000033F4       STW  R6 [R10]   ;argc
+0x00003468       STW  R6 [R10]   ;argc
 
     ; copy string blob
-0x000033F8       MOV  R1 R10
-0x000033FC       ADD  R1 R1 R7   ; skip room for pointer_bytes see picture
-0x00003400       LI   R2 exec_strings
-0x00003408       MOV  R3 R8      ; blob len
-0x0000340C       BL   memcpy
+0x0000346C       MOV  R1 R10
+0x00003470       ADD  R1 R1 R7   ; skip room for pointer_bytes see picture
+0x00003474       LI   R2 exec_strings
+0x0000347C       MOV  R3 R8      ; blob len
+0x00003480       BL   memcpy
 
     ;----------------------------------------------------------
     ; future user addresses
     ;----------------------------------------------------------
 
-0x00003414       LI   R11 USER_STACK_TOP
-0x0000341C       SUB  R11 R11 R9             ; r9 total image len, R11 start address image in the user stack
-0x00003420       MOV  R12 R11
-0x00003424       ADD  R12 R12 R7             ; r12 pointer bytes ptr in image in stack - start of string blob
+0x00003488       LI   R11 USER_STACK_TOP
+0x00003490       SUB  R11 R11 R9             ; r9 total image len, R11 start address image in the user stack
+0x00003494       MOV  R12 R11
+0x00003498       ADD  R12 R12 R7             ; r12 pointer bytes ptr in image in stack - start of string blob
 
     ;----------------------------------------------------------
     ; argv table build
     ;----------------------------------------------------------
 
-0x00003428       ADD  R10 R10 4              ; argv[0] starts after argc
-0x0000342C       LI   R4 exec_argv_offsets   ; args offsetss array
-0x00003434       LI   R5 0
+0x0000349C       ADD  R10 R10 4              ; argv[0] starts after argc
+0x000034A0       LI   R4 exec_argv_offsets   ; args offsetss array
+0x000034A8       LI   R5 0
 argv_loop:
-0x0000343C       CMP  R5 R6                  ; argc
-0x00003440       BEQ  argv_done              ; if finished
-0x00003448       MOV  R1 R5
-0x0000344C       SHL  R1 R1 2
-0x00003450       LDW  R2 [R4+R1]             ; get arg[i] offset
-0x00003454       ADD  R2 R2 R12              ; compute R2 - blobs string adress for this arg[i]
-0x00003458       STW  R2 [R10+R1]            ; store this address to argv array in image
-0x0000345C       ADD  R5 R5 1
-0x00003460       B    argv_loop
+0x000034B0       CMP  R5 R6                  ; argc
+0x000034B4       BEQ  argv_done              ; if finished
+0x000034BC       MOV  R1 R5
+0x000034C0       SHL  R1 R1 2
+0x000034C4       LDW  R2 [R4+R1]             ; get arg[i] offset
+0x000034C8       ADD  R2 R2 R12              ; compute R2 - blobs string adress for this arg[i]
+0x000034CC       STW  R2 [R10+R1]            ; store this address to argv array in image
+0x000034D0       ADD  R5 R5 1
+0x000034D4       B    argv_loop
 argv_done:
-0x00003468       MOV  R1 R6
-0x0000346C       SHL  R1 R1 2
+0x000034DC       MOV  R1 R6
+0x000034E0       SHL  R1 R1 2
 
-0x00003470       LI   R2 0
-0x00003478       STW  R2 [R10+R1]            ; put null here: argv[argc] = NULL
+0x000034E4       LI   R2 0
+0x000034EC       STW  R2 [R10+R1]            ; put null here: argv[argc] = NULL
     ;success
-0x0000347C       LI   R1 0
-0x00003484       POP  R12
-0x00003488       POP  R11
-0x0000348C       POP  R10
-0x00003490       POP  R9
-0x00003494       POP  R8
-0x00003498       POP  LR
-0x0000349C       RET
+0x000034F0       LI   R1 0
+0x000034F8       POP  R12
+0x000034FC       POP  R11
+0x00003500       POP  R10
+0x00003504       POP  R9
+0x00003508       POP  R8
+0x0000350C       POP  LR
+0x00003510       RET
 
 exec_stack_nomem:
-0x000034A0       LI   R1 ERR_NOMEM
-0x000034A8       POP  R12
-0x000034AC       POP  R11
-0x000034B0       POP  R10
-0x000034B4       POP  R9
-0x000034B8       POP  R8
-0x000034BC       POP  LR
-0x000034C0       RET
+0x00003514       LI   R1 ERR_NOMEM
+0x0000351C       POP  R12
+0x00003520       POP  R11
+0x00003524       POP  R10
+0x00003528       POP  R9
+0x0000352C       POP  R8
+0x00003530       POP  LR
+0x00003534       RET
 
 ;=============================================================
 ; exec_load_binary
@@ -1490,125 +1528,125 @@ exec_stack_nomem:
 ;
 ;=============================================================
 exec_load_binary:
-0x000034C4       PUSH LR
-0x000034C8       PUSH R7
-0x000034CC       PUSH R8
-0x000034D0       PUSH R9
-0x000034D4       PUSH R10
-0x000034D8       PUSH R11
-0x000034DC       PUSH R12
+0x00003538       PUSH LR
+0x0000353C       PUSH R7
+0x00003540       PUSH R8
+0x00003544       PUSH R9
+0x00003548       PUSH R10
+0x0000354C       PUSH R11
+0x00003550       PUSH R12
 
-0x000034E0       BL vfs_lookup   ; lookup inode for the file
-0x000034E8       CMP R1 0
-0x000034EC       BEQ load_noent
-0x000034F4       MOV R9 R1
+0x00003554       BL vfs_lookup   ; lookup inode for the file
+0x0000355C       CMP R1 0
+0x00003560       BEQ load_noent
+0x00003568       MOV R9 R1
 
-0x000034F8       LDW R1 [R9 + INODE_TYPE]    ;check inode type/size
-0x000034FC       LI R2 INODE_DIR
-0x00003504       CMP R1 R2
-0x00003508       BEQ load_noexec
-0x00003510       LDW R3 [R9 + INODE_SIZE]
-0x00003514       LI R4 PAGE_SIZE
-0x0000351C       CMP R3 R4
-0x00003520       BGT load_noexec
+0x0000356C       LDW R1 [R9 + INODE_TYPE]    ;check inode type/size
+0x00003570       LI R2 INODE_DIR
+0x00003578       CMP R1 R2
+0x0000357C       BEQ load_noexec
+0x00003584       LDW R3 [R9 + INODE_SIZE]
+0x00003588       LI R4 PAGE_SIZE
+0x00003590       CMP R3 R4
+0x00003594       BGT load_noexec
 
-0x00003528       BL file_alloc               ;allocate file
-0x00003530       CMP R1 0
-0x00003534       BEQ load_nomem
-0x0000353C       MOV R10 R1                  ; savr file ptr R10
-0x00003540       MOV R1 R10
-0x00003544       MOV R2 R9
-0x00003548       LI R3 FD_FLAG_READ
-0x00003550       BL file_init
+0x0000359C       BL file_alloc               ;allocate file
+0x000035A4       CMP R1 0
+0x000035A8       BEQ load_nomem
+0x000035B0       MOV R10 R1                  ; savr file ptr R10
+0x000035B4       MOV R1 R10
+0x000035B8       MOV R2 R9
+0x000035BC       LI R3 FD_FLAG_READ
+0x000035C4       BL file_init
 
-0x00003558       BL page_alloc               ; pa page for code
-0x00003560       CMP R1 0
-0x00003564       BEQ load_file_fail
+0x000035CC       BL page_alloc               ; pa page for code
+0x000035D4       CMP R1 0
+0x000035D8       BEQ load_file_fail
 
-0x0000356C       MOV R11 R1                  ;new pa page code
+0x000035E0       MOV R11 R1                  ;new pa page code
 
 ; macro: GET_CURR_TASK_IDX R4        ;current task
-0x00003570   LI R1 CURRENT_TASK
-0x00003578   LDW R4 [R1]
+0x000035E4   LI R1 CURRENT_TASK
+0x000035EC   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5,R4
-0x0000357C   LI R1 TASK_SIZE
-0x00003584   MUL R3 R4 R1
-0x00003588   LI R5 tasks
-0x00003590   ADD R5 R5 R3
+0x000035F0   LI R1 TASK_SIZE
+0x000035F8   MUL R3 R4 R1
+0x000035FC   LI R5 tasks
+0x00003604   ADD R5 R5 R3
 ; macro: TASK_GET_CODE_PAGE R12,R5   ; save old pa code page from this task to R12
-0x00003594   LDW R12 [R5 + TASK_CODE_PAGE]
+0x00003608   LDW R12 [R5 + TASK_CODE_PAGE]
 
 ; macro: TASK_GET_PTBR R1,R5
-0x00003598   LDW R1 [R5 + TASK_PTBR]
-0x0000359C       LI R2 USER_CODE_VA
-0x000035A4       MOV R3 R11                  ;new pa code page
-0x000035A8       LI R4 USER_RW
-0x000035B0       BL map_page_rt              ;map it for loading to USER_CODE_VA
+0x0000360C   LDW R1 [R5 + TASK_PTBR]
+0x00003610       LI R2 USER_CODE_VA
+0x00003618       MOV R3 R11                  ;new pa code page
+0x0000361C       LI R4 USER_RW
+0x00003624       BL map_page_rt              ;map it for loading to USER_CODE_VA
 
 ; macro: TASK_GET_DATA_PAGE R1,R5    ; tasks va data_page
-0x000035B8   LDW R1 [R5 + TASK_DATA_PAGE]
-0x000035BC       CMP R1 0
-0x000035C0       BEQ load_read
-0x000035C8       LI R3 PAGE_SIZE
-0x000035D0       BL mem_zero                 ; clean task data_page
+0x0000362C   LDW R1 [R5 + TASK_DATA_PAGE]
+0x00003630       CMP R1 0
+0x00003634       BEQ load_read
+0x0000363C       LI R3 PAGE_SIZE
+0x00003644       BL mem_zero                 ; clean task data_page
 
 load_read:
-0x000035D8       MOV R1 R10                  ; file* with program
-0x000035DC       LI R2 USER_CODE_VA
-0x000035E4       LI R3 PAGE_SIZE
-0x000035EC       BL file_read
-0x000035F4       CMP R1 0
-0x000035F8       BLT load_read_fail
-0x00003600       MOV R1 R10                  ; release file*
-0x00003604       BL file_put
+0x0000364C       MOV R1 R10                  ; file* with program
+0x00003650       LI R2 USER_CODE_VA
+0x00003658       LI R3 PAGE_SIZE
+0x00003660       BL file_read
+0x00003668       CMP R1 0
+0x0000366C       BLT load_read_fail
+0x00003674       MOV R1 R10                  ; release file*
+0x00003678       BL file_put
     ; all loaedd R1 - new code page pa R2 - old code page pa
-0x0000360C       MOV R1 R11
-0x00003610       MOV R2 R12
+0x00003680       MOV R1 R11
+0x00003684       MOV R2 R12
 
 exec_lb_exit:                   ;common! exit!
-0x00003614       POP R12
-0x00003618       POP R11
-0x0000361C       POP R10
-0x00003620       POP R9
-0x00003624       POP R8
-0x00003628       POP R7
-0x0000362C       POP LR
-0x00003630       RET
+0x00003688       POP R12
+0x0000368C       POP R11
+0x00003690       POP R10
+0x00003694       POP R9
+0x00003698       POP R8
+0x0000369C       POP R7
+0x000036A0       POP LR
+0x000036A4       RET
 ; in error generally depending on state rollback allocated resources
 load_read_fail:
     ; in this case release file and pa code page
-0x00003634       MOV R1 R10
-0x00003638       BL file_put
-0x00003640       MOV R1 R11
-0x00003644       BL page_free
-0x0000364C       LI R1 0
-0x00003654       LI R2 ERR_IO
-0x0000365C       B  exec_lb_exit
+0x000036A8       MOV R1 R10
+0x000036AC       BL file_put
+0x000036B4       MOV R1 R11
+0x000036B8       BL page_put        ;free page
+0x000036C0       LI R1 0
+0x000036C8       LI R2 ERR_IO
+0x000036D0       B  exec_lb_exit
 
 load_file_fail:
-0x00003664       MOV R1 R10
-0x00003668       BL file_put
+0x000036D8       MOV R1 R10
+0x000036DC       BL file_put
 
 load_nomem:
-0x00003670       LI R1 0
-0x00003678       LI R2 ERR_NOMEM
-0x00003680       B  exec_lb_exit
+0x000036E4       LI R1 0
+0x000036EC       LI R2 ERR_NOMEM
+0x000036F4       B  exec_lb_exit
 
 load_noexec:
-0x00003688       MOV R1 R10
-0x0000368C       CMP R1 0
-0x00003690       BEQ noexec_skip
-0x00003698       BL file_put
+0x000036FC       MOV R1 R10
+0x00003700       CMP R1 0
+0x00003704       BEQ noexec_skip
+0x0000370C       BL file_put
 
 noexec_skip:
-0x000036A0       LI R1 0
-0x000036A8       LI R2 ERR_NOEXEC
-0x000036B0       B  exec_lb_exit
+0x00003714       LI R1 0
+0x0000371C       LI R2 ERR_NOEXEC
+0x00003724       B  exec_lb_exit
 
 load_noent:
-0x000036B8       LI R1 0
-0x000036C0       LI R2 ERR_NOENT
-0x000036C8       B  exec_lb_exit
+0x0000372C       LI R1 0
+0x00003734       LI R2 ERR_NOENT
+0x0000373C       B  exec_lb_exit
 
 
 ;=============================================================
@@ -1628,88 +1666,88 @@ load_noent:
 ;=============================================================
 copy_argv_strings:
 
-0x000036D0       PUSH LR
-0x000036D4       PUSH R7
-0x000036D8       PUSH R8
-0x000036DC       PUSH R9
-0x000036E0       PUSH R10
-0x000036E4       PUSH R11
-0x000036E8       PUSH R12
+0x00003744       PUSH LR
+0x00003748       PUSH R7
+0x0000374C       PUSH R8
+0x00003750       PUSH R9
+0x00003754       PUSH R10
+0x00003758       PUSH R11
+0x0000375C       PUSH R12
     ;init this at first
-0x000036EC       LI R1 exec_strings_used
-0x000036F4       LI R2 0
-0x000036FC       STW R2 [R1]
+0x00003760       LI R1 exec_strings_used
+0x00003768       LI R2 0
+0x00003770       STW R2 [R1]
 
-0x00003700       LI   R11 exec_strings      ; destination blob
-0x00003708       LI   R12 0                 ; current offset
-0x00003710       LI   R7 0                  ; argv index
+0x00003774       LI   R11 exec_strings      ; destination blob
+0x0000377C       LI   R12 0                 ; current offset
+0x00003784       LI   R7 0                  ; argv index
                                ;  R8 = user argv[]
                                ;  R9 = argc
 exec_capture_next_arg:
     ; finished?
-0x00003718       CMP  R7 R9
-0x0000371C       BEQ  exec_capture_done     ; if all agvs processed
+0x0000378C       CMP  R7 R9
+0x00003790       BEQ  exec_capture_done     ; if all agvs processed
 
     ;---------------------------------------------
     ; load argv[i] (ptr to string)
     ;---------------------------------------------
-0x00003724       LDW  R10 [R8]
+0x00003798       LDW  R10 [R8]
 
-0x00003728       CMP  R10 0
-0x0000372C       BEQ  exec_capture_fault     ;if argv[i]==null
+0x0000379C       CMP  R10 0
+0x000037A0       BEQ  exec_capture_fault     ;if argv[i]==null
 
     ;---------------------------------------------
     ; save offset
     ;
     ; exec_argv_offsets[i]=current_offset (in R12)
     ;---------------------------------------------
-0x00003734       LI   R1 exec_argv_offsets
-0x0000373C       MOV  R2 R7  ;i
-0x00003740       SHL  R2 R2 2
-0x00003744       ADD  R1 R1 R2
-0x00003748       STW  R12 [R1]
+0x000037A8       LI   R1 exec_argv_offsets
+0x000037B0       MOV  R2 R7  ;i
+0x000037B4       SHL  R2 R2 2
+0x000037B8       ADD  R1 R1 R2
+0x000037BC       STW  R12 [R1]
 
 exec_copy_string:
     ;---------------------------------------------
     ; copy one character r10 argv[i] (ptr to string) R11 ptr to exec strings
     ;---------------------------------------------
-0x0000374C       LDB  R3 [R10]
-0x00003750       STB  R3 [R11]
-0x00003754       ADD  R10 R10 1
-0x00003758       ADD  R11 R11 1
-0x0000375C       ADD  R12 R12 1
+0x000037C0       LDB  R3 [R10]
+0x000037C4       STB  R3 [R11]
+0x000037C8       ADD  R10 R10 1
+0x000037CC       ADD  R11 R11 1
+0x000037D0       ADD  R12 R12 1
     ; blob overflow?
-0x00003760       LI   R1 EXEC_MAX_STRINGS
-0x00003768       CMP  R12 R1
-0x0000376C       BGT  exec_capture_fault
-0x00003774       CMP  R3 0
-0x00003778       BNE  exec_copy_string           ; end of string?
-0x00003780       ADD  R8 R8 4    ;to next argv[] string
-0x00003784       ADD  R7 R7 1    ;i=i+1
-0x00003788       B    exec_capture_next_arg
+0x000037D4       LI   R1 EXEC_MAX_STRINGS
+0x000037DC       CMP  R12 R1
+0x000037E0       BGT  exec_capture_fault
+0x000037E8       CMP  R3 0
+0x000037EC       BNE  exec_copy_string           ; end of string?
+0x000037F4       ADD  R8 R8 4    ;to next argv[] string
+0x000037F8       ADD  R7 R7 1    ;i=i+1
+0x000037FC       B    exec_capture_next_arg
 
 exec_capture_done:
-0x00003790       LI   R1 exec_strings_used
-0x00003798       STW  R12 [R1]           ; current offset after last string
-0x0000379C       LI  R1 0
-0x000037A4       POP R12
-0x000037A8       POP R11
-0x000037AC       POP R10
-0x000037B0       POP R9
-0x000037B4       POP R8
-0x000037B8       POP R7
-0x000037BC       POP LR
-0x000037C0       RET
+0x00003804       LI   R1 exec_strings_used
+0x0000380C       STW  R12 [R1]           ; current offset after last string
+0x00003810       LI  R1 0
+0x00003818       POP R12
+0x0000381C       POP R11
+0x00003820       POP R10
+0x00003824       POP R9
+0x00003828       POP R8
+0x0000382C       POP R7
+0x00003830       POP LR
+0x00003834       RET
 exec_capture_fault:
-0x000037C4       LI   R1 ERR_FAULT
-0x000037CC       POP R12
-0x000037D0       POP R11
-0x000037D4       POP R10
-0x000037D8       POP R9
-0x000037DC       POP R8
-0x000037E0       POP R7
-0x000037E4       POP LR
-0x000037E8       RET
+0x00003838       LI   R1 ERR_FAULT
+0x00003840       POP R12
+0x00003844       POP R11
+0x00003848       POP R10
+0x0000384C       POP R9
+0x00003850       POP R8
+0x00003854       POP R7
+0x00003858       POP LR
+0x0000385C       RET
 
 syscall_fork:
     ;================================================================
@@ -1719,20 +1757,20 @@ syscall_fork:
     ; user-writable state while preserving a new independent child thread.
     ;================================================================
 
-0x000037EC       BL task_clone_current
-0x000037F4       CMP R1 0
-0x000037F8       BEQ fork_fail
+0x00003860       BL task_clone_current
+0x00003868       CMP R1 0
+0x0000386C       BEQ fork_fail
 
     ; We return child PID to the parent via the trapframe.
 ; macro: TASK_GET_PID R2, R1
-0x00003800   LDW R2 [R1 + TASK_PID]
-0x00003804       STW R2 [SP + TF_R1]
-0x00003808       B trap_restore
+0x00003874   LDW R2 [R1 + TASK_PID]
+0x00003878       STW R2 [SP + TF_R1]
+0x0000387C       B trap_restore
 
 fork_fail:
-0x00003810       LI R1 ERR_NOMEM
-0x00003818       STW R1 [SP + TF_R1]
-0x0000381C       B trap_restore
+0x00003884       LI R1 ERR_NOMEM
+0x0000388C       STW R1 [SP + TF_R1]
+0x00003890       B trap_restore
 
 syscall_yield:
 ;================================================================
@@ -1740,12 +1778,12 @@ syscall_yield:
 ; The scheduler will pick the next runnable task and switch to it.
 ;================================================================
 
-0x00003824       LI R1 0
-0x0000382C       STW R1 [SP + TF_R1]         ; r1=0 - success
+0x00003898       LI R1 0
+0x000038A0       STW R1 [SP + TF_R1]         ; r1=0 - success
     ; Voluntary reschedule. The return value must be written before
     ; switching, while SP still points at the yielding task's trapframe.
 
-0x00003830       B schedule_and_switch
+0x000038A4       B schedule_and_switch
 ;================================================================
 ; syscall_exit: - finish user process
 ; in R1 - exit code
@@ -1767,73 +1805,73 @@ syscall_yield:
 ;================================================================
 syscall_exit:
     ; Get exit code from R1
-0x00003838       LDW R8 [SP + TF_R1]        ; R8 = exit code
+0x000038AC       LDW R8 [SP + TF_R1]        ; R8 = exit code
 
 ; macro: GET_CURR_TASK_IDX R2
-0x0000383C   LI R1 CURRENT_TASK
-0x00003844   LDW R2 [R1]
+0x000038B0   LI R1 CURRENT_TASK
+0x000038B8   LDW R2 [R1]
 ; macro: GET_TASK_PTR R5, R2
-0x00003848   LI R1 TASK_SIZE
-0x00003850   MUL R3 R2 R1
-0x00003854   LI R5 tasks
-0x0000385C   ADD R5 R5 R3
+0x000038BC   LI R1 TASK_SIZE
+0x000038C4   MUL R3 R2 R1
+0x000038C8   LI R5 tasks
+0x000038D0   ADD R5 R5 R3
 
     ; Store exit code in child task struct for parent to collect in waitforpid
 ; macro: TASK_SET_EXIT_CODE R5, R8  ; Save exit code
-0x00003860   STW R8 [R5 + TASK_EXIT_CODE]
+0x000038D4   STW R8 [R5 + TASK_EXIT_CODE]
 
-0x00003864       PUSH R5
-0x00003868       MOV R1 R5
-0x0000386C       BL task_close_fds          ; close all open file descriptors of this task (if any) to free file_pool resources
-0x00003874       POP R5
+0x000038D8       PUSH R5
+0x000038DC       MOV R1 R5
+0x000038E0       BL task_close_fds          ; close all open file descriptors of this task (if any) to free file_pool resources
+0x000038E8       POP R5
 
     ; Mark this child as zombie (still exists but not runnable)
 ; macro: TASK_SET_STATE R5, TASK_ZOMBIE
-0x00003878   LI R1 TASK_ZOMBIE
-0x00003880   STW R1 [R5 + TASK_STATE]
+0x000038EC   LI R1 TASK_ZOMBIE
+0x000038F4   STW R1 [R5 + TASK_STATE]
 ; macro: TASK_SET_WAIT R5, WAIT_NONE
-0x00003884   LI R1 WAIT_NONE
-0x0000388C   STW R1 [R5 + TASK_WAIT]
+0x000038F8   LI R1 WAIT_NONE
+0x00003900   STW R1 [R5 + TASK_WAIT]
 
     ; Wake parent if it's waiting
 ; macro: TASK_GET_PPID R6, R5       ; R6 = parent PID
-0x00003890   LDW R6 [R5 + TASK_PPID]
+0x00003904   LDW R6 [R5 + TASK_PPID]
 
     ; find parent task by PPID
-0x00003894       MOV R1 R6
-0x00003898       LI R2 0                    ; Search by PID (parent's PID)
-0x000038A0       BL task_find               ; R1 = found parent task*
-0x000038A8       CMP R1 0
-0x000038AC       BEQ no_parent_waiting
-0x000038B4       MOV R7 R1                  ; R7 = parent task*
-0x000038B8       MOV R11 R2                 ; save parent task index for bitmask
+0x00003908       MOV R1 R6
+0x0000390C       LI R2 0                    ; Search by PID (parent's PID)
+0x00003914       BL task_find               ; R1 = found parent task*
+0x0000391C       CMP R1 0
+0x00003920       BEQ no_parent_waiting
+0x00003928       MOV R7 R1                  ; R7 = parent task*
+0x0000392C       MOV R11 R2                 ; save parent task index for bitmask
 
     ;Check if parent is waiting for this child
 ; macro: TASK_GET_WAIT_CHILD R8, R7 ; Child PID that parent R7 ptr is waiting for
-0x000038BC   LDW R8 [R7 + TASK_WAIT_CHILD]
+0x00003930   LDW R8 [R7 + TASK_WAIT_CHILD]
 ; macro: TASK_GET_PID R9, R5        ; This child's R5 ptr PID
-0x000038C0   LDW R9 [R5 + TASK_PID]
+0x00003934   LDW R9 [R5 + TASK_PID]
 
-0x000038C4       LI R10 -1
-0x000038CC       CMP R8 R10                 ; if parent is waiting for any child (-1), then wake it up
-0x000038D0       BEQ wake_parent            ;
+0x00003938       LI R10 -1
+0x00003940       CMP R8 R10                 ; if parent is waiting for any child (-1), then wake it up
+0x00003944       BEQ wake_parent            ;
 
-0x000038D8       CMP R8 R9
-0x000038DC       BNE no_parent_waiting      ; parent is waiting for a different child, do not wake it up
+0x0000394C       CMP R8 R9
+0x00003950       BNE no_parent_waiting      ; parent is waiting for a different child, do not wake it up
 
 wake_parent:
     ; Find parent's task index for bitmask
     ; we already have parent task in R11
 
-0x000038E4       LI R9 1
-0x000038EC       SHL R9 R9 R11               ; bit for parent task
+0x00003958       LI R9 1
+0x00003960       SHL R9 R9 R11               ; bit for parent task
 
-0x000038F0       LI R1 child_waitq
-0x000038F8       MOV R2 R9
-0x000038FC       BL waitq_wake_bitmask       ;unblock parent task waiting for this child
+0x00003964       LI R1 child_waitq
+0x0000396C       MOV R2 R9
+0x00003970       BL waitq_wake_bitmask       ;unblock parent task waiting for this child
 
 no_parent_waiting:
-0x00003904       B schedule_and_switch
+0x00003978       B schedule_and_switch
 
 ;=================================================================
 ; syscall_waitpid - wait for a child process
@@ -1846,114 +1884,114 @@ no_parent_waiting:
 ;=================================================================
 
 syscall_waitpid:
-0x0000390C       LDW R8 [SP + TF_R1]        ; R8 = pid to wait for
-0x00003910       LDW R9 [SP + TF_R2]        ; R9 = status pointer
+0x00003980       LDW R8 [SP + TF_R1]        ; R8 = pid to wait for
+0x00003984       LDW R9 [SP + TF_R2]        ; R9 = status pointer
 
     ; Validate status pointer
-0x00003914       CMP R9 0
-0x00003918       BEQ waitpid_validate_done
-0x00003920       MOV R1 R9
-0x00003924       LI R2 4
-0x0000392C       LI R3 1
-0x00003934       BL user_buffer_valid_range
-0x0000393C       CMP R1 1
-0x00003940       BNE waitpid_badptr
+0x00003988       CMP R9 0
+0x0000398C       BEQ waitpid_validate_done
+0x00003994       MOV R1 R9
+0x00003998       LI R2 4
+0x000039A0       LI R3 1
+0x000039A8       BL user_buffer_valid_range
+0x000039B0       CMP R1 1
+0x000039B4       BNE waitpid_badptr
 
 waitpid_validate_done:
 ; macro: GET_CURR_TASK_IDX R4
-0x00003948   LI R1 CURRENT_TASK
-0x00003950   LDW R4 [R1]
+0x000039BC   LI R1 CURRENT_TASK
+0x000039C4   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00003954   LI R1 TASK_SIZE
-0x0000395C   MUL R3 R4 R1
-0x00003960   LI R5 tasks
-0x00003968   ADD R5 R5 R3
+0x000039C8   LI R1 TASK_SIZE
+0x000039D0   MUL R3 R4 R1
+0x000039D4   LI R5 tasks
+0x000039DC   ADD R5 R5 R3
 ; macro: TASK_GET_PID R10, R5       ; R10 = current (parent proc) PID
-0x0000396C   LDW R10 [R5 + TASK_PID]
+0x000039E0   LDW R10 [R5 + TASK_PID]
 
     ; if search for any child
-0x00003970       LI  R2 -1
-0x00003978       CMP R8 R2
-0x0000397C       BNE find_child_by_pid
+0x000039E4       LI  R2 -1
+0x000039EC       CMP R8 R2
+0x000039F0       BNE find_child_by_pid
     ; set task_find to search for any child of this parent
-0x00003984       MOV R1 R10                  ; R1 = parent PID (PPID in child task)
-0x00003988       LI  R2 1                    ; search by PPID
-0x00003990       BL task_find               ; R1 = found child task*
-0x00003998       CMP R1 0
-0x0000399C       BEQ waitpid_no_child        ; No any child with PPID = this parent PID found
+0x000039F8       MOV R1 R10                  ; R1 = parent PID (PPID in child task)
+0x000039FC       LI  R2 1                    ; search by PPID
+0x00003A04       BL task_find               ; R1 = found child task*
+0x00003A0C       CMP R1 0
+0x00003A10       BEQ waitpid_no_child        ; No any child with PPID = this parent PID found
     ;R1 child task* found
-0x000039A4       B find_any_child_found
+0x00003A18       B find_any_child_found
 find_child_by_pid:
     ; Search for child task by PID
-0x000039AC       MOV R1 R8                  ; R1 = child PID to search for
-0x000039B0       LI R2 0                    ; Search by PID
-0x000039B8       BL task_find               ; R1 = found child task*
-0x000039C0       CMP R1 0
-0x000039C4       BEQ waitpid_no_child        ; No such child
+0x00003A20       MOV R1 R8                  ; R1 = child PID to search for
+0x00003A24       LI R2 0                    ; Search by PID
+0x00003A2C       BL task_find               ; R1 = found child task*
+0x00003A34       CMP R1 0
+0x00003A38       BEQ waitpid_no_child        ; No such child
 
 find_any_child_found:
 
-0x000039CC       MOV R7 R1                   ; R7 = child task*
+0x00003A40       MOV R7 R1                   ; R7 = child task*
 
     ; Verify it's actually our child by its PPID fld
 ; macro: TASK_GET_PPID R1, R7
-0x000039D0   LDW R1 [R7 + TASK_PPID]
-0x000039D4       CMP R1 R10
-0x000039D8       BNE waitpid_no_child
+0x00003A44   LDW R1 [R7 + TASK_PPID]
+0x00003A48       CMP R1 R10
+0x00003A4C       BNE waitpid_no_child
     ; R7 = child task*
     ; check its state, if ZOMBIE, we can reap it and return its exit code
 ; macro: TASK_GET_STATE R1, R7
-0x000039E0   LDW R1 [R7 + TASK_STATE]
-0x000039E4       CMP R1 TASK_ZOMBIE
-0x000039E8       BEQ waitpid_reap_child
+0x00003A54   LDW R1 [R7 + TASK_STATE]
+0x00003A58       CMP R1 TASK_ZOMBIE
+0x00003A5C       BEQ waitpid_reap_child
 
     ; Child running - block parent
 ; macro: TASK_GET_PID R1, R7
-0x000039F0   LDW R1 [R7 + TASK_PID]
+0x00003A64   LDW R1 [R7 + TASK_PID]
 ; macro: TASK_SET_WAIT_CHILD R5, R1
-0x000039F4   STW R1 [R5 + TASK_WAIT_CHILD]
+0x00003A68   STW R1 [R5 + TASK_WAIT_CHILD]
 
-0x000039F8       LI R1 child_waitq           ; child_waitq ptr
-0x00003A00       LI R2 WAIT_CHILD            ; reason
-0x00003A08       LI R3 TASK_SLEEPING         ; state to set for current task
-0x00003A10       BL waitq_prepare_sleep
+0x00003A6C       LI R1 child_waitq           ; child_waitq ptr
+0x00003A74       LI R2 WAIT_CHILD            ; reason
+0x00003A7C       LI R3 TASK_SLEEPING         ; state to set for current task
+0x00003A84       BL waitq_prepare_sleep
 
-0x00003A18       BL waitq_sleep_current     ; freeze the current task
+0x00003A8C       BL waitq_sleep_current     ; freeze the current task
 
     ; will resume here when child exits and wakes us up
 
 waitpid_reap_child:
     ; Get exit code from child task
 ; macro: TASK_GET_EXIT_CODE R2, R7
-0x00003A20   LDW R2 [R7 + TASK_EXIT_CODE]
+0x00003A94   LDW R2 [R7 + TASK_EXIT_CODE]
 
     ; If status pointer is not NULL, write exit code to user space
-0x00003A24       CMP R9 0
-0x00003A28       BEQ waitpid_reap_done
+0x00003A98       CMP R9 0
+0x00003A9C       BEQ waitpid_reap_done
 
-0x00003A30       MOV R1 R9                  ; R1 = user status pointer
-0x00003A34       MOV R4 R2                  ; preserve exit code in kernel source register
-0x00003A38       LI  R2 4                   ; R2 = size of exit code
-0x00003A40       BL copy_to_user            ; write exit code to user space
+0x00003AA4       MOV R1 R9                  ; R1 = user status pointer
+0x00003AA8       MOV R4 R2                  ; preserve exit code in kernel source register
+0x00003AAC       LI  R2 4                   ; R2 = size of exit code
+0x00003AB4       BL copy_to_user            ; write exit code to user space
 
 waitpid_reap_done:
 ; macro: TASK_GET_PID R10, R7       ; get child's PID
-0x00003A48   LDW R10 [R7 + TASK_PID]
-0x00003A4C       MOV R1 R7                  ; R1 = child task*
-0x00003A50       BL task_destroy
+0x00003ABC   LDW R10 [R7 + TASK_PID]
+0x00003AC0       MOV R1 R7                  ; R1 = child task*
+0x00003AC4       BL task_destroy
 
-0x00003A58       STW R10 [SP + TF_R1]        ; save child's PID to trapframe for return
-0x00003A5C       B trap_restore
+0x00003ACC       STW R10 [SP + TF_R1]        ; save child's PID to trapframe for return
+0x00003AD0       B trap_restore
 
 waitpid_no_child:
-0x00003A64       LI R1 ERR_CHILD
-0x00003A6C       STW R1 [SP + TF_R1]
-0x00003A70       B trap_restore
+0x00003AD8       LI R1 ERR_CHILD
+0x00003AE0       STW R1 [SP + TF_R1]
+0x00003AE4       B trap_restore
 
 waitpid_badptr:
-0x00003A78       LI R1 ERR_FAULT
-0x00003A80       STW R1 [SP + TF_R1]
-0x00003A84       B trap_restore
+0x00003AEC       LI R1 ERR_FAULT
+0x00003AF4       STW R1 [SP + TF_R1]
+0x00003AF8       B trap_restore
 
 
 ;================================================================
@@ -1970,63 +2008,63 @@ waitpid_badptr:
 ;   R1 = 0 if not found
 ;================================================================
 task_find:
-0x00003A8C       PUSH R5
-0x00003A90       PUSH R6
-0x00003A94       PUSH R7
+0x00003B00       PUSH R5
+0x00003B04       PUSH R6
+0x00003B08       PUSH R7
 
-0x00003A98       MOV R5 R2                  ; Save search mode
-0x00003A9C       MOV R7 R1                  ; Save PID/PPID
-0x00003AA0       LI R2 0                    ; Task index
+0x00003B0C       MOV R5 R2                  ; Save search mode
+0x00003B10       MOV R7 R1                  ; Save PID/PPID
+0x00003B14       LI R2 0                    ; Task index
 task_find_loop:
-0x00003AA8       LI R3 MAX_TASKS
-0x00003AB0       CMP R2 R3
-0x00003AB4       BGE task_find_not_found
+0x00003B1C       LI R3 MAX_TASKS
+0x00003B24       CMP R2 R3
+0x00003B28       BGE task_find_not_found
 
 ; macro: GET_TASK_PTR R4, R2
-0x00003ABC   LI R1 TASK_SIZE
-0x00003AC4   MUL R3 R2 R1
-0x00003AC8   LI R4 tasks
-0x00003AD0   ADD R4 R4 R3
+0x00003B30   LI R1 TASK_SIZE
+0x00003B38   MUL R3 R2 R1
+0x00003B3C   LI R4 tasks
+0x00003B44   ADD R4 R4 R3
 ; macro: TASK_GET_STATE R6, R4
-0x00003AD4   LDW R6 [R4 + TASK_STATE]
-0x00003AD8       CMP R6 TASK_DEAD
-0x00003ADC       BEQ task_find_next         ; Skip dead tasks
+0x00003B48   LDW R6 [R4 + TASK_STATE]
+0x00003B4C       CMP R6 TASK_DEAD
+0x00003B50       BEQ task_find_next         ; Skip dead tasks
 
     ; Search based on mode
-0x00003AE4       CMP R5 0
-0x00003AE8       BEQ task_find_by_pid
+0x00003B58       CMP R5 0
+0x00003B5C       BEQ task_find_by_pid
 
     ; Search by PPID
 ; macro: TASK_GET_PPID R6, R4
-0x00003AF0   LDW R6 [R4 + TASK_PPID]
-0x00003AF4       CMP R6 R7
-0x00003AF8       BEQ task_find_found
-0x00003B00       B task_find_next
+0x00003B64   LDW R6 [R4 + TASK_PPID]
+0x00003B68       CMP R6 R7
+0x00003B6C       BEQ task_find_found
+0x00003B74       B task_find_next
 
 task_find_by_pid:
 ; macro: TASK_GET_PID R6, R4
-0x00003B08   LDW R6 [R4 + TASK_PID]
-0x00003B0C       CMP R6 R7
-0x00003B10       BEQ task_find_found
+0x00003B7C   LDW R6 [R4 + TASK_PID]
+0x00003B80       CMP R6 R7
+0x00003B84       BEQ task_find_found
 
 task_find_next:
-0x00003B18       ADD R2 R2 1
-0x00003B1C       B task_find_loop
+0x00003B8C       ADD R2 R2 1
+0x00003B90       B task_find_loop
 
 task_find_found:
-0x00003B24       MOV R1 R4                  ; Return task pointer
-0x00003B28       MOV R2 R2                  ; Return task index
-0x00003B2C       POP R7
-0x00003B30       POP R6
-0x00003B34       POP R5
-0x00003B38       RET
+0x00003B98       MOV R1 R4                  ; Return task pointer
+0x00003B9C       MOV R2 R2                  ; Return task index
+0x00003BA0       POP R7
+0x00003BA4       POP R6
+0x00003BA8       POP R5
+0x00003BAC       RET
 
 task_find_not_found:
-0x00003B3C       LI R1 0
-0x00003B44       POP R7
-0x00003B48       POP R6
-0x00003B4C       POP R5
-0x00003B50       RET
+0x00003BB0       LI R1 0
+0x00003BB8       POP R7
+0x00003BBC       POP R6
+0x00003BC0       POP R5
+0x00003BC4       RET
 
 syscall_getpid:
     ;================================================================
@@ -2034,19 +2072,19 @@ syscall_getpid:
     ;================================================================
 
 ; macro: GET_CURR_TASK_IDX R2
-0x00003B54   LI R1 CURRENT_TASK
-0x00003B5C   LDW R2 [R1]
+0x00003BC8   LI R1 CURRENT_TASK
+0x00003BD0   LDW R2 [R1]
 ; macro: GET_TASK_PTR R5, R2
-0x00003B60   LI R1 TASK_SIZE
-0x00003B68   MUL R3 R2 R1
-0x00003B6C   LI R5 tasks
-0x00003B74   ADD R5 R5 R3
+0x00003BD4   LI R1 TASK_SIZE
+0x00003BDC   MUL R3 R2 R1
+0x00003BE0   LI R5 tasks
+0x00003BE8   ADD R5 R5 R3
 ; macro: TASK_GET_PID R1, R5            ; get pid from task scheduler data
-0x00003B78   LDW R1 [R5 + TASK_PID]
+0x00003BEC   LDW R1 [R5 + TASK_PID]
 
-0x00003B7C       STW R1 [SP + TF_R1]           ; save it to its trapframe which goes back when it s next time this task resumes
+0x00003BF0       STW R1 [SP + TF_R1]           ; save it to its trapframe which goes back when it s next time this task resumes
                                   ; on resume r1 will have pid read after svc call
-0x00003B80       B trap_restore
+0x00003BF4       B trap_restore
 
 syscall_debug:
     ;================================================================
@@ -2054,10 +2092,10 @@ syscall_debug:
     ; This proves argument and return-value plumbing without nested traps.
     ;================================================================
 
-0x00003B88       LDW R1 [SP + TF_R1]
-0x00003B8C       STW R1 [SP + TF_R1]
+0x00003BFC       LDW R1 [SP + TF_R1]
+0x00003C00       STW R1 [SP + TF_R1]
 
-0x00003B90       B trap_restore
+0x00003C04       B trap_restore
 
 
 syscall_open:
@@ -2068,36 +2106,36 @@ syscall_open:
     ; out: R1 = fd / err -1
     ;================================================================
 
-0x00003B98       LDW R1 [SP + TF_R1]
-0x00003B9C       LDW R2 [SP + TF_R2]
+0x00003C0C       LDW R1 [SP + TF_R1]
+0x00003C10       LDW R2 [SP + TF_R2]
 
-0x00003BA0       BL copy_path_from_user     ; macro inside destroys R11, copy pathname
+0x00003C14       BL copy_path_from_user     ; macro inside destroys R11, copy pathname
                                ; to tasks Kbuf_RD buffer
                                ; R1 - pathname str ptr in the bufer
-0x00003BA8       CMP R1 0
-0x00003BAC       BEQ open_fail_fault
+0x00003C1C       CMP R1 0
+0x00003C20       BEQ open_fail_fault
 
     ; copy_path_from_user returned the current task's kernel read buffer.
 ; macro: GET_CURR_TASK_IDX R4
-0x00003BB4   LI R1 CURRENT_TASK
-0x00003BBC   LDW R4 [R1]
+0x00003C28   LI R1 CURRENT_TASK
+0x00003C30   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00003BC0   LI R1 TASK_SIZE
-0x00003BC8   MUL R3 R4 R1
-0x00003BCC   LI R5 tasks
-0x00003BD4   ADD R5 R5 R3
+0x00003C34   LI R1 TASK_SIZE
+0x00003C3C   MUL R3 R4 R1
+0x00003C40   LI R5 tasks
+0x00003C48   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_RD R1, R5
-0x00003BD8   LDW R1 [R5 + TASK_KBUF_RD_PTR]
+0x00003C4C   LDW R1 [R5 + TASK_KBUF_RD_PTR]
 
-0x00003BDC       BL vfs_open
+0x00003C50       BL vfs_open
 
-0x00003BE4       STW R1 [SP + TF_R1]     ;file opened if fd on exit!
-0x00003BE8       B trap_restore
+0x00003C58       STW R1 [SP + TF_R1]     ;file opened if fd on exit!
+0x00003C5C       B trap_restore
 
 open_fail_fault:
-0x00003BF0       LI R1 ERR_FAULT
-0x00003BF8       STW R1 [SP + TF_R1]     ;file not opened ERR
-0x00003BFC       B trap_restore
+0x00003C64       LI R1 ERR_FAULT
+0x00003C6C       STW R1 [SP + TF_R1]     ;file not opened ERR
+0x00003C70       B trap_restore
 
 
 syscall_sleep:
@@ -2110,50 +2148,50 @@ syscall_sleep:
     ;   R1 = -1 on error (invalid time)
     ;================================================================
 
-0x00003C04       LDW R8 [SP + TF_R1]        ; R8 = milliseconds
+0x00003C78       LDW R8 [SP + TF_R1]        ; R8 = milliseconds
 
-0x00003C08       CMP R8 0
-0x00003C0C       BLE sleep_invalid          ; must be positive
+0x00003C7C       CMP R8 0
+0x00003C80       BLE sleep_invalid          ; must be positive
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00003C14   LI R1 CURRENT_TASK
-0x00003C1C   LDW R4 [R1]
+0x00003C88   LI R1 CURRENT_TASK
+0x00003C90   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00003C20   LI R1 TASK_SIZE
-0x00003C28   MUL R3 R4 R1
-0x00003C2C   LI R5 tasks
-0x00003C34   ADD R5 R5 R3
+0x00003C94   LI R1 TASK_SIZE
+0x00003C9C   MUL R3 R4 R1
+0x00003CA0   LI R5 tasks
+0x00003CA8   ADD R5 R5 R3
 
     ; Calculate wake time in PIT ticks (1 ms per tick).
-0x00003C38       LI R3 timer_ticks
-0x00003C40       LDW R6 [R3]                ; current ticks (1ms per tick)
+0x00003CAC       LI R3 timer_ticks
+0x00003CB4       LDW R6 [R3]                ; current ticks (1ms per tick)
 
     ; Convert ms to ticks: 1 tick = 1 ms
-0x00003C44       MOV R7 R8                  ; R7 = ticks to sleep
+0x00003CB8       MOV R7 R8                  ; R7 = ticks to sleep
 
-0x00003C48       ADD R6 R6 R7               ; R6 = wake time in ticks
+0x00003CBC       ADD R6 R6 R7               ; R6 = wake time in ticks
 
     ; Store wake time in task struct
 ; macro: TASK_SET_WAKE_TIME R5, R6
-0x00003C4C   STW R6 [R5 + TASK_WAKE_TIME]
+0x00003CC0   STW R6 [R5 + TASK_WAKE_TIME]
 
     ; Use existing wait queue infrastructure
-0x00003C50       LI R1 sleep_waitq           ; sleep_waitq ptr
-0x00003C58       LI R2 WAIT_SLEEP            ; reason
-0x00003C60       LI R3 TASK_SLEEPING         ; new state (if other then blocked_io)
-0x00003C68       BL waitq_prepare_sleep     ; This marks task as TASK_SLEEP and adds it to the sleep_waitq
+0x00003CC4       LI R1 sleep_waitq           ; sleep_waitq ptr
+0x00003CCC       LI R2 WAIT_SLEEP            ; reason
+0x00003CD4       LI R3 TASK_SLEEPING         ; new state (if other then blocked_io)
+0x00003CDC       BL waitq_prepare_sleep     ; This marks task as TASK_SLEEP and adds it to the sleep_waitq
 
-0x00003C70       BL waitq_sleep_current     ; freeze the current task in kernel side until it is woken up by the timer interrupt handler when the wake time is reached
+0x00003CE4       BL waitq_sleep_current     ; freeze the current task in kernel side until it is woken up by the timer interrupt handler when the wake time is reached
 
     ; Return 0 (will be set when woken)
-0x00003C78       LI R1 0
-0x00003C80       STW R1 [SP + TF_R1]
-0x00003C84       B trap_restore
+0x00003CEC       LI R1 0
+0x00003CF4       STW R1 [SP + TF_R1]
+0x00003CF8       B trap_restore
 
 sleep_invalid:
-0x00003C8C       LI R1 ERR_FAULT
-0x00003C94       STW R1 [SP + TF_R1]
-0x00003C98       B trap_restore
+0x00003D00       LI R1 ERR_FAULT
+0x00003D08       STW R1 [SP + TF_R1]
+0x00003D0C       B trap_restore
 
 
 ;====================================================================
@@ -2170,62 +2208,62 @@ sleep_invalid:
 ;R1 = 0 fail
 ;====================================================================
 copy_path_from_user:
-0x00003CA0       PUSH LR
+0x00003D14       PUSH LR
 
-0x00003CA4       MOV R8 R1                  ; current user source byte
+0x00003D18       MOV R8 R1                  ; current user source byte
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00003CA8   LI R1 CURRENT_TASK
-0x00003CB0   LDW R4 [R1]
+0x00003D1C   LI R1 CURRENT_TASK
+0x00003D24   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00003CB4   LI R1 TASK_SIZE
-0x00003CBC   MUL R3 R4 R1
-0x00003CC0   LI R5 tasks
-0x00003CC8   ADD R5 R5 R3
+0x00003D28   LI R1 TASK_SIZE
+0x00003D30   MUL R3 R4 R1
+0x00003D34   LI R5 tasks
+0x00003D3C   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_RD R9, R5    ; destination kernel path buffer
-0x00003CCC   LDW R9 [R5 + TASK_KBUF_RD_PTR]
+0x00003D40   LDW R9 [R5 + TASK_KBUF_RD_PTR]
 
-0x00003CD0       PUSH R9                    ; original destination returned on success
-0x00003CD4       LI R10 0                   ; bytes copied before NUL
+0x00003D44       PUSH R9                    ; original destination returned on success
+0x00003D48       LI R10 0                   ; bytes copied before NUL
 
 copy_path_loop:
-0x00003CDC       LI R11 KBUFFER_SIZE
-0x00003CE4       CMP R10 R11
-0x00003CE8       BGE copy_path_fail
+0x00003D50       LI R11 KBUFFER_SIZE
+0x00003D58       CMP R10 R11
+0x00003D5C       BGE copy_path_fail
 
-0x00003CF0       PUSH R8
-0x00003CF4       PUSH R9
-0x00003CF8       PUSH R10
-0x00003CFC       MOV R1 R8
-0x00003D00       LI R2 1
-0x00003D08       LI R3 0                    ; read access from user source
-0x00003D10       BL user_buffer_valid_range
-0x00003D18       POP R10
-0x00003D1C       POP R9
-0x00003D20       POP R8
-0x00003D24       CMP R1 1
-0x00003D28       BNE copy_path_fail
+0x00003D64       PUSH R8
+0x00003D68       PUSH R9
+0x00003D6C       PUSH R10
+0x00003D70       MOV R1 R8
+0x00003D74       LI R2 1
+0x00003D7C       LI R3 0                    ; read access from user source
+0x00003D84       BL user_buffer_valid_range
+0x00003D8C       POP R10
+0x00003D90       POP R9
+0x00003D94       POP R8
+0x00003D98       CMP R1 1
+0x00003D9C       BNE copy_path_fail
 
-0x00003D30       LDB R4 [R8]
-0x00003D34       STB R4 [R9]
-0x00003D38       CMP R4 0
-0x00003D3C       BEQ copy_path_done
+0x00003DA4       LDB R4 [R8]
+0x00003DA8       STB R4 [R9]
+0x00003DAC       CMP R4 0
+0x00003DB0       BEQ copy_path_done
 
-0x00003D44       ADD R8 R8 1
-0x00003D48       ADD R9 R9 1
-0x00003D4C       ADD R10 R10 1
-0x00003D50       B copy_path_loop
+0x00003DB8       ADD R8 R8 1
+0x00003DBC       ADD R9 R9 1
+0x00003DC0       ADD R10 R10 1
+0x00003DC4       B copy_path_loop
 
 copy_path_done:
-0x00003D58       POP R1                     ; original kernel path pointer
-0x00003D5C       POP LR
-0x00003D60       RET
+0x00003DCC       POP R1                     ; original kernel path pointer
+0x00003DD0       POP LR
+0x00003DD4       RET
 
 copy_path_fail:
-0x00003D64       POP R1                     ; discard original kernel path pointer
-0x00003D68       LI R1 0
-0x00003D70       POP LR
-0x00003D74       RET
+0x00003DD8       POP R1                     ; discard original kernel path pointer
+0x00003DDC       LI R1 0
+0x00003DE4       POP LR
+0x00003DE8       RET
 
 ;====================================================================
 ; copy_user_string
@@ -2247,65 +2285,65 @@ copy_path_fail:
 
 copy_user_string:
 
-0x00003D78       PUSH LR
-0x00003D7C       PUSH R8
-0x00003D80       PUSH R9
-0x00003D84       PUSH R10
-0x00003D88       PUSH R11
+0x00003DEC       PUSH LR
+0x00003DF0       PUSH R8
+0x00003DF4       PUSH R9
+0x00003DF8       PUSH R10
+0x00003DFC       PUSH R11
 
-0x00003D8C       MOV R8 R1          ; kernel dst
-0x00003D90       MOV R9 R2          ; user src
-0x00003D94       MOV R10 R3         ; max length
-0x00003D98       LI  R11 0          ; bytes copied
+0x00003E00       MOV R8 R1          ; kernel dst
+0x00003E04       MOV R9 R2          ; user src
+0x00003E08       MOV R10 R3         ; max length
+0x00003E0C       LI  R11 0          ; bytes copied
 
 copy_user_loop:
     ; reached max?
-0x00003DA0       CMP R11 R10
-0x00003DA4       BGE copy_user_fail
+0x00003E14       CMP R11 R10
+0x00003E18       BGE copy_user_fail
 
     ; validate one byte
-0x00003DAC       PUSH R8
-0x00003DB0       PUSH R9
-0x00003DB4       PUSH R10
-0x00003DB8       PUSH R11
-0x00003DBC       MOV R1 R9
-0x00003DC0       LI  R2 1
-0x00003DC8       LI  R3 0           ; read access
-0x00003DD0       BL user_buffer_valid_range
-0x00003DD8       POP R11
-0x00003DDC       POP R10
-0x00003DE0       POP R9
-0x00003DE4       POP R8
-0x00003DE8       CMP R1 1
-0x00003DEC       BNE copy_user_fail
+0x00003E20       PUSH R8
+0x00003E24       PUSH R9
+0x00003E28       PUSH R10
+0x00003E2C       PUSH R11
+0x00003E30       MOV R1 R9
+0x00003E34       LI  R2 1
+0x00003E3C       LI  R3 0           ; read access
+0x00003E44       BL user_buffer_valid_range
+0x00003E4C       POP R11
+0x00003E50       POP R10
+0x00003E54       POP R9
+0x00003E58       POP R8
+0x00003E5C       CMP R1 1
+0x00003E60       BNE copy_user_fail
 
     ; copy byte
-0x00003DF4       LDB R4 [R9]
-0x00003DF8       STB R4 [R8]
+0x00003E68       LDB R4 [R9]
+0x00003E6C       STB R4 [R8]
     ;cpy ctr
-0x00003DFC       ADD R11 R11 1
-0x00003E00       CMP R4 0    ;if string ends (null)
-0x00003E04       BEQ copy_user_done
+0x00003E70       ADD R11 R11 1
+0x00003E74       CMP R4 0    ;if string ends (null)
+0x00003E78       BEQ copy_user_done
 
-0x00003E0C       ADD R8 R8 1 ;advance
-0x00003E10       ADD R9 R9 1
-0x00003E14       B copy_user_loop
+0x00003E80       ADD R8 R8 1 ;advance
+0x00003E84       ADD R9 R9 1
+0x00003E88       B copy_user_loop
 copy_user_done:
-0x00003E1C       MOV R1 R11
-0x00003E20       POP R11
-0x00003E24       POP R10
-0x00003E28       POP R9
-0x00003E2C       POP R8
-0x00003E30       POP LR
-0x00003E34       RET
+0x00003E90       MOV R1 R11
+0x00003E94       POP R11
+0x00003E98       POP R10
+0x00003E9C       POP R9
+0x00003EA0       POP R8
+0x00003EA4       POP LR
+0x00003EA8       RET
 copy_user_fail:
-0x00003E38       LI  R1 0
-0x00003E40       POP R11
-0x00003E44       POP R10
-0x00003E48       POP R9
-0x00003E4C       POP R8
-0x00003E50       POP LR
-0x00003E54       RET
+0x00003EAC       LI  R1 0
+0x00003EB4       POP R11
+0x00003EB8       POP R10
+0x00003EBC       POP R9
+0x00003EC0       POP R8
+0x00003EC4       POP LR
+0x00003EC8       RET
 
 ;====================================================================
 ; devfs_lookup - lookup device files registry
@@ -2319,49 +2357,49 @@ copy_user_fail:
 ;====================================================================
 
 devfs_lookup:
-0x00003E58       PUSH LR
-0x00003E5C       MOV R8 R1                  ; save pathname ptr
+0x00003ECC       PUSH LR
+0x00003ED0       MOV R8 R1                  ; save pathname ptr
 
-0x00003E60       LI R7 device_table
-0x00003E68       LI R9 DEVICE_COUNT
+0x00003ED4       LI R7 device_table
+0x00003EDC       LI R9 DEVICE_COUNT
 
 devfs_loop:
-0x00003E70       CMP R9 0
-0x00003E74       BEQ lookup_fail
+0x00003EE4       CMP R9 0
+0x00003EE8       BEQ lookup_fail
 
     ; compare pathname with device name
-0x00003E7C       MOV R1 R8
-0x00003E80       LDW R2 [R7 + DEV_NAME]
-0x00003E84       BL strcmp
-0x00003E8C       CMP R1 1
-0x00003E90       BEQ devfs_found
+0x00003EF0       MOV R1 R8
+0x00003EF4       LDW R2 [R7 + DEV_NAME]
+0x00003EF8       BL strcmp
+0x00003F00       CMP R1 1
+0x00003F04       BEQ devfs_found
 
-0x00003E98       ADD R7 R7 DEV_SIZE
-0x00003E9C       SUB R9 R9 1
-0x00003EA0       B devfs_loop
+0x00003F0C       ADD R7 R7 DEV_SIZE
+0x00003F10       SUB R9 R9 1
+0x00003F14       B devfs_loop
 
 devfs_found:
     ; 1 allocate inode
-0x00003EA8       BL inode_alloc
-0x00003EB0       CMP R1 0
-0x00003EB4       BEQ devfs_fail
+0x00003F1C       BL inode_alloc
+0x00003F24       CMP R1 0
+0x00003F28       BEQ devfs_fail
 
-0x00003EBC       MOV R10 R1         ; inode
+0x00003F30       MOV R10 R1         ; inode
     ; 2 init inode
-0x00003EC0       LDW R2 [R7 + DEV_OPS]
-0x00003EC4       LDW R3 [R7 + DEV_PRIVATE]
-0x00003EC8       LI  R4 INODE_CHAR       ; inode type for dev - char
-0x00003ED0       LI  R5 0                ; size =0
-0x00003ED8       BL inode_init
+0x00003F34       LDW R2 [R7 + DEV_OPS]
+0x00003F38       LDW R3 [R7 + DEV_PRIVATE]
+0x00003F3C       LI  R4 INODE_CHAR       ; inode type for dev - char
+0x00003F44       LI  R5 0                ; size =0
+0x00003F4C       BL inode_init
 
-0x00003EE0       MOV R1 R10         ; 3 return new inited inode ptr for this dev
-0x00003EE4       POP LR
-0x00003EE8       RET
+0x00003F54       MOV R1 R10         ; 3 return new inited inode ptr for this dev
+0x00003F58       POP LR
+0x00003F5C       RET
 
 devfs_fail:
-0x00003EEC       LI R1 0
-0x00003EF4       POP LR
-0x00003EF8       RET
+0x00003F60       LI R1 0
+0x00003F68       POP LR
+0x00003F6C       RET
 
 ;====================================================================
 ; lookup_device in device_table - obsolete replaced by devfs_lookup
@@ -2374,44 +2412,44 @@ devfs_fail:
 ;====================================================================
 lookup_device:
 
-0x00003EFC       PUSH LR
+0x00003F70       PUSH LR
 
-0x00003F00       MOV R8 R1                  ; save pathname ptr
+0x00003F74       MOV R8 R1                  ; save pathname ptr
 
-0x00003F04       LI R7 device_table
-0x00003F0C       LI R9 DEVICE_COUNT
+0x00003F78       LI R7 device_table
+0x00003F80       LI R9 DEVICE_COUNT
 
 lookup_loop:
-0x00003F14       CMP R9 0
-0x00003F18       BEQ lookup_fail
+0x00003F88       CMP R9 0
+0x00003F8C       BEQ lookup_fail
 
     ; compare pathname with device name
 
-0x00003F20       MOV R1 R8
-0x00003F24       LDW R2 [R7 + DEV_NAME]
+0x00003F94       MOV R1 R8
+0x00003F98       LDW R2 [R7 + DEV_NAME]
 
-0x00003F28       BL strcmp
+0x00003F9C       BL strcmp
 
-0x00003F30       CMP R1 1
-0x00003F34       BEQ lookup_found
+0x00003FA4       CMP R1 1
+0x00003FA8       BEQ lookup_found
 
-0x00003F3C       ADD R7 R7 DEV_SIZE
-0x00003F40       SUB R9 R9 1
-0x00003F44       B lookup_loop
+0x00003FB0       ADD R7 R7 DEV_SIZE
+0x00003FB4       SUB R9 R9 1
+0x00003FB8       B lookup_loop
 
 lookup_found:
 
-0x00003F4C       MOV R1 R7                  ; return device descriptor ptr
+0x00003FC0       MOV R1 R7                  ; return device descriptor ptr
 
-0x00003F50       POP LR
-0x00003F54       RET
+0x00003FC4       POP LR
+0x00003FC8       RET
 
 lookup_fail:
 
-0x00003F58       LI R1 0
+0x00003FCC       LI R1 0
 
-0x00003F60       POP LR
-0x00003F64       RET
+0x00003FD4       POP LR
+0x00003FD8       RET
 
 ;================
 ; string helpers lib
@@ -2428,26 +2466,26 @@ lookup_fail:
 strcmp:
 
 str_loop:
-0x00003F68       LDB R3 [R1]
-0x00003F6C       LDB R4 [R2]
+0x00003FDC       LDB R3 [R1]
+0x00003FE0       LDB R4 [R2]
 
-0x00003F70       CMP R3 R4
-0x00003F74       BNE str_not_equal
+0x00003FE4       CMP R3 R4
+0x00003FE8       BNE str_not_equal
 
-0x00003F7C       CMP R3 0
-0x00003F80       BEQ str_equal
+0x00003FF0       CMP R3 0
+0x00003FF4       BEQ str_equal
 
-0x00003F88       ADD R1 R1 1
-0x00003F8C       ADD R2 R2 1
-0x00003F90       B str_loop
+0x00003FFC       ADD R1 R1 1
+0x00004000       ADD R2 R2 1
+0x00004004       B str_loop
 
 str_equal:
-0x00003F98       LI R1 1
-0x00003FA0       RET
+0x0000400C       LI R1 1
+0x00004014       RET
 
 str_not_equal:
-0x00003FA4       LI R1 0
-0x00003FAC       RET
+0x00004018       LI R1 0
+0x00004020       RET
 
 ; --------------------------------------------------
 ; str_prefix
@@ -2465,31 +2503,31 @@ str_not_equal:
 ; --------------------------------------------------
 
 str_prefix:
-0x00003FB0       PUSH R3
-0x00003FB4       PUSH R4
+0x00004024       PUSH R3
+0x00004028       PUSH R4
     ;assume match ! unless first unequal
 sp_loop:
-0x00003FB8       LDB R3 [R2]            ; prefix char
-0x00003FBC       CMP R3 0
-0x00003FC0       BEQ sp_match           ; reached end of prefix?
+0x0000402C       LDB R3 [R2]            ; prefix char
+0x00004030       CMP R3 0
+0x00004034       BEQ sp_match           ; reached end of prefix?
 
-0x00003FC8       LDB R4 [R1]            ; string char
-0x00003FCC       CMP R4 R3
-0x00003FD0       BNE sp_nomatch
+0x0000403C       LDB R4 [R1]            ; string char
+0x00004040       CMP R4 R3
+0x00004044       BNE sp_nomatch
 
-0x00003FD8       ADD R1 R1 1
-0x00003FDC       ADD R2 R2 1
-0x00003FE0       B sp_loop
+0x0000404C       ADD R1 R1 1
+0x00004050       ADD R2 R2 1
+0x00004054       B sp_loop
 sp_match:
-0x00003FE8       LI R1 1                 ;prefix ok
-0x00003FF0       POP R4
-0x00003FF4       POP R3
-0x00003FF8       RET
+0x0000405C       LI R1 1                 ;prefix ok
+0x00004064       POP R4
+0x00004068       POP R3
+0x0000406C       RET
 sp_nomatch:
-0x00003FFC       LI R1 0                 ; not ok
-0x00004004       POP R4
-0x00004008       POP R3
-0x0000400C       RET
+0x00004070       LI R1 0                 ; not ok
+0x00004078       POP R4
+0x0000407C       POP R3
+0x00004080       RET
 
 ; --------------------------------------------------
 ; skip_prefix
@@ -2503,30 +2541,30 @@ sp_nomatch:
 ; --------------------------------------------------
 
 skip_prefix:
-0x00004010       PUSH R3
-0x00004014       PUSH R4
+0x00004084       PUSH R3
+0x00004088       PUSH R4
 sk_loop:
-0x00004018       LDB R3 [R2]            ; prefix char
-0x0000401C       CMP R3 0
-0x00004020       BEQ sk_match           ; reached end of prefix
-0x00004028       LDB R4 [R1]            ; string char
-0x0000402C       CMP R4 R3
-0x00004030       BNE sk_nomatch
-0x00004038       ADD R1 R1 1
-0x0000403C       ADD R2 R2 1
-0x00004040       B sk_loop
+0x0000408C       LDB R3 [R2]            ; prefix char
+0x00004090       CMP R3 0
+0x00004094       BEQ sk_match           ; reached end of prefix
+0x0000409C       LDB R4 [R1]            ; string char
+0x000040A0       CMP R4 R3
+0x000040A4       BNE sk_nomatch
+0x000040AC       ADD R1 R1 1
+0x000040B0       ADD R2 R2 1
+0x000040B4       B sk_loop
 
 sk_match:
     ; R1 already points past prefix
-0x00004048       POP R4
-0x0000404C       POP R3
-0x00004050       RET
+0x000040BC       POP R4
+0x000040C0       POP R3
+0x000040C4       RET
 
 sk_nomatch:
-0x00004054       LI R1 0                 ; no prefix/or prefix not matching with that in src string
-0x0000405C       POP R4
-0x00004060       POP R3
-0x00004064       RET
+0x000040C8       LI R1 0                 ; no prefix/or prefix not matching with that in src string
+0x000040D0       POP R4
+0x000040D4       POP R3
+0x000040D8       RET
 
 ; --------------------------------------------------
 ; path_component_len
@@ -2539,24 +2577,24 @@ sk_nomatch:
 ; --------------------------------------------------
 
 path_component_len:
-0x00004068       PUSH R2
-0x0000406C       PUSH R3
-0x00004070       LI R2 0                ; length
+0x000040DC       PUSH R2
+0x000040E0       PUSH R3
+0x000040E4       LI R2 0                ; length
 pcl_loop:
-0x00004078       LDB R3 [R1]
-0x0000407C       CMP R3 0
-0x00004080       BEQ pcl_done
-0x00004088       LI R4 47               ; '/'
-0x00004090       CMP R3 R4
-0x00004094       BEQ pcl_done
-0x0000409C       ADD R2 R2 1
-0x000040A0       ADD R1 R1 1
-0x000040A4       B pcl_loop
+0x000040EC       LDB R3 [R1]
+0x000040F0       CMP R3 0
+0x000040F4       BEQ pcl_done
+0x000040FC       LI R4 47               ; '/'
+0x00004104       CMP R3 R4
+0x00004108       BEQ pcl_done
+0x00004110       ADD R2 R2 1
+0x00004114       ADD R1 R1 1
+0x00004118       B pcl_loop
 pcl_done:
-0x000040AC       MOV R1 R2
-0x000040B0       POP R3
-0x000040B4       POP R2
-0x000040B8       RET
+0x00004120       MOV R1 R2
+0x00004124       POP R3
+0x00004128       POP R2
+0x0000412C       RET
 
 ;====================================================================
 ; file_init using inode
@@ -2567,16 +2605,16 @@ pcl_done:
 ;====================================================================
 file_init:
     ; file->inode = inode
-0x000040BC       STW R2 [R1 + FILE_INODE]
+0x00004130       STW R2 [R1 + FILE_INODE]
     ; file->offset = 0
-0x000040C0       LI R4 0
-0x000040C8       STW R4 [R1 + FILE_OFFSET]
+0x00004134       LI R4 0
+0x0000413C       STW R4 [R1 + FILE_OFFSET]
     ; file->flags = O_RDONLY etc
-0x000040CC       STW R3 [R1 + FILE_FLAGS]
+0x00004140       STW R3 [R1 + FILE_FLAGS]
      ; file->refcnt = 1
-0x000040D0       LI R4 1
-0x000040D8       STW R4 [R1 + FILE_REFCNT]
-0x000040DC       RET
+0x00004144       LI R4 1
+0x0000414C       STW R4 [R1 + FILE_REFCNT]
+0x00004150       RET
 
 ;====================================================================
 ; fd_alloc - set initialised file to process fd_table (dynamic space )
@@ -2587,61 +2625,61 @@ file_init:
 
 fd_alloc:
 
-0x000040E0       MOV R8 R1                  ; save file pointer
+0x00004154       MOV R8 R1                  ; save file pointer
 
 ; macro: GET_CURR_TASK_IDX R4
-0x000040E4   LI R1 CURRENT_TASK
-0x000040EC   LDW R4 [R1]
+0x00004158   LI R1 CURRENT_TASK
+0x00004160   LDW R4 [R1]
 ; macro: GET_TASK_PTR R4, R4
-0x000040F0   LI R1 TASK_SIZE
-0x000040F8   MUL R3 R4 R1
-0x000040FC   LI R4 tasks
-0x00004104   ADD R4 R4 R3
+0x00004164   LI R1 TASK_SIZE
+0x0000416C   MUL R3 R4 R1
+0x00004170   LI R4 tasks
+0x00004178   ADD R4 R4 R3
 ; macro: TASK_GET_FD_TABLE R4, R4   ; R4 = fd table ptr
-0x00004108   LDW R4 [R4 + TASK_FD_TABLE]
+0x0000417C   LDW R4 [R4 + TASK_FD_TABLE]
 
-0x0000410C       LI R5 3                    ; start after stdin/out/err dynamic space
+0x00004180       LI R5 3                    ; start after stdin/out/err dynamic space
 
 fd_alloc_loop:
 
-0x00004114       CMP R5 MAX_FDS
-0x00004118       BGE fd_alloc_fail
+0x00004188       CMP R5 MAX_FDS
+0x0000418C       BGE fd_alloc_fail
 
-0x00004120       SHL R6 R5 2                ; fd * 4
-0x00004124       ADD R7 R4 R6               ; &fd_table[fd]
+0x00004194       SHL R6 R5 2                ; fd * 4
+0x00004198       ADD R7 R4 R6               ; &fd_table[fd]
 
-0x00004128       LDW R2 [R7]
-0x0000412C       CMP R2 0                   ; 0 - empty
-0x00004130       BEQ fd_alloc_found
+0x0000419C       LDW R2 [R7]
+0x000041A0       CMP R2 0                   ; 0 - empty
+0x000041A4       BEQ fd_alloc_found
 
-0x00004138       ADD R5 R5 1
-0x0000413C       B fd_alloc_loop
+0x000041AC       ADD R5 R5 1
+0x000041B0       B fd_alloc_loop
 
 fd_alloc_found:
 
-0x00004144       STW R8 [R7]                ; fd_table[fd] = file*
+0x000041B8       STW R8 [R7]                ; fd_table[fd] = file*
 
-0x00004148       MOV R1 R5                  ; return fd
-0x0000414C       RET
+0x000041BC       MOV R1 R5                  ; return fd
+0x000041C0       RET
 
 fd_alloc_fail:
 
-0x00004150       LI R1 ERR_MFILE
-0x00004158       RET
+0x000041C4       LI R1 ERR_MFILE
+0x000041CC       RET
 
 syscall_close:
     ;================================================================
     ; in R1 = fd
     ; out R1 = 0 / err -1
     ;================================================================
-0x0000415C       LDW R1 [SP + TF_R1]
+0x000041D0       LDW R1 [SP + TF_R1]
 
-0x00004160       BL vfs_close
+0x000041D4       BL vfs_close
 
-0x00004168       LI R1 0
-0x00004170       STW R1 [SP + TF_R1]
+0x000041DC       LI R1 0
+0x000041E4       STW R1 [SP + TF_R1]
 
-0x00004174       B trap_restore
+0x000041E8       B trap_restore
 
 syscall_pipe:
     ;================================================================
@@ -2652,207 +2690,207 @@ syscall_pipe:
     ;================================================================
 
     ; user int fd[2]
-0x0000417C       LDW R7 [SP + TF_R1]
+0x000041F0       LDW R7 [SP + TF_R1]
 
-0x00004180       BL pipe_alloc       ;create new pipe object in pipe_pool
-0x00004188       CMP R1 0
-0x0000418C       BEQ pipe_fail_nospc
+0x000041F4       BL pipe_alloc       ;create new pipe object in pipe_pool
+0x000041FC       CMP R1 0
+0x00004200       BEQ pipe_fail_nospc
 
-0x00004194       MOV R8 R1            ; new slot in pipe_pool ( pipe* )
+0x00004208       MOV R8 R1            ; new slot in pipe_pool ( pipe* )
     ; [0] read end          write[1]>--pipe--->read[0]
-0x00004198       BL file_alloc        ; R1 - created read file ptr for read end
-0x000041A0       CMP R1 0
-0x000041A4       BEQ pipe_fail_read_fd
+0x0000420C       BL file_alloc        ; R1 - created read file ptr for read end
+0x00004214       CMP R1 0
+0x00004218       BEQ pipe_fail_read_fd
 
-0x000041AC       MOV R9 R1           ; new file for read end  in file_pool
-0x000041B0       BL inode_alloc      ; get inode for this end file
-0x000041B8       CMP R1 0
-0x000041BC       BEQ pipe_fail_ia_read_fd
-0x000041C4       MOV R10 R1
+0x00004220       MOV R9 R1           ; new file for read end  in file_pool
+0x00004224       BL inode_alloc      ; get inode for this end file
+0x0000422C       CMP R1 0
+0x00004230       BEQ pipe_fail_ia_read_fd
+0x00004238       MOV R10 R1
 
-0x000041C8       LI  R2 pipe_ops         ; pipe_ops table
-0x000041D0       MOV R3 R8               ; store our slot pipe*
-0x000041D4       LI  R4 INODE_PIPE       ; inode type PIPE
-0x000041DC       LI  R5 0                ; size =0
-0x000041E4       BL inode_init           ; make inode for read end
+0x0000423C       LI  R2 pipe_ops         ; pipe_ops table
+0x00004244       MOV R3 R8               ; store our slot pipe*
+0x00004248       LI  R4 INODE_PIPE       ; inode type PIPE
+0x00004250       LI  R5 0                ; size =0
+0x00004258       BL inode_init           ; make inode for read end
 
     ; initialize file object ;read end file
-0x000041EC       MOV R1 R9                ; R1 file*
-0x000041F0       MOV R2 R10               ; inode*
-0x000041F4       LI R3  FD_FLAG_READ      ; flags READ end
-0x000041FC       BL file_init
+0x00004260       MOV R1 R9                ; R1 file*
+0x00004264       MOV R2 R10               ; inode*
+0x00004268       LI R3  FD_FLAG_READ      ; flags READ end
+0x00004270       BL file_init
 
-0x00004204       MOV R1 R9
-0x00004208       BL fd_alloc                 ; insert read file to fd_table of user process
+0x00004278       MOV R1 R9
+0x0000427C       BL fd_alloc                 ; insert read file to fd_table of user process
 
-0x00004210       LI R2 ERR_MFILE             ; check if fd_alloc problem
-0x00004218       CMP R1 R2
-0x0000421C       BEQ pipe_fail_read_file
+0x00004284       LI R2 ERR_MFILE             ; check if fd_alloc problem
+0x0000428C       CMP R1 R2
+0x00004290       BEQ pipe_fail_read_file
 
-0x00004224       MOV R12 R1           ; get file read fd created to R10
+0x00004298       MOV R12 R1           ; get file read fd created to R10
 
     ; same for write end
-0x00004228       BL file_alloc
-0x00004230       CMP R1 0
-0x00004234       BEQ pipe_fail_ia_write_fd
-0x0000423C       MOV R9 R1
+0x0000429C       BL file_alloc
+0x000042A4       CMP R1 0
+0x000042A8       BEQ pipe_fail_ia_write_fd
+0x000042B0       MOV R9 R1
 
-0x00004240       BL inode_alloc      ; get inode for this end file
-0x00004248       CMP R1 0
-0x0000424C       BEQ pipe_fail_ia_write_fd
-0x00004254       MOV R10 R1
+0x000042B4       BL inode_alloc      ; get inode for this end file
+0x000042BC       CMP R1 0
+0x000042C0       BEQ pipe_fail_ia_write_fd
+0x000042C8       MOV R10 R1
 
-0x00004258       LI  R2 pipe_ops         ; pipe_ops table
-0x00004260       MOV R3 R8               ; store our slot pipe* need to check if this is ok here (might be changed)
-0x00004264       LI  R4 INODE_PIPE       ; inode type PIPE
-0x0000426C       LI  R5 0                ; size =0
-0x00004274       BL inode_init           ; make inode for write end
+0x000042CC       LI  R2 pipe_ops         ; pipe_ops table
+0x000042D4       MOV R3 R8               ; store our slot pipe* need to check if this is ok here (might be changed)
+0x000042D8       LI  R4 INODE_PIPE       ; inode type PIPE
+0x000042E0       LI  R5 0                ; size =0
+0x000042E8       BL inode_init           ; make inode for write end
 
     ; initialize file object ;write end file
-0x0000427C       MOV R1 R9                ; R1 file*
-0x00004280       MOV R2 R10               ; inode*
-0x00004284       LI  R3 FD_FLAG_WRITE     ; flags WRITE end
-0x0000428C       BL file_init
+0x000042F0       MOV R1 R9                ; R1 file*
+0x000042F4       MOV R2 R10               ; inode*
+0x000042F8       LI  R3 FD_FLAG_WRITE     ; flags WRITE end
+0x00004300       BL file_init
 
-0x00004294       MOV R1 R9
-0x00004298       BL  fd_alloc
+0x00004308       MOV R1 R9
+0x0000430C       BL  fd_alloc
 
-0x000042A0       LI  R2 ERR_MFILE         ; check if fd_alloc problem
-0x000042A8       CMP R1 R2
-0x000042AC       BEQ pipe_fail_write_file
+0x00004314       LI  R2 ERR_MFILE         ; check if fd_alloc problem
+0x0000431C       CMP R1 R2
+0x00004320       BEQ pipe_fail_write_file
 
-0x000042B4       MOV R11 R1           ; R11 is write and fd R12 is read fd
+0x00004328       MOV R11 R1           ; R11 is write and fd R12 is read fd
 
-0x000042B8       MOV R1 R7    ; in &fd[2]. not sure if R7 still has value for this ptr
-0x000042BC       LI  R2 8     ; len 2 words (8 bytes)
-0x000042C4       LI  R3 1     ; mem perm to write cond
-0x000042CC       BL  user_buffer_valid_range
-0x000042D4       CMP R1 1
-0x000042D8       BNE pipe_fail_both_fds
+0x0000432C       MOV R1 R7    ; in &fd[2]. not sure if R7 still has value for this ptr
+0x00004330       LI  R2 8     ; len 2 words (8 bytes)
+0x00004338       LI  R3 1     ; mem perm to write cond
+0x00004340       BL  user_buffer_valid_range
+0x00004348       CMP R1 1
+0x0000434C       BNE pipe_fail_both_fds
 
-0x000042E0       STW R12 [R7]     ;fill fd user array of read and write ends fd[0]-rd fd[1]-wr
-0x000042E4       STW R11 [R7 + 4]
+0x00004354       STW R12 [R7]     ;fill fd user array of read and write ends fd[0]-rd fd[1]-wr
+0x00004358       STW R11 [R7 + 4]
 
-0x000042E8       LI R1 0
-0x000042F0       STW R1 [SP + TF_R1]
+0x0000435C       LI R1 0
+0x00004364       STW R1 [SP + TF_R1]
 
-0x000042F4       B trap_restore
+0x00004368       B trap_restore
 
 pipe_fail:
-0x000042FC       LI R1 ERR_IO
-0x00004304       STW R1 [SP + TF_R1]
+0x00004370       LI R1 ERR_IO
+0x00004378       STW R1 [SP + TF_R1]
 
-0x00004308       B trap_restore
+0x0000437C       B trap_restore
 
 pipe_fail_both_fds:
-0x00004310       MOV R12 R8
-0x00004314       MOV R1 R11
-0x00004318       BL fd_remove
-0x00004320       CMP R1 0
-0x00004324       BEQ pipe_fail_both_fds_read
-0x0000432C       BL file_free
+0x00004384       MOV R12 R8
+0x00004388       MOV R1 R11
+0x0000438C       BL fd_remove
+0x00004394       CMP R1 0
+0x00004398       BEQ pipe_fail_both_fds_read
+0x000043A0       BL file_free
 
 pipe_fail_both_fds_read:
-0x00004334       MOV R1 R10
-0x00004338       BL fd_remove
-0x00004340       CMP R1 0
-0x00004344       BEQ pipe_fail_free_pipe_fault
-0x0000434C       BL file_free
+0x000043A8       MOV R1 R10
+0x000043AC       BL fd_remove
+0x000043B4       CMP R1 0
+0x000043B8       BEQ pipe_fail_free_pipe_fault
+0x000043C0       BL file_free
 
 pipe_fail_free_pipe_fault:
-0x00004354       MOV R1 R12
-0x00004358       BL pipe_free
-0x00004360       LI R1 ERR_FAULT
-0x00004368       STW R1 [SP + TF_R1]
+0x000043C8       MOV R1 R12
+0x000043CC       BL pipe_free
+0x000043D4       LI R1 ERR_FAULT
+0x000043DC       STW R1 [SP + TF_R1]
 
-0x0000436C       B trap_restore
+0x000043E0       B trap_restore
 
 pipe_fail_write_file:
-0x00004374       MOV R12 R8
-0x00004378       MOV R1 R9
-0x0000437C       BL file_free
-0x00004384       MOV R1 R10
-0x00004388       BL fd_remove
-0x00004390       CMP R1 0
-0x00004394       BEQ pipe_fail_free_pipe_mfile
-0x0000439C       BL file_free
+0x000043E8       MOV R12 R8
+0x000043EC       MOV R1 R9
+0x000043F0       BL file_free
+0x000043F8       MOV R1 R10
+0x000043FC       BL fd_remove
+0x00004404       CMP R1 0
+0x00004408       BEQ pipe_fail_free_pipe_mfile
+0x00004410       BL file_free
 
 pipe_fail_free_pipe_mfile:
-0x000043A4       MOV R1 R12
-0x000043A8       BL pipe_free
-0x000043B0       LI R1 ERR_MFILE
-0x000043B8       STW R1 [SP + TF_R1]
+0x00004418       MOV R1 R12
+0x0000441C       BL pipe_free
+0x00004424       LI R1 ERR_MFILE
+0x0000442C       STW R1 [SP + TF_R1]
 
-0x000043BC       B trap_restore
+0x00004430       B trap_restore
 
 pipe_fail_read_fd:
-0x000043C4       MOV R12 R8
-0x000043C8       MOV R1 R10
-0x000043CC       BL fd_remove
-0x000043D4       CMP R1 0
-0x000043D8       BEQ pipe_fail_free_pipe_nfile
-0x000043E0       BL file_free
+0x00004438       MOV R12 R8
+0x0000443C       MOV R1 R10
+0x00004440       BL fd_remove
+0x00004448       CMP R1 0
+0x0000444C       BEQ pipe_fail_free_pipe_nfile
+0x00004454       BL file_free
 
 pipe_fail_free_pipe_nfile:
-0x000043E8       MOV R1 R12
-0x000043EC       BL pipe_free
-0x000043F4       LI R1 ERR_NFILE
-0x000043FC       STW R1 [SP + TF_R1]
+0x0000445C       MOV R1 R12
+0x00004460       BL pipe_free
+0x00004468       LI R1 ERR_NFILE
+0x00004470       STW R1 [SP + TF_R1]
 
-0x00004400       B trap_restore
+0x00004474       B trap_restore
 
 pipe_fail_read_file:
-0x00004408       MOV R12 R8
-0x0000440C       MOV R1 R9
-0x00004410       BL file_free
-0x00004418       MOV R1 R10          ; освободить inode read end
-0x0000441C       BL inode_free
-0x00004424       MOV R1 R12
-0x00004428       BL pipe_free
-0x00004430       LI R1 ERR_MFILE
-0x00004438       STW R1 [SP + TF_R1]
+0x0000447C       MOV R12 R8
+0x00004480       MOV R1 R9
+0x00004484       BL file_free
+0x0000448C       MOV R1 R10          ; освободить inode read end
+0x00004490       BL inode_free
+0x00004498       MOV R1 R12
+0x0000449C       BL pipe_free
+0x000044A4       LI R1 ERR_MFILE
+0x000044AC       STW R1 [SP + TF_R1]
 
-0x0000443C       B trap_restore
+0x000044B0       B trap_restore
 
 pipe_fail_pipe_only:
-0x00004444       MOV R1 R8
-0x00004448       BL pipe_free
-0x00004450       LI R1 ERR_NFILE
-0x00004458       STW R1 [SP + TF_R1]
+0x000044B8       MOV R1 R8
+0x000044BC       BL pipe_free
+0x000044C4       LI R1 ERR_NFILE
+0x000044CC       STW R1 [SP + TF_R1]
 
-0x0000445C       B trap_restore
+0x000044D0       B trap_restore
 
 pipe_fail_nospc:
-0x00004464       LI R1 ERR_NOSPC
-0x0000446C       STW R1 [SP + TF_R1]
+0x000044D8       LI R1 ERR_NOSPC
+0x000044E0       STW R1 [SP + TF_R1]
 
-0x00004470       B trap_restore
+0x000044E4       B trap_restore
 
 pipe_fail_ia_read_fd:
     ; Ошибка при создании inode для read end
-0x00004478       MOV R1 R9          ; освобождаем file (read end)
-0x0000447C       BL  file_free
-0x00004484       MOV R1 R8          ; освобождаем pipe
-0x00004488       BL  pipe_free
-0x00004490       LI R1 ERR_NFILE    ; или ERR_NOMEM - смотрите ваши коды ошибок
-0x00004498       STW R1 [SP + TF_R1]
-0x0000449C       B trap_restore
+0x000044EC       MOV R1 R9          ; освобождаем file (read end)
+0x000044F0       BL  file_free
+0x000044F8       MOV R1 R8          ; освобождаем pipe
+0x000044FC       BL  pipe_free
+0x00004504       LI R1 ERR_NFILE    ; или ERR_NOMEM - смотрите ваши коды ошибок
+0x0000450C       STW R1 [SP + TF_R1]
+0x00004510       B trap_restore
 
 pipe_fail_ia_write_fd:
     ; Ошибка при создании inode для write end
-0x000044A4       MOV R1 R12         ; освобождаем read fd (если уже создан)
-0x000044A8       BL fd_remove
-0x000044B0       CMP R1 0
-0x000044B4       BEQ skip_file_free_read
-0x000044BC       BL file_free
+0x00004518       MOV R1 R12         ; освобождаем read fd (если уже создан)
+0x0000451C       BL fd_remove
+0x00004524       CMP R1 0
+0x00004528       BEQ skip_file_free_read
+0x00004530       BL file_free
 skip_file_free_read:
-0x000044C4       MOV R1 R9          ; освобождаем file (write end)
-0x000044C8       BL file_free
-0x000044D0       MOV R1 R8          ; освобождаем pipe
-0x000044D4       BL pipe_free
-0x000044DC       LI R1 ERR_NFILE
-0x000044E4       STW R1 [SP + TF_R1]
-0x000044E8       B trap_restore
+0x00004538       MOV R1 R9          ; освобождаем file (write end)
+0x0000453C       BL file_free
+0x00004544       MOV R1 R8          ; освобождаем pipe
+0x00004548       BL pipe_free
+0x00004550       LI R1 ERR_NFILE
+0x00004558       STW R1 [SP + TF_R1]
+0x0000455C       B trap_restore
 
 ;===========================================================
 ; syscall_dup - make another fd for FILE increase refcnt
@@ -2866,40 +2904,40 @@ skip_file_free_read:
 
 syscall_dup:
 
-0x000044F0       LDW R1 [SP + TF_R1]     ; argument fd
+0x00004564       LDW R1 [SP + TF_R1]     ; argument fd
 
-0x000044F4       BL fd_lookup            ; lookup FILE*
-0x000044FC       CMP R1 0
-0x00004500       BEQ dup_badfd
-0x00004508       MOV R8 R1               ; keep FILE*
+0x00004568       BL fd_lookup            ; lookup FILE*
+0x00004570       CMP R1 0
+0x00004574       BEQ dup_badfd
+0x0000457C       MOV R8 R1               ; keep FILE*
 
-0x0000450C       BL file_get             ; FILE.ref++
+0x00004580       BL file_get             ; FILE.ref++
 
-0x00004514       MOV R1 R8
-0x00004518       BL fd_alloc             ; try to allocate new fd
+0x00004588       MOV R1 R8
+0x0000458C       BL fd_alloc             ; try to allocate new fd
 
-0x00004520       LI R2 ERR_MFILE
-0x00004528       CMP R1 R2
-0x0000452C       BEQ dup_fail_fd
+0x00004594       LI R2 ERR_MFILE
+0x0000459C       CMP R1 R2
+0x000045A0       BEQ dup_fail_fd
 
-0x00004534       STW R1 [SP + TF_R1] ;R1 - new fd
-0x00004538       B trap_restore
+0x000045A8       STW R1 [SP + TF_R1] ;R1 - new fd
+0x000045AC       B trap_restore
 
 dup_fail_fd:
 
-0x00004540       MOV R1 R8
-0x00004544       BL file_put
+0x000045B4       MOV R1 R8
+0x000045B8       BL file_put
 
-0x0000454C       LI R1 ERR_MFILE     ;R1 -err + rollback
-0x00004554       STW R1 [SP + TF_R1]
-0x00004558       B trap_restore
+0x000045C0       LI R1 ERR_MFILE     ;R1 -err + rollback
+0x000045C8       STW R1 [SP + TF_R1]
+0x000045CC       B trap_restore
 
 dup_badfd:
 
-0x00004560       LI R1 ERR_BADF      ;R1 -err + file not found
-0x00004568       STW R1 [SP + TF_R1]
+0x000045D4       LI R1 ERR_BADF      ;R1 -err + file not found
+0x000045DC       STW R1 [SP + TF_R1]
 
-0x0000456C       B trap_restore
+0x000045E0       B trap_restore
 
 ;===============================================================
 ; syscall_gettime
@@ -2917,72 +2955,72 @@ syscall_gettime:
     ; Get user pointer
     ;----------------------------------------------------------
 
-0x00004574       LDW R8 [SP + TF_R1]         ; user pointer to struct timeval
+0x000045E8       LDW R8 [SP + TF_R1]         ; user pointer to struct timeval
 
     ;----------------------------------------------------------
     ; Validate destination buffer
     ;----------------------------------------------------------
 
-0x00004578       MOV R1 R8
-0x0000457C       LI  R2 TIMEVAL_SIZE
-0x00004584       LI  R3 1                   ; write access
-0x0000458C       BL  user_buffer_valid_range
+0x000045EC       MOV R1 R8
+0x000045F0       LI  R2 TIMEVAL_SIZE
+0x000045F8       LI  R3 1                   ; write access
+0x00004600       BL  user_buffer_valid_range
 
-0x00004594       CMP R1 1
-0x00004598       BNE gettime_badptr
+0x00004608       CMP R1 1
+0x0000460C       BNE gettime_badptr
 
     ;----------------------------------------------------------
     ; Get current kernel time
     ;----------------------------------------------------------
 
-0x000045A0       BL clock_gettime           ;out: R1=sec, R2=usec
+0x00004614       BL clock_gettime           ;out: R1=sec, R2=usec
 
     ;----------------------------------------------------------
     ; Build timeval in kernel buffer
     ;----------------------------------------------------------
 
 ; macro: GET_CURR_TASK_IDX R4
-0x000045A8   LI R1 CURRENT_TASK
-0x000045B0   LDW R4 [R1]
+0x0000461C   LI R1 CURRENT_TASK
+0x00004624   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x000045B4   LI R1 TASK_SIZE
-0x000045BC   MUL R3 R4 R1
-0x000045C0   LI R5 tasks
-0x000045C8   ADD R5 R5 R3
+0x00004628   LI R1 TASK_SIZE
+0x00004630   MUL R3 R4 R1
+0x00004634   LI R5 tasks
+0x0000463C   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_WR R6, R5   ; R6 ptr kbuf_wr
-0x000045CC   LDW R6 [R5 + TASK_KBUF_WR_PTR]
+0x00004640   LDW R6 [R5 + TASK_KBUF_WR_PTR]
 
-0x000045D0       STW R1 [R6 + TIMEVAL_SEC]
-0x000045D4       STW R2 [R6 + TIMEVAL_USEC]
+0x00004644       STW R1 [R6 + TIMEVAL_SEC]
+0x00004648       STW R2 [R6 + TIMEVAL_USEC]
 
     ;----------------------------------------------------------
     ; Copy to user
     ;----------------------------------------------------------
 
-0x000045D8       MOV R1 R8                  ; user destination
-0x000045DC       LI  R2 TIMEVAL_SIZE        ; size in bytes (8)
-0x000045E4       MOV R4 R6                  ; kernel source
+0x0000464C       MOV R1 R8                  ; user destination
+0x00004650       LI  R2 TIMEVAL_SIZE        ; size in bytes (8)
+0x00004658       MOV R4 R6                  ; kernel source
 
-0x000045E8       BL copy_to_user
+0x0000465C       BL copy_to_user
 
-0x000045F0       CMP R1 TIMEVAL_SIZE
-0x000045F4       BNE gettime_badptr
+0x00004664       CMP R1 TIMEVAL_SIZE
+0x00004668       BNE gettime_badptr
 
     ;----------------------------------------------------------
     ; Success
     ;----------------------------------------------------------
 
-0x000045FC       LI R1 0
-0x00004604       STW R1 [SP + TF_R1]
+0x00004670       LI R1 0
+0x00004678       STW R1 [SP + TF_R1]
 
-0x00004608       B trap_restore
+0x0000467C       B trap_restore
 
 gettime_badptr:
 
-0x00004610       LI R1 ERR_FAULT
-0x00004618       STW R1 [SP + TF_R1]
+0x00004684       LI R1 ERR_FAULT
+0x0000468C       STW R1 [SP + TF_R1]
 
-0x0000461C       B trap_restore
+0x00004690       B trap_restore
 
 ; ================================================================
 ; syscall_brk - Set program break
@@ -2994,43 +3032,43 @@ gettime_badptr:
 ; ================================================================
 
 syscall_brk:
-0x00004624       LDW R8 [SP + TF_R1]        ; R8 = new break address (user space VA)
+0x00004698       LDW R8 [SP + TF_R1]        ; R8 = new break address (user space VA)
 
     ; Validate the address is within the data page
-0x00004628       LI R2 HEAP_START
-0x00004630       CMP R8 R2
-0x00004634       BLT brk_invalid            ; if new break is below data page, return error
+0x0000469C       LI R2 HEAP_START
+0x000046A4       CMP R8 R2
+0x000046A8       BLT brk_invalid            ; if new break is below data page, return error
 
-0x0000463C       LI R2 HEAP_END
-0x00004644       CMP R8 R2
-0x00004648       BGT brk_invalid            ; if new break is above last address in data page, return error
+0x000046B0       LI R2 HEAP_END
+0x000046B8       CMP R8 R2
+0x000046BC       BGT brk_invalid            ; if new break is above last address in data page, return error
 
     ; Get current task
 ; macro: GET_CURR_TASK_IDX R4
-0x00004650   LI R1 CURRENT_TASK
-0x00004658   LDW R4 [R1]
+0x000046C4   LI R1 CURRENT_TASK
+0x000046CC   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x0000465C   LI R1 TASK_SIZE
-0x00004664   MUL R3 R4 R1
-0x00004668   LI R5 tasks
-0x00004670   ADD R5 R5 R3
+0x000046D0   LI R1 TASK_SIZE
+0x000046D8   MUL R3 R4 R1
+0x000046DC   LI R5 tasks
+0x000046E4   ADD R5 R5 R3
 
     ; Set new break in task struct
     ; (We'll add this field to TASK structure)
 ; macro: TASK_SET_BREAK R5, R8
-0x00004674   STW R8 [R5 + TASK_BREAK]
+0x000046E8   STW R8 [R5 + TASK_BREAK]
 
     ; Return new break
-0x00004678       STW R8 [SP + TF_R1]
+0x000046EC       STW R8 [SP + TF_R1]
 
-0x0000467C       B trap_restore
+0x000046F0       B trap_restore
 
 brk_invalid:
     ; Return -1
-0x00004684       LI R1 ERR_FAULT
-0x0000468C       STW R1 [SP + TF_R1]
+0x000046F8       LI R1 ERR_FAULT
+0x00004700       STW R1 [SP + TF_R1]
 
-0x00004690       B trap_restore
+0x00004704       B trap_restore
 
 ; ================================================================
 ; syscall_sbrk - Increment program break (set new break relative to current ie sbrk)
@@ -3042,48 +3080,48 @@ brk_invalid:
 ; ================================================================
 
 syscall_sbrk:
-0x00004698       LDW R8 [SP + TF_R1]        ; R8 = increment
+0x0000470C       LDW R8 [SP + TF_R1]        ; R8 = increment
 
     ; Get current task
 ; macro: GET_CURR_TASK_IDX R4
-0x0000469C   LI R1 CURRENT_TASK
-0x000046A4   LDW R4 [R1]
+0x00004710   LI R1 CURRENT_TASK
+0x00004718   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x000046A8   LI R1 TASK_SIZE
-0x000046B0   MUL R3 R4 R1
-0x000046B4   LI R5 tasks
-0x000046BC   ADD R5 R5 R3
+0x0000471C   LI R1 TASK_SIZE
+0x00004724   MUL R3 R4 R1
+0x00004728   LI R5 tasks
+0x00004730   ADD R5 R5 R3
 
     ; Get current break
 ; macro: TASK_GET_BREAK R9, R5
-0x000046C0   LDW R9 [R5 + TASK_BREAK]
+0x00004734   LDW R9 [R5 + TASK_BREAK]
 
     ; Calculate new break
-0x000046C4       ADD R10 R9 R8
+0x00004738       ADD R10 R9 R8
 
     ; Validate it's within the data page
-0x000046C8       LI R2 HEAP_START
-0x000046D0       CMP R10 R2
-0x000046D4       BLT sbrk_invalid
+0x0000473C       LI R2 HEAP_START
+0x00004744       CMP R10 R2
+0x00004748       BLT sbrk_invalid
 
-0x000046DC       LI R2 HEAP_END
-0x000046E4       CMP R10 R2
-0x000046E8       BGT sbrk_invalid
+0x00004750       LI R2 HEAP_END
+0x00004758       CMP R10 R2
+0x0000475C       BGT sbrk_invalid
 
     ; Return old break
-0x000046F0       STW R9 [SP + TF_R1]     ; old break address
+0x00004764       STW R9 [SP + TF_R1]     ; old break address
 
     ; Update break
 ; macro: TASK_SET_BREAK R5, R10  ;R10 - updated break address
-0x000046F4   STW R10 [R5 + TASK_BREAK]
+0x00004768   STW R10 [R5 + TASK_BREAK]
 
-0x000046F8       B trap_restore
+0x0000476C       B trap_restore
 
 sbrk_invalid:
     ; Return -1
-0x00004700       LI R1 ERR_FAULT
-0x00004708       STW R1 [SP + TF_R1]
-0x0000470C       B trap_restore
+0x00004774       LI R1 ERR_FAULT
+0x0000477C       STW R1 [SP + TF_R1]
+0x00004780       B trap_restore
 
 ;===============================================================
 ; clock_gettime
@@ -3096,20 +3134,20 @@ sbrk_invalid:
 ;===============================================================
 clock_gettime:
 
-0x00004714       LI  R3 timer_ticks
-0x0000471C       LDW R4 [R3]                ; tick counter (1 ms per tick)
+0x00004788       LI  R3 timer_ticks
+0x00004790       LDW R4 [R3]                ; tick counter (1 ms per tick)
 
     ; seconds = ticks / 1000
-0x00004720       MOV R1 R4
-0x00004724       LI  R5 1000
-0x0000472C       DIV R1 R1 R5
+0x00004794       MOV R1 R4
+0x00004798       LI  R5 1000
+0x000047A0       DIV R1 R1 R5
 
     ; usec = (ticks % 1000) * 1000
-0x00004730       MOD R4 R4 R5
-0x00004734       LI  R5 1000
-0x0000473C       MUL R2 R4 R5
+0x000047A4       MOD R4 R4 R5
+0x000047A8       LI  R5 1000
+0x000047B0       MUL R2 R4 R5
 
-0x00004740       RET
+0x000047B4       RET
 
 pipe_read:
 ;=========================================================
@@ -3122,130 +3160,130 @@ pipe_read:
 ; this is specific pipe device read loop!
 ;=========================================================
 
-0x00004744       PUSH LR
+0x000047B8       PUSH LR
 
-0x00004748       MOV R9 R1              ; file*
-0x0000474C       MOV R7 R2              ; user buffer
-0x00004750       MOV R6 R3              ; requested len
+0x000047BC       MOV R9 R1              ; file*
+0x000047C0       MOV R7 R2              ; user buffer
+0x000047C4       MOV R6 R3              ; requested len
 
-0x00004754       LDW R9 [R9 + FILE_INODE]
-0x00004758       LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
-0x0000475C       CMP R6 0                ;fast clear from it if len=0
-0x00004760       BEQ pipe_read_done
+0x000047C8       LDW R9 [R9 + FILE_INODE]
+0x000047CC       LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
+0x000047D0       CMP R6 0                ;fast clear from it if len=0
+0x000047D4       BEQ pipe_read_done
 ;-----------------------------------------
 ; validate user destination buffer
 ;-----------------------------------------
-0x00004768       PUSH R7
-0x0000476C       PUSH R6
+0x000047DC       PUSH R7
+0x000047E0       PUSH R6
 
-0x00004770       MOV R1 R7
-0x00004774       MOV R2 R6
-0x00004778       LI  R3 1               ; write access
-0x00004780       BL user_buffer_valid_range
+0x000047E4       MOV R1 R7
+0x000047E8       MOV R2 R6
+0x000047EC       LI  R3 1               ; write access
+0x000047F4       BL user_buffer_valid_range
 
-0x00004788       POP R6
-0x0000478C       POP R7
-0x00004790       CMP R1 1
-0x00004794       BNE pipe_read_badptr
+0x000047FC       POP R6
+0x00004800       POP R7
+0x00004804       CMP R1 1
+0x00004808       BNE pipe_read_badptr
 
 pipe_read_retry:
 ;-----------------------------------------
 ; anything in pipe?
 ;-----------------------------------------
-0x0000479C       LDW R4 [R9 + PIPE_COUNT]
-0x000047A0       CMP R4 0
-0x000047A4       BEQ pipe_read_sleep     ;go to sleep
+0x00004810       LDW R4 [R9 + PIPE_COUNT]
+0x00004814       CMP R4 0
+0x00004818       BEQ pipe_read_sleep     ;go to sleep
 ;-----------------------------------------
 ; bytes_to_read=min(len (R6),count(R4)
 ;-----------------------------------------
-0x000047AC       CMP R6 R4
-0x000047B0       BLT pipe_user_len
+0x00004820       CMP R6 R4
+0x00004824       BLT pipe_user_len
 
-0x000047B8       MOV R5 R4
-0x000047BC       B pipe_have_amount
+0x0000482C       MOV R5 R4
+0x00004830       B pipe_have_amount
 
 pipe_user_len:
-0x000047C4       MOV R5 R6
+0x00004838       MOV R5 R6
 
 pipe_have_amount:
-0x000047C8       LI R10 0              ; bytes copied
+0x0000483C       LI R10 0              ; bytes copied
 
 pipe_read_loop:         ;cpy pipe_buffer to user with min(pipe_count,len) bytes
-0x000047D0       CMP R10 R5
-0x000047D4       BGE pipe_read_done
+0x00004844       CMP R10 R5
+0x00004848       BGE pipe_read_done
 
 ;------------------------------------------
 ; tail = pipe->tail (idx in PIPE_BUFFER in pipe*(R9) struc)
 ;------------------------------------------
-0x000047DC       LDW R11 [R9 + PIPE_TAIL]
+0x00004850       LDW R11 [R9 + PIPE_TAIL]
 ;------------------------------------------
 ; R12 addr = pipe + PIPE_BUFFER
 ;------------------------------------------
-0x000047E0       MOV R12 R9
-0x000047E4       ADD R12 R12 PIPE_BUFFER
-0x000047E8       ADD R12 R12 R11         ; addr += tail
+0x00004854       MOV R12 R9
+0x00004858       ADD R12 R12 PIPE_BUFFER
+0x0000485C       ADD R12 R12 R11         ; addr += tail
 
-0x000047EC       LDB R4 [R12]    ;read data from buffer[tail_idx]
+0x00004860       LDB R4 [R12]    ;read data from buffer[tail_idx]
 
 ;------------------------------------------
 ; useraddr=userbuf+copied
 ;------------------------------------------
-0x000047F0       MOV R12 R7
-0x000047F4       ADD R12 R12 R10
+0x00004864       MOV R12 R7
+0x00004868       ADD R12 R12 R10
 
-0x000047F8       STB R4 [R12]    ;copy to user side
+0x0000486C       STB R4 [R12]    ;copy to user side
 
 ;------------------------------------------
     ; tail=(tail+1)&255
 ;------------------------------------------
-0x000047FC       ADD R11 R11 1   ;update tail inc idx if idx > 255 idx=0
-0x00004800       LI R2 255
-0x00004808       AND R11 R11 R2
-0x0000480C       STW R11 [R9 + PIPE_TAIL]    ;save to pipe struc updated tail_idx
+0x00004870       ADD R11 R11 1   ;update tail inc idx if idx > 255 idx=0
+0x00004874       LI R2 255
+0x0000487C       AND R11 R11 R2
+0x00004880       STW R11 [R9 + PIPE_TAIL]    ;save to pipe struc updated tail_idx
 ;------------------------------------------
 ; count-- (update to struc)
 ;------------------------------------------
-0x00004810       LDW R12 [R9 + PIPE_COUNT]
-0x00004814       SUB R12 R12 1
-0x00004818       STW R12 [R9 + PIPE_COUNT]
+0x00004884       LDW R12 [R9 + PIPE_COUNT]
+0x00004888       SUB R12 R12 1
+0x0000488C       STW R12 [R9 + PIPE_COUNT]
 
     ; copied++ loop counter
-0x0000481C       ADD R10 R10 1
-0x00004820       B pipe_read_loop
+0x00004890       ADD R10 R10 1
+0x00004894       B pipe_read_loop
 
 pipe_read_done:
 ; wake blocked writers
-0x00004828       MOV R1 R9
-0x0000482C       ADD R1 R1 PIPE_WWAIT
-0x00004830       BL waitq_wake_all
-0x00004838       MOV R1 R10          ; read bytes amount
-0x0000483C       POP LR
-0x00004840       RET
+0x0000489C       MOV R1 R9
+0x000048A0       ADD R1 R1 PIPE_WWAIT
+0x000048A4       BL waitq_wake_all
+0x000048AC       MOV R1 R10          ; read bytes amount
+0x000048B0       POP LR
+0x000048B4       RET
 
 pipe_read_badptr:
-0x00004844       LI R1 ERR_FAULT
-0x0000484C       POP LR
-0x00004850       RET
+0x000048B8       LI R1 ERR_FAULT
+0x000048C0       POP LR
+0x000048C4       RET
 
 pipe_read_sleep:
 ;------------------------------------------
 ; prepare sleep
 ;------------------------------------------
-0x00004854       MOV R1 R9
-0x00004858       ADD R1 R1 PIPE_RWAIT    ;ptr on wait queue read in pipe instance
-0x0000485C       LI R2 WAIT_PIPE_READ    ;REASON for block in process (debug)
-0x00004864       BL waitq_prepare_sleep
+0x000048C8       MOV R1 R9
+0x000048CC       ADD R1 R1 PIPE_RWAIT    ;ptr on wait queue read in pipe instance
+0x000048D0       LI R2 WAIT_PIPE_READ    ;REASON for block in process (debug)
+0x000048D8       BL waitq_prepare_sleep
 
 ;------------------------------------------
 ; race check
 ;------------------------------------------
-0x0000486C       LDW R4 [R9 + PIPE_COUNT]
-0x00004870       CMP R4 0
-0x00004874       BNE pipe_read_retry
+0x000048E0       LDW R4 [R9 + PIPE_COUNT]
+0x000048E4       CMP R4 0
+0x000048E8       BNE pipe_read_retry
 
-0x0000487C       BL waitq_sleep_current  ;freesze here untill unblock
+0x000048F0       BL waitq_sleep_current  ;freesze here untill unblock
     ;data arrived/unbloked
-0x00004884       B pipe_read_retry
+0x000048F8       B pipe_read_retry
 
 ;later sort out  issue: pipe_fail leaks objects
 ;pipe_alloc OK
@@ -3258,50 +3296,50 @@ pipe_alloc:
     ; out R1 ptr to new slot in pipe_pool, or R1 = 0 if no slots
     ;================================================================
 
-0x0000488C       LI R2 0
+0x00004900       LI R2 0
 
 pipe_loop:
-0x00004894       LI  R1 MAX_PIPES
-0x0000489C       CMP R2 R1
-0x000048A0       BGE pipe_alloc_fail
+0x00004908       LI  R1 MAX_PIPES
+0x00004910       CMP R2 R1
+0x00004914       BGE pipe_alloc_fail
 
-0x000048A8       SHL R3 R2 2
+0x0000491C       SHL R3 R2 2
 
-0x000048AC       LI R4 pipe_used
-0x000048B4       ADD R4 R4 R3
+0x00004920       LI R4 pipe_used
+0x00004928       ADD R4 R4 R3
 
-0x000048B8       LDW R5 [R4]             ;R4 address in PIPE_USED LIST
+0x0000492C       LDW R5 [R4]             ;R4 address in PIPE_USED LIST
 
-0x000048BC       CMP R5 0                ; 0 -empty
-0x000048C0       BEQ pipe_found
+0x00004930       CMP R5 0                ; 0 -empty
+0x00004934       BEQ pipe_found
 
-0x000048C8       ADD R2 R2 1
-0x000048CC       B pipe_loop
+0x0000493C       ADD R2 R2 1
+0x00004940       B pipe_loop
 
 pipe_found:
 
-0x000048D4       LI R5 1
-0x000048DC       STW R5 [R4]             ; set it in PIPE_USED =1 as used
+0x00004948       LI R5 1
+0x00004950       STW R5 [R4]             ; set it in PIPE_USED =1 as used
 
-0x000048E0       LI R4 PIPE_SIZE
-0x000048E8       MUL R6 R2 R4            ; r2 - is idx so get full offset = PIPE_SIZE*idx
+0x00004954       LI R4 PIPE_SIZE
+0x0000495C       MUL R6 R2 R4            ; r2 - is idx so get full offset = PIPE_SIZE*idx
 
-0x000048EC       LI R1 pipe_pool         ; R1 - is address of the to be allocated slot in pipe_pool
-0x000048F4       ADD R1 R1 R6
+0x00004960       LI R1 pipe_pool         ; R1 - is address of the to be allocated slot in pipe_pool
+0x00004968       ADD R1 R1 R6
 
-0x000048F8       LI R7 0                 ; clean it up
-0x00004900       STW R7 [R1 + PIPE_HEAD]
-0x00004904       STW R7 [R1 + PIPE_TAIL]
-0x00004908       STW R7 [R1 + PIPE_COUNT]
-0x0000490C       STW R7 [R1 + PIPE_RWAIT]
-0x00004910       STW R7 [R1 + PIPE_WWAIT]
+0x0000496C       LI R7 0                 ; clean it up
+0x00004974       STW R7 [R1 + PIPE_HEAD]
+0x00004978       STW R7 [R1 + PIPE_TAIL]
+0x0000497C       STW R7 [R1 + PIPE_COUNT]
+0x00004980       STW R7 [R1 + PIPE_RWAIT]
+0x00004984       STW R7 [R1 + PIPE_WWAIT]
     ; R1 - address of the slot
-0x00004914       RET
+0x00004988       RET
 
 pipe_alloc_fail:
     ; R1 = NULL
-0x00004918       LI R1 0
-0x00004920       RET
+0x0000498C       LI R1 0
+0x00004994       RET
 
 pipe_free:
     ;================================================================
@@ -3309,20 +3347,20 @@ pipe_free:
     ; marks the pipe slot free
     ;================================================================
 
-0x00004924       LI R2 pipe_pool
-0x0000492C       SUB R3 R1 R2
+0x00004998       LI R2 pipe_pool
+0x000049A0       SUB R3 R1 R2
 
-0x00004930       LI R4 PIPE_SIZE
-0x00004938       DIV R5 R3 R4
+0x000049A4       LI R4 PIPE_SIZE
+0x000049AC       DIV R5 R3 R4
 
-0x0000493C       SHL R5 R5 2
-0x00004940       LI R6 pipe_used
-0x00004948       ADD R6 R6 R5
+0x000049B0       SHL R5 R5 2
+0x000049B4       LI R6 pipe_used
+0x000049BC       ADD R6 R6 R5
 
-0x0000494C       LI R7 0
-0x00004954       STW R7 [R6]
+0x000049C0       LI R7 0
+0x000049C8       STW R7 [R6]
 
-0x00004958       RET
+0x000049CC       RET
 
 pipe_write:
 ;--------------------------------------------------
@@ -3333,110 +3371,110 @@ pipe_write:
 ; return:
 ;   R1 = bytes written
 ;--------------------------------------------------
-0x0000495C       PUSH LR
+0x000049D0       PUSH LR
 
-0x00004960       MOV R9 R1
-0x00004964       MOV R7 R2
-0x00004968       MOV R6 R3
+0x000049D4       MOV R9 R1
+0x000049D8       MOV R7 R2
+0x000049DC       MOV R6 R3
 
-0x0000496C       LDW R9 [R9 + FILE_INODE]
-0x00004970       LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
+0x000049E0       LDW R9 [R9 + FILE_INODE]
+0x000049E4       LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
 
     ;---------------------------------------
     ; validate user source buffer
     ;---------------------------------------
 
-0x00004974       PUSH R7
-0x00004978       PUSH R6
+0x000049E8       PUSH R7
+0x000049EC       PUSH R6
 
-0x0000497C       MOV R1 R7
-0x00004980       MOV R2 R6
-0x00004984       LI  R3 0           ; READ access
-0x0000498C       BL user_buffer_valid_range
+0x000049F0       MOV R1 R7
+0x000049F4       MOV R2 R6
+0x000049F8       LI  R3 0           ; READ access
+0x00004A00       BL user_buffer_valid_range
 
-0x00004994       POP R6
-0x00004998       POP R7
+0x00004A08       POP R6
+0x00004A0C       POP R7
 
-0x0000499C       CMP R1 1
-0x000049A0       BNE pipe_write_badptr
+0x00004A10       CMP R1 1
+0x00004A14       BNE pipe_write_badptr
 
-0x000049A8       LI R10 0               ; bytes written
+0x00004A1C       LI R10 0               ; bytes written
 pipe_write_retry:
-0x000049B0       CMP R10 R6
-0x000049B4       BGE pipe_write_done
+0x00004A24       CMP R10 R6
+0x00004A28       BGE pipe_write_done
 ;------------------------------------------
 ; pipe full ?
 ;------------------------------------------
-0x000049BC       LDW R11 [R9 + PIPE_COUNT]
-0x000049C0       LI R2 256
-0x000049C8       CMP R11 R2
-0x000049CC       BEQ pipe_write_sleep
+0x00004A30       LDW R11 [R9 + PIPE_COUNT]
+0x00004A34       LI R2 256
+0x00004A3C       CMP R11 R2
+0x00004A40       BEQ pipe_write_sleep
 ;------------------------------------------
 ; head = pipe->head
 ;------------------------------------------
-0x000049D4       LDW R12 [R9 + PIPE_HEAD]
+0x00004A48       LDW R12 [R9 + PIPE_HEAD]
 
-0x000049D8       MOV R4 R7
-0x000049DC       ADD R4 R4 R10
-0x000049E0       LDB R5 [R4]     ; read byte from user buff addr
+0x00004A4C       MOV R4 R7
+0x00004A50       ADD R4 R4 R10
+0x00004A54       LDB R5 [R4]     ; read byte from user buff addr
 
-0x000049E4       MOV R4 R9
-0x000049E8       ADD R4 R4 PIPE_BUFFER
-0x000049EC       ADD R4 R4 R12
-0x000049F0       STB R5 [R4]     ; put it to pipe addr - ie write user -> pipe buff
+0x00004A58       MOV R4 R9
+0x00004A5C       ADD R4 R4 PIPE_BUFFER
+0x00004A60       ADD R4 R4 R12
+0x00004A64       STB R5 [R4]     ; put it to pipe addr - ie write user -> pipe buff
 
 ;------------------------------------------
 ; head=(head+1)&255
 ;------------------------------------------
-0x000049F4       ADD R12 R12 1
-0x000049F8       LI R2 255
-0x00004A00       AND R12 R12 R2
-0x00004A04       STW R12 [R9 + PIPE_HEAD]
+0x00004A68       ADD R12 R12 1
+0x00004A6C       LI R2 255
+0x00004A74       AND R12 R12 R2
+0x00004A78       STW R12 [R9 + PIPE_HEAD]
 ;------------------------------------------
 ; count++
 ;------------------------------------------
-0x00004A08       LDW R4 [R9 + PIPE_COUNT]
-0x00004A0C       ADD R4 R4 1
-0x00004A10       STW R4 [R9 + PIPE_COUNT]
+0x00004A7C       LDW R4 [R9 + PIPE_COUNT]
+0x00004A80       ADD R4 R4 1
+0x00004A84       STW R4 [R9 + PIPE_COUNT]
 
 ; written++
-0x00004A14       ADD R10 R10 1
-0x00004A18       B pipe_write_retry
+0x00004A88       ADD R10 R10 1
+0x00004A8C       B pipe_write_retry
 
 pipe_write_done:
 ; wake readers
-0x00004A20       MOV R1 R9
-0x00004A24       ADD R1 R1 PIPE_RWAIT    ; wq ptr from pipe*
-0x00004A28       BL waitq_wake_all
-0x00004A30       MOV R1 R10      ;written bytes
-0x00004A34       POP LR
-0x00004A38       RET
+0x00004A94       MOV R1 R9
+0x00004A98       ADD R1 R1 PIPE_RWAIT    ; wq ptr from pipe*
+0x00004A9C       BL waitq_wake_all
+0x00004AA4       MOV R1 R10      ;written bytes
+0x00004AA8       POP LR
+0x00004AAC       RET
 
 pipe_write_badptr:
-0x00004A3C       LI R1 ERR_FAULT
-0x00004A44       POP LR
-0x00004A48       RET
+0x00004AB0       LI R1 ERR_FAULT
+0x00004AB8       POP LR
+0x00004ABC       RET
 
 pipe_write_empty:
-0x00004A4C       LI R1 0
-0x00004A54       POP LR
-0x00004A58       RET
+0x00004AC0       LI R1 0
+0x00004AC8       POP LR
+0x00004ACC       RET
 
 pipe_write_sleep:
 ;setup tasks for block on write (pipe buffer is full)
-0x00004A5C       MOV R1 R9
-0x00004A60       ADD R1 R1 PIPE_WWAIT    ; wq ptr from pipe*
-0x00004A64       LI R2 WAIT_PIPE_WRITE
-0x00004A6C       BL waitq_prepare_sleep
+0x00004AD0       MOV R1 R9
+0x00004AD4       ADD R1 R1 PIPE_WWAIT    ; wq ptr from pipe*
+0x00004AD8       LI R2 WAIT_PIPE_WRITE
+0x00004AE0       BL waitq_prepare_sleep
     ; race check
-0x00004A74       LDW R4 [R9 + PIPE_COUNT]
-0x00004A78       LI R2 256
-0x00004A80       CMP R4 R2
-0x00004A84       BLT pipe_write_retry    ;if not full dont block/frezze go write
+0x00004AE8       LDW R4 [R9 + PIPE_COUNT]
+0x00004AEC       LI R2 256
+0x00004AF4       CMP R4 R2
+0x00004AF8       BLT pipe_write_retry    ;if not full dont block/frezze go write
 
-0x00004A8C       BL waitq_sleep_current  ;block anf freeze writer here until reading buffer frees room in pipe!
+0x00004B00       BL waitq_sleep_current  ;block anf freeze writer here until reading buffer frees room in pipe!
 
-0x00004A94       B pipe_write_retry      ; unblocked! go write!
+0x00004B08       B pipe_write_retry      ; unblocked! go write!
 
 
 
@@ -3448,39 +3486,39 @@ pipe_write_sleep:
 ;================================================================
 fd_lookup:
     ; Проверка валидности fd
-0x00004A9C       CMP R1 3
-0x00004AA0       BLT fd_lookup_invalid       ; fd 0,1,2 - stdio, нельзя закрыть пользователю
-0x00004AA8       CMP R1 MAX_FDS
-0x00004AAC       BGE fd_lookup_invalid       ; fd >= MAX_FDS - вне диапазона
+0x00004B10       CMP R1 3
+0x00004B14       BLT fd_lookup_invalid       ; fd 0,1,2 - stdio, нельзя закрыть пользователю
+0x00004B1C       CMP R1 MAX_FDS
+0x00004B20       BGE fd_lookup_invalid       ; fd >= MAX_FDS - вне диапазона
 
-0x00004AB4       MOV R8 R1                   ; сохраняем fd
+0x00004B28       MOV R8 R1                   ; сохраняем fd
     ; Получаем указатель на fd_table текущего процесса
 ; macro: GET_CURR_TASK_IDX R4
-0x00004AB8   LI R1 CURRENT_TASK
-0x00004AC0   LDW R4 [R1]
+0x00004B2C   LI R1 CURRENT_TASK
+0x00004B34   LDW R4 [R1]
 ; macro: GET_TASK_PTR R4, R4
-0x00004AC4   LI R1 TASK_SIZE
-0x00004ACC   MUL R3 R4 R1
-0x00004AD0   LI R4 tasks
-0x00004AD8   ADD R4 R4 R3
+0x00004B38   LI R1 TASK_SIZE
+0x00004B40   MUL R3 R4 R1
+0x00004B44   LI R4 tasks
+0x00004B4C   ADD R4 R4 R3
 ; macro: TASK_GET_FD_TABLE R4, R4    ; R4 = &fd_table[0]
-0x00004ADC   LDW R4 [R4 + TASK_FD_TABLE]
+0x00004B50   LDW R4 [R4 + TASK_FD_TABLE]
 
     ; Вычисляем адрес fd_table[fd]
-0x00004AE0       SHL R5 R8 2                 ; R5 = fd * 4 (размер указателя)
-0x00004AE4       ADD R6 R4 R5                ; R6 = &fd_table[fd]
+0x00004B54       SHL R5 R8 2                 ; R5 = fd * 4 (размер указателя)
+0x00004B58       ADD R6 R4 R5                ; R6 = &fd_table[fd]
 
-0x00004AE8       LDW R1 [R6]                 ; R1 = file* из таблицы
-0x00004AEC       CMP R1 0
-0x00004AF0       BEQ fd_lookup_invalid       ; если NULL - дескриптор не занят
+0x00004B5C       LDW R1 [R6]                 ; R1 = file* из таблицы
+0x00004B60       CMP R1 0
+0x00004B64       BEQ fd_lookup_invalid       ; если NULL - дескриптор не занят
 
-0x00004AF8       MOV R2 R6                   ; возвращаем адрес ячейки для fd_remove
-0x00004AFC       RET
+0x00004B6C       MOV R2 R6                   ; возвращаем адрес ячейки для fd_remove
+0x00004B70       RET
 
 fd_lookup_invalid:
-0x00004B00       LI R1 0
-0x00004B08       LI R2 0
-0x00004B10       RET
+0x00004B74       LI R1 0
+0x00004B7C       LI R2 0
+0x00004B84       RET
 
  ;================================================================
  ;  frees fd_entry of this fd ; fd_table[fd] = null + gives this file_ptr for file_free
@@ -3488,22 +3526,22 @@ fd_lookup_invalid:
  ;  out R1 = file* / R1 = 0 if invalid
  ;================================================================
  fd_remove:
-0x00004B14       PUSH LR
-0x00004B18       BL  fd_lookup
-0x00004B20       CMP R1 0
-0x00004B24       BEQ fd_remove_invalid
+0x00004B88       PUSH LR
+0x00004B8C       BL  fd_lookup
+0x00004B94       CMP R1 0
+0x00004B98       BEQ fd_remove_invalid
 
-0x00004B2C       MOV R8 R1          ; сохраняем file*
-0x00004B30       LI R3 0
-0x00004B38       STW R3 [R2]        ; fd_table[fd] = NULL (R2 из fd_lookup)
-0x00004B3C       MOV R1 R8          ; file*
-0x00004B40       POP LR
-0x00004B44       RET
+0x00004BA0       MOV R8 R1          ; сохраняем file*
+0x00004BA4       LI R3 0
+0x00004BAC       STW R3 [R2]        ; fd_table[fd] = NULL (R2 из fd_lookup)
+0x00004BB0       MOV R1 R8          ; file*
+0x00004BB4       POP LR
+0x00004BB8       RET
 
 fd_remove_invalid:
-0x00004B48       LI R1 0
-0x00004B50       POP LR
-0x00004B54       RET
+0x00004BBC       LI R1 0
+0x00004BC4       POP LR
+0x00004BC8       RET
 
 
 syscall_read:
@@ -3513,22 +3551,22 @@ syscall_read:
     ; R3 = length
     ;================================================================
 
-0x00004B58       LDW R1 [SP + TF_R1]
-0x00004B5C       LDW R2 [SP + TF_R2]
-0x00004B60       LDW R3 [SP + TF_R3]
+0x00004BCC       LDW R1 [SP + TF_R1]
+0x00004BD0       LDW R2 [SP + TF_R2]
+0x00004BD4       LDW R3 [SP + TF_R3]
 
-0x00004B64       BL vfs_read
+0x00004BD8       BL vfs_read
 
-0x00004B6C       STW R1 [SP + TF_R1]
-0x00004B70       B trap_restore
+0x00004BE0       STW R1 [SP + TF_R1]
+0x00004BE4       B trap_restore
 
 ; to comply with vfs interface
 devfs_open:
-0x00004B78       LI R1 0
-0x00004B80       RET
+0x00004BEC       LI R1 0
+0x00004BF4       RET
 devfs_close:
-0x00004B84       LI R1 0
-0x00004B8C       RET
+0x00004BF8       LI R1 0
+0x00004C00       RET
 
 
 devfs_read:
@@ -3539,158 +3577,158 @@ devfs_read:
     ; this is specific con device read loop!
     ;================================================================
 
-0x00004B90       PUSH LR
-0x00004B94       PUSH R8
-0x00004B98       PUSH R9
-0x00004B9C       PUSH R10
-0x00004BA0       PUSH R11
-0x00004BA4       PUSH R12
-0x00004BA8       MOV R9 R1
-0x00004BAC       MOV R7 R2
-0x00004BB0       MOV R6 R3
-0x00004BB4       LI R8 0                    ; total bytes collected
-0x00004BBC       LDW R9 [R9 + FILE_INODE]
-0x00004BC0       LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
-0x00004BC4       CMP R6 0
-0x00004BC8       BEQ read_done
+0x00004C04       PUSH LR
+0x00004C08       PUSH R8
+0x00004C0C       PUSH R9
+0x00004C10       PUSH R10
+0x00004C14       PUSH R11
+0x00004C18       PUSH R12
+0x00004C1C       MOV R9 R1
+0x00004C20       MOV R7 R2
+0x00004C24       MOV R6 R3
+0x00004C28       LI R8 0                    ; total bytes collected
+0x00004C30       LDW R9 [R9 + FILE_INODE]
+0x00004C34       LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
+0x00004C38       CMP R6 0
+0x00004C3C       BEQ read_done
 
-0x00004BD0       PUSH R7
-0x00004BD4       PUSH R6
-0x00004BD8       PUSH R9
-0x00004BDC       MOV R1 R7
-0x00004BE0       MOV R2 R6
-0x00004BE4       LI R3 1                ; write access for destination buffer
-0x00004BEC       BL user_buffer_valid_range
-0x00004BF4       POP R9
-0x00004BF8       POP R6
-0x00004BFC       POP R7
-0x00004C00       CMP R1 1
-0x00004C04       BNE con_read_fault
+0x00004C44       PUSH R7
+0x00004C48       PUSH R6
+0x00004C4C       PUSH R9
+0x00004C50       MOV R1 R7
+0x00004C54       MOV R2 R6
+0x00004C58       LI R3 1                ; write access for destination buffer
+0x00004C60       BL user_buffer_valid_range
+0x00004C68       POP R9
+0x00004C6C       POP R6
+0x00004C70       POP R7
+0x00004C74       CMP R1 1
+0x00004C78       BNE con_read_fault
 
 read_wait_uart_rx:
-0x00004C0C       LDW R4 [R9 + UARTDEV_MMIO]  ; UART MMIO Base Address
-0x00004C10       LDW R5 [R4 + 4]             ; read UART_STATUS register
-0x00004C14       AND R5 R5 1                 ; bit 0 = RX_READY
-0x00004C18       CMP R5 0
-0x00004C1C       BEQ read_block_uart_rx      ; bit 0=0 no data yet in rx_queue, block this curr user task inside syscall
+0x00004C80       LDW R4 [R9 + UARTDEV_MMIO]  ; UART MMIO Base Address
+0x00004C84       LDW R5 [R4 + 4]             ; read UART_STATUS register
+0x00004C88       AND R5 R5 1                 ; bit 0 = RX_READY
+0x00004C8C       CMP R5 0
+0x00004C90       BEQ read_block_uart_rx      ; bit 0=0 no data yet in rx_queue, block this curr user task inside syscall
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00004C24   LI R1 CURRENT_TASK
-0x00004C2C   LDW R4 [R1]
+0x00004C98   LI R1 CURRENT_TASK
+0x00004CA0   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00004C30   LI R1 TASK_SIZE
-0x00004C38   MUL R3 R4 R1
-0x00004C3C   LI R5 tasks
-0x00004C44   ADD R5 R5 R3
+0x00004CA4   LI R1 TASK_SIZE
+0x00004CAC   MUL R3 R4 R1
+0x00004CB0   LI R5 tasks
+0x00004CB8   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_RD R1, R5
-0x00004C48   LDW R1 [R5 + TASK_KBUF_RD_PTR]
-0x00004C4C       MOV R2 R6
-0x00004C50       MOV R3 R9
-0x00004C54       PUSH R6
-0x00004C58       PUSH R7
-0x00004C5C       PUSH R8
-0x00004C60       PUSH R9
-0x00004C64       BL device_read          ;read data from rx_queue to KBUFFER_RD len=R2(<- R6) or if 0xd (enter sign)
-0x00004C6C       POP R9
-0x00004C70       POP R8
-0x00004C74       POP R7
-0x00004C78       POP R6
+0x00004CBC   LDW R1 [R5 + TASK_KBUF_RD_PTR]
+0x00004CC0       MOV R2 R6
+0x00004CC4       MOV R3 R9
+0x00004CC8       PUSH R6
+0x00004CCC       PUSH R7
+0x00004CD0       PUSH R8
+0x00004CD4       PUSH R9
+0x00004CD8       BL device_read          ;read data from rx_queue to KBUFFER_RD len=R2(<- R6) or if 0xd (enter sign)
+0x00004CE0       POP R9
+0x00004CE4       POP R8
+0x00004CE8       POP R7
+0x00004CEC       POP R6
 
-0x00004C7C       CMP R1 0
-0x00004C80       BEQ read_wait_uart_rx
+0x00004CF0       CMP R1 0
+0x00004CF4       BEQ read_wait_uart_rx
 
-0x00004C88       MOV R10 R1             ; actual bytes read
+0x00004CFC       MOV R10 R1             ; actual bytes read
 
 ; macro: GET_CURR_TASK_IDX R5
-0x00004C8C   LI R1 CURRENT_TASK
-0x00004C94   LDW R5 [R1]
+0x00004D00   LI R1 CURRENT_TASK
+0x00004D08   LDW R5 [R1]
 ; macro: GET_TASK_PTR R4, R5
-0x00004C98   LI R1 TASK_SIZE
-0x00004CA0   MUL R3 R5 R1
-0x00004CA4   LI R4 tasks
-0x00004CAC   ADD R4 R4 R3
+0x00004D0C   LI R1 TASK_SIZE
+0x00004D14   MUL R3 R5 R1
+0x00004D18   LI R4 tasks
+0x00004D20   ADD R4 R4 R3
 ; macro: TASK_GET_KBUF_RD R4, R4
-0x00004CB0   LDW R4 [R4 + TASK_KBUF_RD_PTR]
+0x00004D24   LDW R4 [R4 + TASK_KBUF_RD_PTR]
 
     ; Remember whether this chunk ended with newline before copy_to_user
     ; clobbers temporary registers.
-0x00004CB4       LI R11 0
-0x00004CBC       SUB R5 R10 1
-0x00004CC0       ADD R5 R4 R5
-0x00004CC4       LDB R5 [R5]
-0x00004CC8       CMP R5 10
-0x00004CCC       BNE read_chunk_not_newline
-0x00004CD4       LI R11 1
+0x00004D28       LI R11 0
+0x00004D30       SUB R5 R10 1
+0x00004D34       ADD R5 R4 R5
+0x00004D38       LDB R5 [R5]
+0x00004D3C       CMP R5 10
+0x00004D40       BNE read_chunk_not_newline
+0x00004D48       LI R11 1
 
 read_chunk_not_newline:
-0x00004CDC       PUSH R6
-0x00004CE0       PUSH R7
-0x00004CE4       PUSH R8
-0x00004CE8       PUSH R9
-0x00004CEC       PUSH R10
-0x00004CF0       PUSH R11
-0x00004CF4       MOV R1 R7              ; user destination
-0x00004CF8       MOV R2 R10
-0x00004CFC       BL copy_to_user        ; copy from kernel buffer to user buffer
-0x00004D04       POP R11
-0x00004D08       POP R10
-0x00004D0C       POP R9
-0x00004D10       POP R8
-0x00004D14       POP R7
-0x00004D18       POP R6
+0x00004D50       PUSH R6
+0x00004D54       PUSH R7
+0x00004D58       PUSH R8
+0x00004D5C       PUSH R9
+0x00004D60       PUSH R10
+0x00004D64       PUSH R11
+0x00004D68       MOV R1 R7              ; user destination
+0x00004D6C       MOV R2 R10
+0x00004D70       BL copy_to_user        ; copy from kernel buffer to user buffer
+0x00004D78       POP R11
+0x00004D7C       POP R10
+0x00004D80       POP R9
+0x00004D84       POP R8
+0x00004D88       POP R7
+0x00004D8C       POP R6
 
-0x00004D1C       ADD R7 R7 R10
-0x00004D20       ADD R8 R8 R10
-0x00004D24       SUB R6 R6 R10
+0x00004D90       ADD R7 R7 R10
+0x00004D94       ADD R8 R8 R10
+0x00004D98       SUB R6 R6 R10
 
-0x00004D28       CMP R11 1
-0x00004D2C       BEQ read_complete
-0x00004D34       CMP R6 0
-0x00004D38       BGT read_wait_uart_rx
+0x00004D9C       CMP R11 1
+0x00004DA0       BEQ read_complete
+0x00004DA8       CMP R6 0
+0x00004DAC       BGT read_wait_uart_rx
 
 read_complete:
-0x00004D40       MOV R1 R8
-0x00004D44       B read_return
+0x00004DB4       MOV R1 R8
+0x00004DB8       B read_return
 
 read_block_uart_rx:
     ; Put the current task on the UART RX wait queue before the re-check.
     ; This ordering prevents a lost wakeup if an IRQ arrives between the
     ; status check above and the actual scheduler sleep.
-0x00004D4C       LI R1 uart_rx_waitq
-0x00004D54       LI R2 WAIT_UART_RX
-0x00004D5C       BL waitq_prepare_sleep
+0x00004DC0       LI R1 uart_rx_waitq
+0x00004DC8       LI R2 WAIT_UART_RX
+0x00004DD0       BL waitq_prepare_sleep
 
-0x00004D64       LDW R4 [R9 + UARTDEV_MMIO]
-0x00004D68       LDW R10 [R4 + 4]             ; re-check uart reg RX-ready bit 0 after marking blocked
-0x00004D6C       AND R10 R10 1
-0x00004D70       CMP R10 0
-0x00004D74       BNE read_unblock_uart_rx     ; if data arrived, cancel sleep and read it
+0x00004DD8       LDW R4 [R9 + UARTDEV_MMIO]
+0x00004DDC       LDW R10 [R4 + 4]             ; re-check uart reg RX-ready bit 0 after marking blocked
+0x00004DE0       AND R10 R10 1
+0x00004DE4       CMP R10 0
+0x00004DE8       BNE read_unblock_uart_rx     ; if data arrived, cancel sleep and read it
 
-0x00004D7C       BL waitq_sleep_current       ; save this user task as frozen in kernel space
+0x00004DF0       BL waitq_sleep_current       ; save this user task as frozen in kernel space
 
-0x00004D84       B read_wait_uart_rx          ;repeat read uart loop
+0x00004DF8       B read_wait_uart_rx          ;repeat read uart loop
 
 read_unblock_uart_rx:            ;mark current task as unblocked
-0x00004D8C       LI R1 uart_rx_waitq
-0x00004D94       BL waitq_cancel_sleep_current
+0x00004E00       LI R1 uart_rx_waitq
+0x00004E08       BL waitq_cancel_sleep_current
 
-0x00004D9C       B read_wait_uart_rx          ;go back and read bytes
+0x00004E10       B read_wait_uart_rx          ;go back and read bytes
 
 read_done:
-0x00004DA4       LI R1 0
-0x00004DAC       B read_return
+0x00004E18       LI R1 0
+0x00004E20       B read_return
 
 con_read_fault:
-0x00004DB4       LI R1 ERR_FAULT
+0x00004E28       LI R1 ERR_FAULT
 
 read_return:
-0x00004DBC       POP R12
-0x00004DC0       POP R11
-0x00004DC4       POP R10
-0x00004DC8       POP R9
-0x00004DCC       POP R8
-0x00004DD0       POP LR
-0x00004DD4       RET
+0x00004E30       POP R12
+0x00004E34       POP R11
+0x00004E38       POP R10
+0x00004E3C       POP R9
+0x00004E40       POP R8
+0x00004E44       POP LR
+0x00004E48       RET
 
 syscall_write:
     ;================================================================
@@ -3699,14 +3737,14 @@ syscall_write:
     ; R3 = length
     ;================================================================
 
-0x00004DD8       LDW R1 [SP + TF_R1]
-0x00004DDC       LDW R2 [SP + TF_R2]
-0x00004DE0       LDW R3 [SP + TF_R3]
+0x00004E4C       LDW R1 [SP + TF_R1]
+0x00004E50       LDW R2 [SP + TF_R2]
+0x00004E54       LDW R3 [SP + TF_R3]
 
-0x00004DE4       BL vfs_write
+0x00004E58       BL vfs_write
 
-0x00004DEC       STW R1 [SP + TF_R1]
-0x00004DF0       B trap_restore
+0x00004E60       STW R1 [SP + TF_R1]
+0x00004E64       B trap_restore
 
 
 devfs_write:
@@ -3717,27 +3755,27 @@ devfs_write:
     ; this is specific con device write loop!
     ;================================================================
 
-0x00004DF8       PUSH LR
-0x00004DFC       MOV R9 R1
-0x00004E00       MOV R7 R2
-0x00004E04       MOV R6 R3
-0x00004E08       LDW R9 [R9 + FILE_INODE]
-0x00004E0C       LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
-0x00004E10       LI R8 0                    ; total bytes written
+0x00004E6C       PUSH LR
+0x00004E70       MOV R9 R1
+0x00004E74       MOV R7 R2
+0x00004E78       MOV R6 R3
+0x00004E7C       LDW R9 [R9 + FILE_INODE]
+0x00004E80       LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
+0x00004E84       LI R8 0                    ; total bytes written
                                ;also R6-len R7-user buf ptr R9-file struc ptr
 write_loop:
-0x00004E18       CMP R6 0
-0x00004E1C       BEQ write_done             ;0 bytes
+0x00004E8C       CMP R6 0
+0x00004E90       BEQ write_done             ;0 bytes
 
-0x00004E24       LI R2 KBUFFER_SIZE
-0x00004E2C       CMP R6 R2                  ;here we write in chunks to dev, last one is small chunk (less then Kbuffer_size)
-0x00004E30       BLT write_chunk_small
-0x00004E38       LI R2 KBUFFER_SIZE
+0x00004E98       LI R2 KBUFFER_SIZE
+0x00004EA0       CMP R6 R2                  ;here we write in chunks to dev, last one is small chunk (less then Kbuffer_size)
+0x00004EA4       BLT write_chunk_small
+0x00004EAC       LI R2 KBUFFER_SIZE
 
-0x00004E40       B write_chunk
+0x00004EB4       B write_chunk
 
 write_chunk_small:
-0x00004E48       MOV R2 R6
+0x00004EBC       MOV R2 R6
 
 write_chunk:
     ;================================================================
@@ -3746,143 +3784,143 @@ write_chunk:
     ; buffer overflows or invalid memory accesses.
     ;================================================================
 
-0x00004E4C       PUSH R7
-0x00004E50       PUSH R6
-0x00004E54       PUSH R9
-0x00004E58       PUSH R8
-0x00004E5C       MOV R1 R7
-0x00004E60       MOV R2 R2
-0x00004E64       LI R3 0                ; read access for source buffer
-0x00004E6C       BL user_buffer_valid_range ;Validate user buffer and length for this chunk
-0x00004E74       POP R8
-0x00004E78       POP R9
-0x00004E7C       POP R6
-0x00004E80       POP R7
-0x00004E84       CMP R1 1
-0x00004E88       BNE driver_bad_pointer
+0x00004EC0       PUSH R7
+0x00004EC4       PUSH R6
+0x00004EC8       PUSH R9
+0x00004ECC       PUSH R8
+0x00004ED0       MOV R1 R7
+0x00004ED4       MOV R2 R2
+0x00004ED8       LI R3 0                ; read access for source buffer
+0x00004EE0       BL user_buffer_valid_range ;Validate user buffer and length for this chunk
+0x00004EE8       POP R8
+0x00004EEC       POP R9
+0x00004EF0       POP R6
+0x00004EF4       POP R7
+0x00004EF8       CMP R1 1
+0x00004EFC       BNE driver_bad_pointer
 
-0x00004E90       PUSH R7
-0x00004E94       PUSH R6
+0x00004F04       PUSH R7
+0x00004F08       PUSH R6
     ;=================================================
     ; access curr task fields to get task kbuffer_wr (to avoid nasty shared buffer things)
     ;=================================================
 ; macro: GET_CURR_TASK_IDX R4
-0x00004E98   LI R1 CURRENT_TASK
-0x00004EA0   LDW R4 [R1]
+0x00004F0C   LI R1 CURRENT_TASK
+0x00004F14   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00004EA4   LI R1 TASK_SIZE
-0x00004EAC   MUL R3 R4 R1
-0x00004EB0   LI R5 tasks
-0x00004EB8   ADD R5 R5 R3
+0x00004F18   LI R1 TASK_SIZE
+0x00004F20   MUL R3 R4 R1
+0x00004F24   LI R5 tasks
+0x00004F2C   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_WR R4, R5
-0x00004EBC   LDW R4 [R5 + TASK_KBUF_WR_PTR]
-0x00004EC0       MOV R1 R7
-0x00004EC4       BL copy_from_user      ; copy chunk to tasks kbuffer_wr
-0x00004ECC       MOV R10 R1             ; bytes copied
-0x00004ED0       POP R6
-0x00004ED4       POP R7
+0x00004F30   LDW R4 [R5 + TASK_KBUF_WR_PTR]
+0x00004F34       MOV R1 R7
+0x00004F38       BL copy_from_user      ; copy chunk to tasks kbuffer_wr
+0x00004F40       MOV R10 R1             ; bytes copied
+0x00004F44       POP R6
+0x00004F48       POP R7
 
-0x00004ED8       PUSH R7
-0x00004EDC       PUSH R9
-0x00004EE0       PUSH R6
+0x00004F4C       PUSH R7
+0x00004F50       PUSH R9
+0x00004F54       PUSH R6
 
 ; now actual send to uart chunk from  kbuffer_wr to device
 write_wait_uart_tx:
-0x00004EE4       LDW R1 [R9 + UARTDEV_MMIO]
-0x00004EE8       LDW R2 [R1 + 4]
-0x00004EEC       AND R2 R2 2                     ;check bit 1 - UART_TX rdy
-0x00004EF0       CMP R2 0
-0x00004EF4       BEQ write_block_uart_tx         ;not rdy go and block this task
+0x00004F58       LDW R1 [R9 + UARTDEV_MMIO]
+0x00004F5C       LDW R2 [R1 + 4]
+0x00004F60       AND R2 R2 2                     ;check bit 1 - UART_TX rdy
+0x00004F64       CMP R2 0
+0x00004F68       BEQ write_block_uart_tx         ;not rdy go and block this task
 
 ; can TX to UART!
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00004EFC   LI R1 CURRENT_TASK
-0x00004F04   LDW R4 [R1]
+0x00004F70   LI R1 CURRENT_TASK
+0x00004F78   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00004F08   LI R1 TASK_SIZE
-0x00004F10   MUL R3 R4 R1
-0x00004F14   LI R5 tasks
-0x00004F1C   ADD R5 R5 R3
+0x00004F7C   LI R1 TASK_SIZE
+0x00004F84   MUL R3 R4 R1
+0x00004F88   LI R5 tasks
+0x00004F90   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_WR R1, R5
-0x00004F20   LDW R1 [R5 + TASK_KBUF_WR_PTR]
-0x00004F24       MOV R2 R10
-0x00004F28       MOV R3 R9
+0x00004F94   LDW R1 [R5 + TASK_KBUF_WR_PTR]
+0x00004F98       MOV R2 R10
+0x00004F9C       MOV R3 R9
     ;============================================================================
     ; get R1 - kbuff_wr ptr R2 = R10 amounts to be sent (shunk/small_chunk size)
     ; R9 - ptr to Private (con_device)
     ; r1 - outputs number of written bytes to device
     ;-----------------------------------------------------------------------------
 
-0x00004F2C       BL device_write
-0x00004F34       POP R6
-0x00004F38       POP R9
-0x00004F3C       POP R7
+0x00004FA0       BL device_write
+0x00004FA8       POP R6
+0x00004FAC       POP R9
+0x00004FB0       POP R7
 
-0x00004F40       CMP R1 0        ;nothing is written - go again
-0x00004F44       BEQ write_loop
+0x00004FB4       CMP R1 0        ;nothing is written - go again
+0x00004FB8       BEQ write_loop
 
-0x00004F4C       ADD R8 R8 R1     ;update ptrs
-0x00004F50       ADD R7 R7 R1     ;R7 pointer in user buffer R8-who knows?
-0x00004F54       SUB R6 R6 R1     ;decrease amounts for next chunk to send
-0x00004F58       B write_loop     ;chunk is sent go to next one
+0x00004FC0       ADD R8 R8 R1     ;update ptrs
+0x00004FC4       ADD R7 R7 R1     ;R7 pointer in user buffer R8-who knows?
+0x00004FC8       SUB R6 R6 R1     ;decrease amounts for next chunk to send
+0x00004FCC       B write_loop     ;chunk is sent go to next one
 
 write_block_uart_tx:
     ; Queue the task on UART TX before the re-check. If TX becomes ready
     ; immediately after this, cancel the queued sleep without scheduling.
-0x00004F60       LI R1 uart_tx_waitq
-0x00004F68       LI R2 WAIT_UART_TX
-0x00004F70       BL waitq_prepare_sleep
+0x00004FD4       LI R1 uart_tx_waitq
+0x00004FDC       LI R2 WAIT_UART_TX
+0x00004FE4       BL waitq_prepare_sleep
 
-0x00004F78       LDW R1 [R9 + UARTDEV_MMIO]
-0x00004F7C       LDW R2 [R1 + 4]             ; re-check after marking blocked
-0x00004F80       AND R2 R2 2
-0x00004F84       CMP R2 0
-0x00004F88       BNE write_unblock_uart_tx   ; if suddenly TX ready - unblock it
+0x00004FEC       LDW R1 [R9 + UARTDEV_MMIO]
+0x00004FF0       LDW R2 [R1 + 4]             ; re-check after marking blocked
+0x00004FF4       AND R2 R2 2
+0x00004FF8       CMP R2 0
+0x00004FFC       BNE write_unblock_uart_tx   ; if suddenly TX ready - unblock it
                                 ; its like to check if we have zero bytes to send at the begining
                                 ; putting on frezze task costs time and effort so we dont need to do it if tx is rdy!!!
 
-0x00004F90       BL waitq_sleep_current      ; if task is blocked it sleeps here inside syscall line waiting for irq UART handler ublocks it
+0x00005004       BL waitq_sleep_current      ; if task is blocked it sleeps here inside syscall line waiting for irq UART handler ublocks it
                                 ; (when TX rdy)
                                 ; also this call saves task in trapframe and jumps to schedule and switch other tasks
-0x00004F98       B write_wait_uart_tx        ; task awakes here - jumps send uart again!!
+0x0000500C       B write_wait_uart_tx        ; task awakes here - jumps send uart again!!
 
 write_unblock_uart_tx:
-0x00004FA0       LI R1 uart_tx_waitq
-0x00004FA8       BL waitq_cancel_sleep_current
+0x00005014       LI R1 uart_tx_waitq
+0x0000501C       BL waitq_cancel_sleep_current
 
-0x00004FB0       B write_wait_uart_tx
+0x00005024       B write_wait_uart_tx
 
 write_done:
-0x00004FB8       MOV R1 R8
-0x00004FBC       POP LR
-0x00004FC0       RET
+0x0000502C       MOV R1 R8
+0x00005030       POP LR
+0x00005034       RET
 
 driver_bad_pointer:
-0x00004FC4       LI R1 ERR_FAULT
-0x00004FCC       POP LR
-0x00004FD0       RET
+0x00005038       LI R1 ERR_FAULT
+0x00005040       POP LR
+0x00005044       RET
 
 bad_fd:
-0x00004FD4       LI R1 ERR_BADF
-0x00004FDC       STW R1 [SP + TF_R1]
+0x00005048       LI R1 ERR_BADF
+0x00005050       STW R1 [SP + TF_R1]
 
-0x00004FE0       B trap_restore
+0x00005054       B trap_restore
 
 bad_pointer:
-0x00004FE8       LI R1 ERR_FAULT
-0x00004FF0       STW R1 [SP + TF_R1]
+0x0000505C       LI R1 ERR_FAULT
+0x00005064       STW R1 [SP + TF_R1]
 
-0x00004FF4       B trap_restore
+0x00005068       B trap_restore
 
 file_read:
     ;================================================================
     ; R1 = file ptr, R2 = user buffer, R3 = len
     ;================================================================
-0x00004FFC       LDW R4 [R1 + FILE_INODE]
-0x00005000       LDW R4 [R4 + INODE_OPS]
-0x00005004       LDW R4 [R4 + FSOPS_READ]
-0x00005008       JR R4
+0x00005070       LDW R4 [R1 + FILE_INODE]
+0x00005074       LDW R4 [R4 + INODE_OPS]
+0x00005078       LDW R4 [R4 + FSOPS_READ]
+0x0000507C       JR R4
 
    ; LDW R4 [R1 + FILE_OPS]
    ; LDW R4 [R4 + FOPS_READ]     ; get read function xdev_read from ops
@@ -3893,24 +3931,24 @@ file_write:
     ; R1 = file ptr, R2 = user buffer, R3 = len
     ;================================================================
 
-0x0000500C       LDW R4 [R1 + FILE_INODE]
-0x00005010       LDW R4 [R4 + INODE_OPS]
-0x00005014       LDW R4 [R4 + FSOPS_WRITE]    ; get write function xdev_write from ops
-0x00005018       JR R4                       ; execute it
+0x00005080       LDW R4 [R1 + FILE_INODE]
+0x00005084       LDW R4 [R4 + INODE_OPS]
+0x00005088       LDW R4 [R4 + FSOPS_WRITE]    ; get write function xdev_write from ops
+0x0000508C       JR R4                       ; execute it
 
 device_read:
     ;================================================================
     ; R1 = kernel buffer, R2 = len, R3 = uart device pointer
     ;================================================================
 
-0x0000501C       B uart_read_kernel
+0x00005090       B uart_read_kernel
 
 device_write:
     ;================================================================
     ; R1 = kernel buffer, R2 = len, R3 = uart device pointer
     ;================================================================
 
-0x00005024       B uart_write_kernel
+0x00005098       B uart_write_kernel
 
 ;================================================================
 ; read /dev/console - from MMIO UART, consuming currently available RX bytes
@@ -3921,32 +3959,32 @@ uart_read_kernel:
     ; Reads up to R2 bytes from the UART into kernel buffer at R1.
     ; Returns when the UART RX FIFO is empty, without spinning.
     ; Stops early when a newline '\n' (ASCII 10) is received.
-0x0000502C       LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
-0x00005030       LI R5 0                     ; index = 0 (bytes read so far)
+0x000050A0       LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
+0x000050A4       LI R5 0                     ; index = 0 (bytes read so far)
 
 dr_loop:
-0x00005038       CMP R5 R2                   ; have we read enough bytes?
-0x0000503C       BGE dr_done                 ; yes -> return
+0x000050AC       CMP R5 R2                   ; have we read enough bytes?
+0x000050B0       BGE dr_done                 ; yes -> return
 
 dr_poll_ready:
-0x00005044       LDW R6 [R4 + 4]             ; read UART_STATUS register
-0x00005048       AND R6 R6 1                 ; bit 0 = RX_READY
-0x0000504C       CMP R6 0
-0x00005050       BEQ dr_done                 ; no more buffered input available
+0x000050B8       LDW R6 [R4 + 4]             ; read UART_STATUS register
+0x000050BC       AND R6 R6 1                 ; bit 0 = RX_READY
+0x000050C0       CMP R6 0
+0x000050C4       BEQ dr_done                 ; no more buffered input available
 
-0x00005058       LDW R7 [R4 + 0]             ; pop character from UART_DATA (RX FIFO)
-0x0000505C       STB R7 [R1 + R5]            ; store it into the kernel buffer
-0x00005060       ADD R5 R5 1
+0x000050CC       LDW R7 [R4 + 0]             ; pop character from UART_DATA (RX FIFO)
+0x000050D0       STB R7 [R1 + R5]            ; store it into the kernel buffer
+0x000050D4       ADD R5 R5 1
 
     ; If we received a newline, stop reading early
-0x00005064       CMP R7 10
-0x00005068       BEQ dr_done
+0x000050D8       CMP R7 10
+0x000050DC       BEQ dr_done
 
-0x00005070       B dr_loop
+0x000050E4       B dr_loop
 
 dr_done:
-0x00005078       MOV R1 R5                   ; return number of bytes actually read
-0x0000507C       RET
+0x000050EC       MOV R1 R5                   ; return number of bytes actually read
+0x000050F0       RET
 
 ;=================================================================
 ; write /dev/con - to MMIO UART, polling TX_READY before each byte
@@ -3959,52 +3997,52 @@ uart_write_kernel:
     ; Polls the UART_STATUS TX_READY bit before sending each byte.
     ; This is a simple synchronous write that blocks until all bytes are sent.
     ;================================================================
-0x00005080       PUSH LR
+0x000050F4       PUSH LR
 
     ; mutex for write to console lock
-0x00005084       PUSH R1
-0x00005088       PUSH R2
-0x0000508C       PUSH R3
+0x000050F8       PUSH R1
+0x000050FC       PUSH R2
+0x00005100       PUSH R3
 
     ; Lock console mutex
-0x00005090       BL console_lock
+0x00005104       BL console_lock
 
     ; Write to UART
-0x00005098       POP R3
-0x0000509C       POP R2
-0x000050A0       POP R1
+0x0000510C       POP R3
+0x00005110       POP R2
+0x00005114       POP R1
 
 
-0x000050A4       LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
-0x000050A8       LI R5 0                     ; index = 0 (bytes written so far)
+0x00005118       LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
+0x0000511C       LI R5 0                     ; index = 0 (bytes written so far)
 
 dcw_loop:
-0x000050B0       CMP R5 R2                   ; have we written all bytes?
-0x000050B4       BGE dcw_done                ; yes -> return
+0x00005124       CMP R5 R2                   ; have we written all bytes?
+0x00005128       BGE dcw_done                ; yes -> return
 
 dcw_poll_tx:
-0x000050BC       LDW R6 [R4 + 4]             ; read UART_STATUS register
-0x000050C0       AND R6 R6 2                 ; bit 1 = TX_READY
-0x000050C4       CMP R6 0
-0x000050C8       BEQ dcw_done
+0x00005130       LDW R6 [R4 + 4]             ; read UART_STATUS register
+0x00005134       AND R6 R6 2                 ; bit 1 = TX_READY
+0x00005138       CMP R6 0
+0x0000513C       BEQ dcw_done
 
-0x000050D0       LDB R7 [R1 + R5]            ; load next byte from kernel buffer
-0x000050D4       STW R7 [R4 + 0]             ; write to UART_DATA register (transmit)
-0x000050D8       ADD R5 R5 1
-0x000050DC       B dcw_loop
+0x00005144       LDB R7 [R1 + R5]            ; load next byte from kernel buffer
+0x00005148       STW R7 [R4 + 0]             ; write to UART_DATA register (transmit)
+0x0000514C       ADD R5 R5 1
+0x00005150       B dcw_loop
 
 dcw_done:
-0x000050E4       MOV R1 R5                   ; return number of bytes written
+0x00005158       MOV R1 R5                   ; return number of bytes written
 
 
  ; Unlock console mutex for exclusive write to uart device
-0x000050E8       PUSH R1
-0x000050EC       BL console_unlock
-0x000050F4       POP R1
+0x0000515C       PUSH R1
+0x00005160       BL console_unlock
+0x00005168       POP R1
 
 
-0x000050F8       POP LR
-0x000050FC       RET
+0x0000516C       POP LR
+0x00005170       RET
 
 null_read:
     ;================================================================
@@ -4012,8 +4050,8 @@ null_read:
     ; /dev/null always returns EOF without touching the destination.
     ;================================================================
 
-0x00005100       LI R1 0
-0x00005108       RET
+0x00005174       LI R1 0
+0x0000517C       RET
 
 null_write:
     ;================================================================
@@ -4021,29 +4059,29 @@ null_write:
     ; /dev/null discards valid input and reports all bytes written.
     ;================================================================
 
-0x0000510C       PUSH LR
-0x00005110       MOV R6 R3
-0x00005114       CMP R6 0
-0x00005118       BEQ null_write_done
+0x00005180       PUSH LR
+0x00005184       MOV R6 R3
+0x00005188       CMP R6 0
+0x0000518C       BEQ null_write_done
 
-0x00005120       PUSH R6
-0x00005124       MOV R1 R2
-0x00005128       MOV R2 R6
-0x0000512C       LI R3 0                    ; read access from user source
-0x00005134       BL user_buffer_valid_range
-0x0000513C       POP R6
-0x00005140       CMP R1 1
-0x00005144       BNE null_write_badptr
+0x00005194       PUSH R6
+0x00005198       MOV R1 R2
+0x0000519C       MOV R2 R6
+0x000051A0       LI R3 0                    ; read access from user source
+0x000051A8       BL user_buffer_valid_range
+0x000051B0       POP R6
+0x000051B4       CMP R1 1
+0x000051B8       BNE null_write_badptr
 
 null_write_done:
-0x0000514C       MOV R1 R6
-0x00005150       POP LR
-0x00005154       RET
+0x000051C0       MOV R1 R6
+0x000051C4       POP LR
+0x000051C8       RET
 
 null_write_badptr:
-0x00005158       LI R1 ERR_FAULT
-0x00005160       POP LR
-0x00005164       RET
+0x000051CC       LI R1 ERR_FAULT
+0x000051D4       POP LR
+0x000051D8       RET
 
 fetch_fd_entry:
     ;================================================================
@@ -4054,47 +4092,47 @@ fetch_fd_entry:
     ; - fd table entry must have at least the required flags set
     ;
     ;================================================================
-0x00005168       PUSH R5
-0x0000516C       PUSH R6
-0x00005170       PUSH R8
+0x000051DC       PUSH R5
+0x000051E0       PUSH R6
+0x000051E4       PUSH R8
 
-0x00005174       CMP R1 0
-0x00005178       BLT fd_invalid
-0x00005180       CMP R1 MAX_FDS
-0x00005184       BGE fd_invalid
+0x000051E8       CMP R1 0
+0x000051EC       BLT fd_invalid
+0x000051F4       CMP R1 MAX_FDS
+0x000051F8       BGE fd_invalid
 
-0x0000518C       MOV R8 R1                   ; preserve fd across task lookup macros
+0x00005200       MOV R8 R1                   ; preserve fd across task lookup macros
 ; macro: GET_CURR_TASK_IDX R4
-0x00005190   LI R1 CURRENT_TASK
-0x00005198   LDW R4 [R1]
+0x00005204   LI R1 CURRENT_TASK
+0x0000520C   LDW R4 [R1]
 ; macro: GET_TASK_PTR R4, R4
-0x0000519C   LI R1 TASK_SIZE
-0x000051A4   MUL R3 R4 R1
-0x000051A8   LI R4 tasks
-0x000051B0   ADD R4 R4 R3
+0x00005210   LI R1 TASK_SIZE
+0x00005218   MUL R3 R4 R1
+0x0000521C   LI R4 tasks
+0x00005224   ADD R4 R4 R3
 ; macro: TASK_GET_FD_TABLE R4, R4
-0x000051B4   LDW R4 [R4 + TASK_FD_TABLE]
+0x00005228   LDW R4 [R4 + TASK_FD_TABLE]
 
-0x000051B8       SHL R5 R8 2
-0x000051BC       ADD R4 R4 R5                ; r4=fd*4+FD_TABLE
-0x000051C0       LDW R1 [R4]                 ; R1 = file ptr
-0x000051C4       LDW R6 [R1 + FILE_FLAGS]
-0x000051C8       AND R6 R6 R2
-0x000051CC       CMP R6 R2
-0x000051D0       BNE fd_invalid
+0x0000522C       SHL R5 R8 2
+0x00005230       ADD R4 R4 R5                ; r4=fd*4+FD_TABLE
+0x00005234       LDW R1 [R4]                 ; R1 = file ptr
+0x00005238       LDW R6 [R1 + FILE_FLAGS]
+0x0000523C       AND R6 R6 R2
+0x00005240       CMP R6 R2
+0x00005244       BNE fd_invalid
 
-0x000051D8       POP R8
-0x000051DC       POP R6
-0x000051E0       POP R5
-0x000051E4       RET                         ;on exit R1 - has file ptr
+0x0000524C       POP R8
+0x00005250       POP R6
+0x00005254       POP R5
+0x00005258       RET                         ;on exit R1 - has file ptr
 
 fd_invalid:
-0x000051E8       POP R8
-0x000051EC       POP R6
-0x000051F0       POP R5
+0x0000525C       POP R8
+0x00005260       POP R6
+0x00005264       POP R5
 
-0x000051F4       LI R1 0
-0x000051FC       RET
+0x00005268       LI R1 0
+0x00005270       RET
 
 
 ;================================================================
@@ -4104,28 +4142,28 @@ fd_invalid:
 ;================================================================
 vfs_read:
 
-0x00005200       PUSH LR
-0x00005204       MOV R7 R2
-0x00005208       MOV R10 R3
+0x00005274       PUSH LR
+0x00005278       MOV R7 R2
+0x0000527C       MOV R10 R3
 
-0x0000520C       LI R2 FD_FLAG_READ
-0x00005214       BL fetch_fd_entry   ; macro inside destroys R6
+0x00005280       LI R2 FD_FLAG_READ
+0x00005288       BL fetch_fd_entry   ; macro inside destroys R6
 
-0x0000521C       CMP R1 0
-0x00005220       BEQ vfs_read_badfd
+0x00005290       CMP R1 0
+0x00005294       BEQ vfs_read_badfd
 
-0x00005228       MOV R9 R1
-0x0000522C       MOV R1 R9
-0x00005230       MOV R2 R7
-0x00005234       MOV R3 R10
-0x00005238       BL file_read
-0x00005240       POP LR
-0x00005244       RET
+0x0000529C       MOV R9 R1
+0x000052A0       MOV R1 R9
+0x000052A4       MOV R2 R7
+0x000052A8       MOV R3 R10
+0x000052AC       BL file_read
+0x000052B4       POP LR
+0x000052B8       RET
 
 vfs_read_badfd:
-0x00005248       LI R1 ERR_BADF
-0x00005250       POP LR
-0x00005254       RET
+0x000052BC       LI R1 ERR_BADF
+0x000052C4       POP LR
+0x000052C8       RET
 
 vfs_write:
     ;================================================================
@@ -4133,28 +4171,28 @@ vfs_write:
     ; out: R1 = bytes written or errno
     ;================================================================
 
-0x00005258       PUSH LR
-0x0000525C       MOV R7 R2
-0x00005260       MOV R10 R3
+0x000052CC       PUSH LR
+0x000052D0       MOV R7 R2
+0x000052D4       MOV R10 R3
 
-0x00005264       LI R2 FD_FLAG_WRITE
-0x0000526C       BL fetch_fd_entry   ;macro inside desroys R6 (fixed)
+0x000052D8       LI R2 FD_FLAG_WRITE
+0x000052E0       BL fetch_fd_entry   ;macro inside desroys R6 (fixed)
 
-0x00005274       CMP R1 0
-0x00005278       BEQ vfs_write_badfd
+0x000052E8       CMP R1 0
+0x000052EC       BEQ vfs_write_badfd
 
-0x00005280       MOV R9 R1
-0x00005284       MOV R1 R9           ; R1 - file* acc to fd
-0x00005288       MOV R2 R7
-0x0000528C       MOV R3 R10
-0x00005290       BL file_write
-0x00005298       POP LR
-0x0000529C       RET
+0x000052F4       MOV R9 R1
+0x000052F8       MOV R1 R9           ; R1 - file* acc to fd
+0x000052FC       MOV R2 R7
+0x00005300       MOV R3 R10
+0x00005304       BL file_write
+0x0000530C       POP LR
+0x00005310       RET
 
 vfs_write_badfd:
-0x000052A0       LI R1 ERR_BADF
-0x000052A8       POP LR
-0x000052AC       RET
+0x00005314       LI R1 ERR_BADF
+0x0000531C       POP LR
+0x00005320       RET
 
 
 
@@ -4172,52 +4210,52 @@ user_buffer_valid_range:
     ; - each page spanned by the buffer must be present (P) and user-accessible (U) in the page table
     ; - if access type is write, pages must also have the writable (W) bit set
     ;================================================================
-0x000052B0       PUSH R5
-0x000052B4       PUSH R6
-0x000052B8       PUSH R7
-0x000052BC       PUSH R8
-0x000052C0       PUSH R9
-0x000052C4       PUSH R10
-0x000052C8       PUSH R11
-0x000052CC       PUSH R12
+0x00005324       PUSH R5
+0x00005328       PUSH R6
+0x0000532C       PUSH R7
+0x00005330       PUSH R8
+0x00005334       PUSH R9
+0x00005338       PUSH R10
+0x0000533C       PUSH R11
+0x00005340       PUSH R12
 
-0x000052D0       LI R4 0
-0x000052D8       CMP R2 R4
-0x000052DC       BEQ uv_valid
+0x00005344       LI R4 0
+0x0000534C       CMP R2 R4
+0x00005350       BEQ uv_valid
 
-0x000052E4       LI R4 USER_BASE
-0x000052EC       CMP R1 R4
-0x000052F0       BLT uv_invalid
+0x00005358       LI R4 USER_BASE
+0x00005360       CMP R1 R4
+0x00005364       BLT uv_invalid
 
-0x000052F8       LI R4 USER_LIMIT
-0x00005300       ADD R5 R1 R2
-0x00005304       SUB R5 R5 1
-0x00005308       CMP R5 R1
-0x0000530C       BLT uv_invalid
-0x00005314       CMP R5 R4
-0x00005318       BGT uv_invalid
-0x00005320       MOV R11 R1              ; save start address; task macros clobber R1
-0x00005324       MOV R12 R5              ; save end address for page calculation
-0x00005328       MOV R4 R3               ; save access type; task macros clobber R3
+0x0000536C       LI R4 USER_LIMIT
+0x00005374       ADD R5 R1 R2
+0x00005378       SUB R5 R5 1
+0x0000537C       CMP R5 R1
+0x00005380       BLT uv_invalid
+0x00005388       CMP R5 R4
+0x0000538C       BGT uv_invalid
+0x00005394       MOV R11 R1              ; save start address; task macros clobber R1
+0x00005398       MOV R12 R5              ; save end address for page calculation
+0x0000539C       MOV R4 R3               ; save access type; task macros clobber R3
 
 ; macro: GET_CURR_TASK_IDX R6
-0x0000532C   LI R1 CURRENT_TASK
-0x00005334   LDW R6 [R1]
+0x000053A0   LI R1 CURRENT_TASK
+0x000053A8   LDW R6 [R1]
 ; macro: GET_TASK_PTR R6, R6
-0x00005338   LI R1 TASK_SIZE
-0x00005340   MUL R3 R6 R1
-0x00005344   LI R6 tasks
-0x0000534C   ADD R6 R6 R3
+0x000053AC   LI R1 TASK_SIZE
+0x000053B4   MUL R3 R6 R1
+0x000053B8   LI R6 tasks
+0x000053C0   ADD R6 R6 R3
 ; macro: TASK_GET_PTBR R6, R6
-0x00005350   LDW R6 [R6 + TASK_PTBR]
+0x000053C4   LDW R6 [R6 + TASK_PTBR]
     ; Dynamic page tables live in the supervisor-only allocator pool,
     ; which is identity-mapped into every task address space.
-0x00005354       CMP R6 0
-0x00005358       BEQ uv_invalid
+0x000053C8       CMP R6 0
+0x000053CC       BEQ uv_invalid
 
 uv_check_pages:
-0x00005360       SHR R7 R11 12
-0x00005364       SHR R8 R12 12
+0x000053D4       SHR R7 R11 12
+0x000053D8       SHR R8 R12 12
 uv_loop:
     ;================================================================
     ; For each page spanned by the buffer, check the corresponding PTE in the page table:
@@ -4225,57 +4263,57 @@ uv_loop:
     ; - if access type is write, must also have the writable (W) bit set
     ;================================================================
 
-0x00005368       CMP R7 R8
-0x0000536C       BGT uv_valid
-0x00005374       SHL R9 R7 2
-0x00005378       ADD R9 R9 R6
-0x0000537C       LDW R10 [R9]
-0x00005380       AND R5 R10 PTE_P
-0x00005384       CMP R5 0
-0x00005388       BEQ uv_invalid
-0x00005390       AND R5 R10 PTE_U
-0x00005394       CMP R5 0
-0x00005398       BEQ uv_invalid
-0x000053A0       CMP R4 0
-0x000053A4       BEQ uv_check_read
-0x000053AC       AND R5 R10 PTE_W
-0x000053B0       CMP R5 0
-0x000053B4       BEQ uv_invalid
-0x000053BC       B uv_next
+0x000053DC       CMP R7 R8
+0x000053E0       BGT uv_valid
+0x000053E8       SHL R9 R7 2
+0x000053EC       ADD R9 R9 R6
+0x000053F0       LDW R10 [R9]
+0x000053F4       AND R5 R10 PTE_P
+0x000053F8       CMP R5 0
+0x000053FC       BEQ uv_invalid
+0x00005404       AND R5 R10 PTE_U
+0x00005408       CMP R5 0
+0x0000540C       BEQ uv_invalid
+0x00005414       CMP R4 0
+0x00005418       BEQ uv_check_read
+0x00005420       AND R5 R10 PTE_W
+0x00005424       CMP R5 0
+0x00005428       BEQ uv_invalid
+0x00005430       B uv_next
 
 uv_check_read:
-0x000053C4       AND R5 R10 PTE_R
-0x000053C8       CMP R5 0
-0x000053CC       BEQ uv_invalid
+0x00005438       AND R5 R10 PTE_R
+0x0000543C       CMP R5 0
+0x00005440       BEQ uv_invalid
 
 uv_next:
-0x000053D4       ADD R7 R7 1
-0x000053D8       B uv_loop
+0x00005448       ADD R7 R7 1
+0x0000544C       B uv_loop
 
 uv_valid:
-0x000053E0       LI R1 1
-0x000053E8       POP R12
-0x000053EC       POP R11
-0x000053F0       POP R10
-0x000053F4       POP R9
-0x000053F8       POP R8
-0x000053FC       POP R7
-0x00005400       POP R6
-0x00005404       POP R5
-0x00005408       RET
+0x00005454       LI R1 1
+0x0000545C       POP R12
+0x00005460       POP R11
+0x00005464       POP R10
+0x00005468       POP R9
+0x0000546C       POP R8
+0x00005470       POP R7
+0x00005474       POP R6
+0x00005478       POP R5
+0x0000547C       RET
 
 uv_invalid:
-0x0000540C       LI R1 0
+0x00005480       LI R1 0
 
-0x00005414       POP R12
-0x00005418       POP R11
-0x0000541C       POP R10
-0x00005420       POP R9
-0x00005424       POP R8
-0x00005428       POP R7
-0x0000542C       POP R6
-0x00005430       POP R5
-0x00005434       RET
+0x00005488       POP R12
+0x0000548C       POP R11
+0x00005490       POP R10
+0x00005494       POP R9
+0x00005498       POP R8
+0x0000549C       POP R7
+0x000054A0       POP R6
+0x000054A4       POP R5
+0x000054A8       RET
 
 copy_from_user:
     ;================================================================
@@ -4286,50 +4324,50 @@ copy_from_user:
     ;================================================================
 
    ; DEBUG 2
-0x00005438       PUSH R5
-0x0000543C       PUSH R6
-0x00005440       PUSH R7
-0x00005444       LI R5 0
+0x000054AC       PUSH R5
+0x000054B0       PUSH R6
+0x000054B4       PUSH R7
+0x000054B8       LI R5 0
 cfu_head:
-0x0000544C       CMP R2 0
-0x00005450       BEQ cfu_done
-0x00005458       OR R6 R1 R4
-0x0000545C       AND R6 R6 3
-0x00005460       CMP R6 0
-0x00005464       BEQ cfu_word
-0x0000546C       LDB R7 [R1]
-0x00005470       STB R7 [R4]
-0x00005474       ADD R1 R1 1
-0x00005478       ADD R4 R4 1
-0x0000547C       ADD R5 R5 1
-0x00005480       SUB R2 R2 1
-0x00005484       B cfu_head
+0x000054C0       CMP R2 0
+0x000054C4       BEQ cfu_done
+0x000054CC       OR R6 R1 R4
+0x000054D0       AND R6 R6 3
+0x000054D4       CMP R6 0
+0x000054D8       BEQ cfu_word
+0x000054E0       LDB R7 [R1]
+0x000054E4       STB R7 [R4]
+0x000054E8       ADD R1 R1 1
+0x000054EC       ADD R4 R4 1
+0x000054F0       ADD R5 R5 1
+0x000054F4       SUB R2 R2 1
+0x000054F8       B cfu_head
 cfu_word:
-0x0000548C       CMP R2 4
-0x00005490       BLT cfu_tail
-0x00005498       LDW R7 [R1]
-0x0000549C       STW R7 [R4]
-0x000054A0       ADD R1 R1 4
-0x000054A4       ADD R4 R4 4
-0x000054A8       ADD R5 R5 4
-0x000054AC       SUB R2 R2 4
-0x000054B0       B cfu_word
+0x00005500       CMP R2 4
+0x00005504       BLT cfu_tail
+0x0000550C       LDW R7 [R1]
+0x00005510       STW R7 [R4]
+0x00005514       ADD R1 R1 4
+0x00005518       ADD R4 R4 4
+0x0000551C       ADD R5 R5 4
+0x00005520       SUB R2 R2 4
+0x00005524       B cfu_word
 cfu_tail:
-0x000054B8       CMP R2 0
-0x000054BC       BEQ cfu_done
-0x000054C4       LDB R7 [R1]
-0x000054C8       STB R7 [R4]
-0x000054CC       ADD R1 R1 1
-0x000054D0       ADD R4 R4 1
-0x000054D4       ADD R5 R5 1
-0x000054D8       SUB R2 R2 1
-0x000054DC       B cfu_tail
+0x0000552C       CMP R2 0
+0x00005530       BEQ cfu_done
+0x00005538       LDB R7 [R1]
+0x0000553C       STB R7 [R4]
+0x00005540       ADD R1 R1 1
+0x00005544       ADD R4 R4 1
+0x00005548       ADD R5 R5 1
+0x0000554C       SUB R2 R2 1
+0x00005550       B cfu_tail
 cfu_done:
-0x000054E4       MOV R1 R5
-0x000054E8       POP R7
-0x000054EC       POP R6
-0x000054F0       POP R5
-0x000054F4       RET
+0x00005558       MOV R1 R5
+0x0000555C       POP R7
+0x00005560       POP R6
+0x00005564       POP R5
+0x00005568       RET
 
 copy_to_user:
     ;================================================================
@@ -4340,54 +4378,54 @@ copy_to_user:
     ;================================================================
 
    ; DEBUG 2
-0x000054F8       PUSH R5
-0x000054FC       PUSH R6
-0x00005500       PUSH R7
-0x00005504       LI R5 0
+0x0000556C       PUSH R5
+0x00005570       PUSH R6
+0x00005574       PUSH R7
+0x00005578       LI R5 0
 ctu_head:
-0x0000550C       CMP R2 0
-0x00005510       BEQ ctu_done
-0x00005518       OR R6 R1 R4
-0x0000551C       AND R6 R6 3
-0x00005520       CMP R6 0
-0x00005524       BEQ ctu_word
-0x0000552C       LDB R7 [R4]
-0x00005530       STB R7 [R1]
-0x00005534       ADD R1 R1 1
-0x00005538       ADD R4 R4 1
-0x0000553C       ADD R5 R5 1
-0x00005540       SUB R2 R2 1
-0x00005544       B ctu_head
+0x00005580       CMP R2 0
+0x00005584       BEQ ctu_done
+0x0000558C       OR R6 R1 R4
+0x00005590       AND R6 R6 3
+0x00005594       CMP R6 0
+0x00005598       BEQ ctu_word
+0x000055A0       LDB R7 [R4]
+0x000055A4       STB R7 [R1]
+0x000055A8       ADD R1 R1 1
+0x000055AC       ADD R4 R4 1
+0x000055B0       ADD R5 R5 1
+0x000055B4       SUB R2 R2 1
+0x000055B8       B ctu_head
 ctu_word:
-0x0000554C       CMP R2 4
-0x00005550       BLT ctu_tail
-0x00005558       LDW R7 [R4]
-0x0000555C       STW R7 [R1]
-0x00005560       ADD R1 R1 4
-0x00005564       ADD R4 R4 4
-0x00005568       ADD R5 R5 4
-0x0000556C       SUB R2 R2 4
-0x00005570       B ctu_word
+0x000055C0       CMP R2 4
+0x000055C4       BLT ctu_tail
+0x000055CC       LDW R7 [R4]
+0x000055D0       STW R7 [R1]
+0x000055D4       ADD R1 R1 4
+0x000055D8       ADD R4 R4 4
+0x000055DC       ADD R5 R5 4
+0x000055E0       SUB R2 R2 4
+0x000055E4       B ctu_word
 ctu_tail:
-0x00005578       CMP R2 0
-0x0000557C       BEQ ctu_done
-0x00005584       LDB R7 [R4]
-0x00005588       STB R7 [R1]
-0x0000558C       ADD R1 R1 1
-0x00005590       ADD R4 R4 1
-0x00005594       ADD R5 R5 1
-0x00005598       SUB R2 R2 1
-0x0000559C       B ctu_tail
+0x000055EC       CMP R2 0
+0x000055F0       BEQ ctu_done
+0x000055F8       LDB R7 [R4]
+0x000055FC       STB R7 [R1]
+0x00005600       ADD R1 R1 1
+0x00005604       ADD R4 R4 1
+0x00005608       ADD R5 R5 1
+0x0000560C       SUB R2 R2 1
+0x00005610       B ctu_tail
 ctu_done:
-0x000055A4       MOV R1 R5
-0x000055A8       POP R7
-0x000055AC       POP R6
-0x000055B0       POP R5
-0x000055B4       RET
+0x00005618       MOV R1 R5
+0x0000561C       POP R7
+0x00005620       POP R6
+0x00005624       POP R5
+0x00005628       RET
 
 handle_debug:
     ; Debug trap - just return
-0x000055B8       B trap_restore
+0x0000562C       B trap_restore
 
 handle_irq:
     ;================================================================
@@ -4397,19 +4435,19 @@ handle_irq:
     ; - IRQ 1 = UART RX
     ;================================================================
 
-0x000055C0       CSRR R1 STVAL
+0x00005634       CSRR R1 STVAL
 
-0x000055C4       CMP R1 0
-0x000055C8       BEQ handle_timer_irq
+0x00005638       CMP R1 0
+0x0000563C       BEQ handle_timer_irq
 
-0x000055D0       CMP R1 1
-0x000055D4       BEQ handle_uart_irq
+0x00005644       CMP R1 1
+0x00005648       BEQ handle_uart_irq
     ;================================================================
     ; Default IRQ handling: acknowledge PIC and restore
     ;================================================================
-0x000055DC       LI R2 0x00102000
-0x000055E4       STW R1 [R2 + 8]             ; PIC_ACK = R1
-0x000055E8       B trap_restore
+0x00005650       LI R2 0x00102000
+0x00005658       STW R1 [R2 + 8]             ; PIC_ACK = R1
+0x0000565C       B trap_restore
 
 handle_timer_irq:
 
@@ -4417,68 +4455,68 @@ handle_timer_irq:
     ; Acknowledge IRQ 0 (Timer) in PIC MMIO
     ;================================================================
 
-0x000055F0       LI R2 0x00102000
-0x000055F8       LI R3 0
-0x00005600       STW R3 [R2 + 8]             ; PIC_ACK = 0
+0x00005664       LI R2 0x00102000
+0x0000566C       LI R3 0
+0x00005674       STW R3 [R2 + 8]             ; PIC_ACK = 0
 
     ; Increment timer tick counter
-0x00005604       LI R1 timer_ticks
-0x0000560C       LDW R2 [R1]
-0x00005610       ADD R2 R2 1
-0x00005614       STW R2 [R1]
+0x00005678       LI R1 timer_ticks
+0x00005680       LDW R2 [R1]
+0x00005684       ADD R2 R2 1
+0x00005688       STW R2 [R1]
 
     ;================================================================
     ; Wake sleeping tasks whose time has expired
     ;================================================================
 
-0x00005618       LI R1 sleep_waitq
-0x00005620       LDW R8 [R1]                ; R8 = current sleep_waitq mask
-0x00005624       LI R9 0                    ; R9 = tasks to wake bitmask
-0x0000562C       LI R3 0                    ; task index
+0x0000568C       LI R1 sleep_waitq
+0x00005694       LDW R8 [R1]                ; R8 = current sleep_waitq mask
+0x00005698       LI R9 0                    ; R9 = tasks to wake bitmask
+0x000056A0       LI R3 0                    ; task index
 
 timer_wake_scan:
-0x00005634       CMP R3 MAX_TASKS
-0x00005638       BGE timer_wake_scan_done
+0x000056A8       CMP R3 MAX_TASKS
+0x000056AC       BGE timer_wake_scan_done
 
     ; Check if this task is in the sleep wait queue
-0x00005640       LI R6 1
-0x00005648       SHL R6 R6 R3               ; bit for this task
-0x0000564C       AND R7 R8 R6
-0x00005650       CMP R7 0
-0x00005654       BEQ timer_wake_next        ; not in sleep queue
+0x000056B4       LI R6 1
+0x000056BC       SHL R6 R6 R3               ; bit for this task
+0x000056C0       AND R7 R8 R6
+0x000056C4       CMP R7 0
+0x000056C8       BEQ timer_wake_next        ; not in sleep queue
 
     ; Task is sleeping, check if it's time to wake
 ; macro: GET_TASK_PTR R5, R3
-0x0000565C   LI R1 TASK_SIZE
-0x00005664   MUL R3 R3 R1
-0x00005668   LI R5 tasks
-0x00005670   ADD R5 R5 R3
+0x000056D0   LI R1 TASK_SIZE
+0x000056D8   MUL R3 R3 R1
+0x000056DC   LI R5 tasks
+0x000056E4   ADD R5 R5 R3
 ; macro: TASK_GET_WAKE_TIME R7, R5
-0x00005674   LDW R7 [R5 + TASK_WAKE_TIME]
-0x00005678       CMP R2 R7                  ; current time >= wake time?
-0x0000567C       BLT timer_wake_next
+0x000056E8   LDW R7 [R5 + TASK_WAKE_TIME]
+0x000056EC       CMP R2 R7                  ; current time >= wake time?
+0x000056F0       BLT timer_wake_next
 
     ; Mark this task for wakeup
-0x00005684       OR R9 R9 R6                 ; add to wake bitmask bitwize
+0x000056F8       OR R9 R9 R6                 ; add to wake bitmask bitwize
 
 timer_wake_next:
-0x00005688       ADD R3 R3 1
-0x0000568C       B timer_wake_scan
+0x000056FC       ADD R3 R3 1
+0x00005700       B timer_wake_scan
 
 timer_wake_scan_done:
     ; If no tasks to wake, skip
-0x00005694       CMP R9 0
-0x00005698       BEQ timer_no_wake
+0x00005708       CMP R9 0
+0x0000570C       BEQ timer_no_wake
 
     ; Wake the expired tasks using our new function
-0x000056A0       LI R1 sleep_waitq
-0x000056A8       MOV R2 R9
-0x000056AC       BL waitq_wake_bitmask
+0x00005714       LI R1 sleep_waitq
+0x0000571C       MOV R2 R9
+0x00005720       BL waitq_wake_bitmask
 
 timer_no_wake:
 
     ; Yield the CPU (reschedule and switch tasks)
-0x000056B4       B schedule_and_switch
+0x00005728       B schedule_and_switch
 
 handle_uart_irq:
     ;================================================================
@@ -4488,20 +4526,20 @@ handle_uart_irq:
     ; decodes TASK_WAIT reasons by hand.
     ;================================================================
 
-0x000056BC       LI R2 0x00102000
-0x000056C4       LI R3 1
-0x000056CC       STW R3 [R2 + 8]             ; PIC_ACK = 1
+0x00005730       LI R2 0x00102000
+0x00005738       LI R3 1
+0x00005740       STW R3 [R2 + 8]             ; PIC_ACK = 1
 
     ; Current UART interrupt source is coarse, so wake both sides.
     ; The resumed syscall loops re-check hardware status before doing I/O.
-0x000056D0       LI R1 uart_rx_waitq
-0x000056D8       BL waitq_wake_all
-0x000056E0       LI R1 uart_tx_waitq
-0x000056E8       BL waitq_wake_all
+0x00005744       LI R1 uart_rx_waitq
+0x0000574C       BL waitq_wake_all
+0x00005754       LI R1 uart_tx_waitq
+0x0000575C       BL waitq_wake_all
 
 uart_wake_done:
     ; Resume the interrupted task immediately
-0x000056F0       B trap_restore
+0x00005764       B trap_restore
 
 trap_restore:
     ;================================================================
@@ -4511,40 +4549,40 @@ trap_restore:
     ; Restore privileged state saved after the GPRs.
     ;================================================================
 
-0x000056F8       POP R1                  ; stval, informational only
-0x000056FC       POP R1                  ; scause, informational only
-0x00005700       POP R1
-0x00005704       CSRW SSTATUS R1
-0x00005708       POP R1
-0x0000570C       CSRW SFLAGS R1
-0x00005710       POP R1
-0x00005714       CSRW SEPC R1
-0x00005718       POP R1                  ; interrupted task SP
-0x0000571C       CSRW SSCRATCH R1        ; task SP goes to SSCRATCH
+0x0000576C       POP R1                  ; stval, informational only
+0x00005770       POP R1                  ; scause, informational only
+0x00005774       POP R1
+0x00005778       CSRW SSTATUS R1
+0x0000577C       POP R1
+0x00005780       CSRW SFLAGS R1
+0x00005784       POP R1
+0x00005788       CSRW SEPC R1
+0x0000578C       POP R1                  ; interrupted task SP
+0x00005790       CSRW SSCRATCH R1        ; task SP goes to SSCRATCH
 
     ; Restore interrupted GPR state in reverse order.
-0x00005720       POP R15
-0x00005724       POP R14
-0x00005728       POP R12
-0x0000572C       POP R11
-0x00005730       POP R10
-0x00005734       POP R9
-0x00005738       POP R8
-0x0000573C       POP R7
-0x00005740       POP R6
-0x00005744       POP R5
-0x00005748       POP R4
-0x0000574C       POP R3
-0x00005750       POP R2
-0x00005754       POP R1
+0x00005794       POP R15
+0x00005798       POP R14
+0x0000579C       POP R12
+0x000057A0       POP R11
+0x000057A4       POP R10
+0x000057A8       POP R9
+0x000057AC       POP R8
+0x000057B0       POP R7
+0x000057B4       POP R6
+0x000057B8       POP R5
+0x000057BC       POP R4
+0x000057C0       POP R3
+0x000057C4       POP R2
+0x000057C8       POP R1
     ;================================================================
     ; Switch back from kernel stack to interrupted task stack.
     ; Before: SP=kernel stack top, SSCRATCH=task SP.
     ; After:  SP=task SP, SSCRATCH=kernel stack top for next trap.
     ;================================================================
 
-0x00005758       CSRRW SP SSCRATCH SP
-0x0000575C       SRET
+0x000057CC       CSRRW SP SSCRATCH SP
+0x000057D0       SRET
 
 
 ; ================================================================
@@ -6818,6 +6856,9 @@ restore_kernel_context:         ;in case new task was stopped in kernel jump to 
 .EQU MAX_PHYS_PAGES 128
 .EQU PAGE_ALLOC_END  0x000D0000
 
+; new page allocation data with refcounts and bitmap for 128 pages of 4KB each (512KB total)
+page_refcounts:
+    .SPACE MAX_PHYS_PAGES        ; one byte per page, initialized to 0
 
 ; 0 = free
 ; 1 = allocated
@@ -6855,88 +6896,204 @@ page_bitmap:
 
 ;================================================================
 
-page_alloc:
-0x000093E6       PUSH  R5
-0x000093EA       PUSH  R6
-0x000093EE       PUSH  R7
-0x000093F2       PUSH  R8
-0x000093F6       PUSH  R9
+page_alloc0:
+0x00009466       PUSH  R5
+0x0000946A       PUSH  R6
+0x0000946E       PUSH  R7
+0x00009472       PUSH  R8
+0x00009476       PUSH  R9
 
-0x000093FA       LI R2 0                  ; page index
+0x0000947A       LI R2 0                  ; page index
 
 pa_loop:
-0x00009402       LI R1 MAX_PHYS_PAGES
+0x00009482       LI R1 MAX_PHYS_PAGES
 
-0x0000940A       CMP R2 R1
-0x0000940E       BGE pa_fail                 ; if we've checked all pages, fail
+0x0000948A       CMP R2 R1
+0x0000948E       BGE pa_fail                 ; if we've checked all pages, fail
 
     ; byte = index / 8
 
-0x00009416       MOV R3 R2
-0x0000941A       SHR R3 R3 3                 ; divide by 8 to get byte index in bitmap
+0x00009496       MOV R3 R2
+0x0000949A       SHR R3 R3 3                 ; divide by 8 to get byte index in bitmap
 
     ; bit = index & 7
 
-0x0000941E       MOV R4 R2
-0x00009422       AND R4 R4 7                 ; modulo 8 to get bit index within the byte
+0x0000949E       MOV R4 R2
+0x000094A2       AND R4 R4 7                 ; modulo 8 to get bit index within the byte
 
     ; load bitmap byte
 
-0x00009426       LI R5 page_bitmap
-0x0000942E       ADD R5 R5 R3                ; r3 is byte index, add to bitmap base
+0x000094A6       LI R5 page_bitmap
+0x000094AE       ADD R5 R5 R3                ; r3 is byte index, add to bitmap base
                                 ; to get address of byte containing this page's bit
 
-0x00009432       LDB R6 [R5]                 ; load the byte containing the bit for this page
+0x000094B2       LDB R6 [R5]                 ; load the byte containing the bit for this page
 
     ; mask = 1 << bit
 
-0x00009436       LI R7 1
-0x0000943E       SHL R7 R7 R4                ; create a mask with a 1 in the position of the bit for this page
+0x000094B6       LI R7 1
+0x000094BE       SHL R7 R7 R4                ; create a mask with a 1 in the position of the bit for this page
 
     ; allocated ?
 
-0x00009442       AND R8 R6 R7                ; R8 = R6 & R7, will be 0 if the bit is not set (page is free),
+0x000094C2       AND R8 R6 R7                ; R8 = R6 & R7, will be 0 if the bit is not set (page is free),
                                 ; non-zero if allocated
-0x00009446       CMP R8 0
-0x0000944A       BEQ pa_found                ; if bit is 0, page is free
+0x000094C6       CMP R8 0
+0x000094CA       BEQ pa_found                ; if bit is 0, page is free
 
-0x00009452       ADD R2 R2 1                 ; increment page index and check next page
-0x00009456       B pa_loop
+0x000094D2       ADD R2 R2 1                 ; increment page index and check next page
+0x000094D6       B pa_loop
 
 pa_found:
 
     ; mark page allocated
 
-0x0000945E       OR  R6 R6 R7
-0x00009462       STB R6 [R5]
+0x000094DE       OR  R6 R6 R7
+0x000094E2       STB R6 [R5]
 
     ; physical address = PAGE_ALLOC_BASE + page_index * PAGE_SIZE
 
-0x00009466       LI  R9 PAGE_ALLOC_BASE
+0x000094E6       LI  R9 PAGE_ALLOC_BASE
 
-0x0000946E       MOV R1 R2
-0x00009472       SHL R1 R1 12          ; page_index * 4096
+0x000094EE       MOV R1 R2
+0x000094F2       SHL R1 R1 12          ; page_index * 4096
 
-0x00009476       ADD R1 R1 R9
+0x000094F6       ADD R1 R1 R9
 
-0x0000947A       POP R9
-0x0000947E       POP R8
-0x00009482       POP R7
-0x00009486       POP R6
-0x0000948A       POP R5
+0x000094FA       POP R9
+0x000094FE       POP R8
+0x00009502       POP R7
+0x00009506       POP R6
+0x0000950A       POP R5
 
-0x0000948E       RET
+0x0000950E       RET
 
 pa_fail:
 
-0x00009492       LI R1 0                     ; no free pages
+0x00009512       LI R1 0                     ; no free pages
 
-0x0000949A       POP R9
-0x0000949E       POP R8
-0x000094A2       POP R7
-0x000094A6       POP R6
-0x000094AA       POP R5
-0x000094AE       RET
+0x0000951A       POP R9
+0x0000951E       POP R8
+0x00009522       POP R7
+0x00009526       POP R6
+0x0000952A       POP R5
+0x0000952E       RET
+
+
+;new page allocation routine with refcounts and bitmap for 128 pages of 4KB each (512KB total)
+
+page_alloc:
+0x00009532       PUSH R6
+0x00009536       PUSH R7
+0x0000953A       PUSH R8
+0x0000953E       PUSH R9
+
+0x00009542       LI R2 0                     ; page index
+
+pa1_loop:
+0x0000954A       LI R1 MAX_PHYS_PAGES
+0x00009552       CMP R2 R1
+0x00009556       BGE pa1_fail
+
+0x0000955E       LI R1 page_refcounts
+    ;ADD R5 R1 R2               ; address of refcount for this page
+0x00009566       LDB R6 [R1 + R2]           ; load refcount
+0x0000956A       CMP R6 0
+0x0000956E       BEQ pa1_found
+
+0x00009576       ADD R2 R2 1
+0x0000957A       B pa1_loop
+
+pa1_found:
+0x00009582       LI R6 1
+0x0000958A       STB R6 [R1 + R2]          ; set refcount = 1
+
+0x0000958E       LI R9 PAGE_ALLOC_BASE
+0x00009596       MOV R1 R2
+0x0000959A       SHL R1 R1 12                ; index * PAGE_SIZE (4kB)
+0x0000959E       ADD R1 R1 R9                ; physical address = PAGE_ALLOC_BASE + page_index * PAGE_SIZE
+
+0x000095A2       POP R9
+0x000095A6       POP R8
+0x000095AA       POP R7
+0x000095AE       POP R6                     ; R1 = physical address of allocated page
+0x000095B2       RET
+
+pa1_fail:
+0x000095B6       LI R1 0                     ; no free pages
+0x000095BE       POP R9
+0x000095C2       POP R8
+0x000095C6       POP R7
+0x000095CA       POP R6
+0x000095CE       RET
+
+;=================================================================
+; page_get - increment refcount for a physical page
+; in R1 = physical page address
+; out R1 = physical page address (unchanged)
+;=================================================================
+
+page_get:
+    ; R1 = physical address
+    ; Returns nothing; ignores invalid addresses
+0x000095D2       CMP R1 0
+0x000095D6       BEQ page_get_done
+
+    ; Check lower bound
+0x000095DE       LI R2 PAGE_ALLOC_BASE
+0x000095E6       CMP R1 R2
+0x000095EA       BLT page_get_done
+
+    ; Check upper bound (exclusive)
+0x000095F2       LI R2 PAGE_ALLOC_END
+0x000095FA       CMP R1 R2
+0x000095FE       BGE page_get_done
+
+    ; Calculate index
+0x00009606       LI R2 PAGE_ALLOC_BASE
+0x0000960E       SUB R2 R1 R2       ; R1 pa
+0x00009612       SHR R2 R2 12       ; R2 = page index in refcounts array
+0x00009616       LI R3 page_refcounts
+0x0000961E       ADD R3 R3 R2
+0x00009622       LDB R4 [R3]
+0x00009626       ADD R4 R4 1                 ; increment refcount
+0x0000962A       STB R4 [R3]
+page_get_done:
+0x0000962E       RET
+
+;=================================================================
+; page_put - decrement refcount for a physical page
+; in R1 = physical page address
+; out R1 = physical page address (unchanged)
+;=================================================================
+
+page_put:
+    ; R1 = physical address
+0x00009632       CMP R1 0                        ;if address is 0 - ignore
+0x00009636       BEQ page_put_done
+
+0x0000963E       LI R2 PAGE_ALLOC_BASE           ;check R1 is valid
+0x00009646       CMP R1 R2
+0x0000964A       BLT page_put_done
+
+0x00009652       LI R2 PAGE_ALLOC_END
+0x0000965A       CMP R1 R2
+0x0000965E       BGE page_put_done
+
+0x00009666       LI R2 PAGE_ALLOC_BASE
+0x0000966E       SUB R2 R1 R2
+0x00009672       SHR R2 R2 12        ; R2 = page index in refcounts array
+0x00009676       LI R3 page_refcounts
+0x0000967E       ADD R3 R3 R2
+0x00009682       LDB R4 [R3]
+0x00009686       CMP R4 0
+0x0000968A       BEQ page_put_done               ;if refcount already 0 - ignore it was freed already
+0x00009692       SUB R4 R4 1                     ;decrement refcount
+0x00009696       STB R4 [R3]
+    ; If refcount becomes 0, the page is now free (no further action needed)
+page_put_done:
+0x0000969A       RET
+
 
 ;================================================================
 ; Page deallocation routines
@@ -6944,70 +7101,63 @@ pa_fail:
 ; index = (addr - BASE)/4096
 ;================================================================
 
-page_free:
-0x000094B2       PUSH  R5
-0x000094B6       PUSH  R6
-0x000094BA       PUSH  R7
-0x000094BE       PUSH  R8
-0x000094C2       PUSH  R9
+page_free0:
+0x0000969E       PUSH  R5
+0x000096A2       PUSH  R6
+0x000096A6       PUSH  R7
+0x000096AA       PUSH  R8
+0x000096AE       PUSH  R9
 
 
-0x000094C6       LI R2 PAGE_ALLOC_BASE
-0x000094CE       SUB R3 R1 R2         ; calculate offset from base
+0x000096B2       LI R2 PAGE_ALLOC_BASE
+0x000096BA       SUB R3 R1 R2         ; calculate offset from base
 
-0x000094D2       SHR R3 R3 12         ; page index = (addr - BASE)/4096
+0x000096BE       SHR R3 R3 12         ; page index = (addr - BASE)/4096
 
-0x000094D6       MOV R4 R3
-0x000094DA       SHR R4 R4 3          ; byte index in bitmap = page index / 8
+0x000096C2       MOV R4 R3
+0x000096C6       SHR R4 R4 3          ; byte index in bitmap = page index / 8
 
-0x000094DE       MOV R5 R3
-0x000094E2       AND R5 R5 7          ; bit index in byte = page index % 8
+0x000096CA       MOV R5 R3
+0x000096CE       AND R5 R5 7          ; bit index in byte = page index % 8
 
-0x000094E6       LI R6 page_bitmap
-0x000094EE       ADD R6 R6 R4         ; address of byte in bitmap containing this page's bit
+0x000096D2       LI R6 page_bitmap
+0x000096DA       ADD R6 R6 R4         ; address of byte in bitmap containing this page's bit
 
-0x000094F2       LDB R7 [R6]
+0x000096DE       LDB R7 [R6]
 
-0x000094F6       LI R8 1
-0x000094FE       SHL R8 R8 R5         ; mask for this page's bit
+0x000096E2       LI R8 1
+0x000096EA       SHL R8 R8 R5         ; mask for this page's bit
 
-0x00009502       NOT R8 R8            ; invert mask to have 0 in the page's bit position and 1s elsewhere
+0x000096EE       NOT R8 R8            ; invert mask to have 0 in the page's bit position and 1s elsewhere
 
-0x00009506       AND R7 R7 R8         ; clear the bit to mark the page as free by ANDing with the inverted mask
+0x000096F2       AND R7 R7 R8         ; clear the bit to mark the page as free by ANDing with the inverted mask
                          ; which has a 0 in the position of the page's bit
 
 
-0x0000950A       STB R7 [R6]          ; store the updated byte with the cleared bit back to the bitmap
+0x000096F6       STB R7 [R6]          ; store the updated byte with the cleared bit back to the bitmap
 
-0x0000950E       POP R9
-0x00009512       POP R8
-0x00009516       POP R7
-0x0000951A       POP R6
-0x0000951E       POP R5
-0x00009522       RET
+0x000096FA       POP R9
+0x000096FE       POP R8
+0x00009702       POP R7
+0x00009706       POP R6
+0x0000970A       POP R5
+0x0000970E       RET
 
 ;=================================================================
 ; Zero out a page of memory at the given address (R1) R3 = PAGE_SIZE / amount to zero out
 ;=================================================================
 
 mem_zero:
-
-0x00009526       LI R2 0
-
+0x00009712       LI R2 0
 pz_loop:
-
-0x0000952E       CMP R3 0
-0x00009532       BEQ pz_done
-
-0x0000953A       STB R2 [R1]
-
-0x0000953E       ADD R1 R1 1
-0x00009542       SUB R3 R3 1
-
-0x00009546       B pz_loop
-
+0x0000971A       CMP R3 0
+0x0000971E       BEQ pz_done
+0x00009726       STB R2 [R1]
+0x0000972A       ADD R1 R1 1
+0x0000972E       SUB R3 R3 1
+0x00009732       B pz_loop
 pz_done:
-0x0000954E       RET
+0x0000973A       RET
 
 ;=================================================================
 ; memory copy at the given address (R1)<(R2) R3 = amount
@@ -7016,17 +7166,16 @@ pz_done:
 memcpy:
 
 cpy_loop:
-0x00009552       CMP R3 0
-0x00009556       BEQ cpy_done
-0x0000955E       LDB R4 [R2]
-0x00009562       STB R4 [R1]
-0x00009566       ADD R1 R1 1
-0x0000956A       ADD R2 R2 1
-0x0000956E       SUB R3 R3 1
-0x00009572       B cpy_loop
-
+0x0000973E       CMP R3 0
+0x00009742       BEQ cpy_done
+0x0000974A       LDB R4 [R2]
+0x0000974E       STB R4 [R1]
+0x00009752       ADD R1 R1 1
+0x00009756       ADD R2 R2 1
+0x0000975A       SUB R3 R3 1
+0x0000975E       B cpy_loop
 cpy_done:
-0x0000957A       RET
+0x00009766       RET
 
 ; ================================================================
 ; Copy a memory page (or other multiple of 4 bytes) by physical address.
@@ -7038,17 +7187,17 @@ cpy_done:
 page_copy:
 
 page_copy_loop:
-0x0000957E       CMP R3 0
-0x00009582       BEQ page_copy_done
-0x0000958A       LDW R4 [R1]
-0x0000958E       STW R4 [R2]
-0x00009592       ADD R1 R1 4
-0x00009596       ADD R2 R2 4
-0x0000959A       SUB R3 R3 4
-0x0000959E       B page_copy_loop
+0x0000976A       CMP R3 0
+0x0000976E       BEQ page_copy_done
+0x00009776       LDW R4 [R1]
+0x0000977A       STW R4 [R2]
+0x0000977E       ADD R1 R1 4
+0x00009782       ADD R2 R2 4
+0x00009786       SUB R3 R3 4
+0x0000978A       B page_copy_loop
 
 page_copy_done:
-0x000095A6       RET
+0x00009792       RET
 
 ; ================================================================
 ; Task management
@@ -7074,121 +7223,121 @@ task_count:
 
 task_create:
 
-0x00009AAE       PUSH LR
+0x00009C9A       PUSH LR
 
-0x00009AB2       MOV R8 R1          ; entry
-0x00009AB6       MOV R9 R2          ; pid
-0x00009ABA       LI R10 0           ; task pointer, kept zero until task_alloc succeeds
+0x00009C9E       MOV R8 R1          ; entry
+0x00009CA2       MOV R9 R2          ; pid
+0x00009CA6       LI R10 0           ; task pointer, kept zero until task_alloc succeeds
 
     ; ----------------------------------
     ; allocate task slot
     ; ----------------------------------
 
-0x00009AC2       BL task_alloc       ; R1 = task pointer or 0 if no free slots
+0x00009CAE       BL task_alloc       ; R1 = task pointer or 0 if no free slots
 
-0x00009ACA       CMP R1 0
-0x00009ACE       BEQ task_create_fail
+0x00009CB6       CMP R1 0
+0x00009CBA       BEQ task_create_fail
 
-0x00009AD6       MOV R10 R1         ; R10 = task pointer
+0x00009CC2       MOV R10 R1         ; R10 = task pointer
 
     ; A recycled slot may still contain pointers from its previous owner.
     ; Clear it before recording resources so failure cleanup is reliable.
-0x00009ADA       MOV R1 R10
-0x00009ADE       LI R3 TASK_SIZE
-0x00009AE6       BL mem_zero
+0x00009CC6       MOV R1 R10
+0x00009CCA       LI R3 TASK_SIZE
+0x00009CD2       BL mem_zero
 ; macro: TASK_SET_PC R10, R8
-0x00009AEE   STW R8 [R10 + TASK_PC]
+0x00009CDA   STW R8 [R10 + TASK_PC]
 ; macro: TASK_SET_PID R10, R9
-0x00009AF2   STW R9 [R10 + TASK_PID]
+0x00009CDE   STW R9 [R10 + TASK_PID]
 
     ; ----------------------------------
     ; allocate PTBR page
     ; ----------------------------------
 
-0x00009AF6       BL page_alloc
-0x00009AFE       CMP R1 0
-0x00009B02       BEQ task_create_fail
+0x00009CE2       BL page_alloc
+0x00009CEA       CMP R1 0
+0x00009CEE       BEQ task_create_fail
 
-0x00009B0A       MOV R12 R1
+0x00009CF6       MOV R12 R1
 
 ; macro: TASK_SET_PTBR R10, R1          ; set task page table base
-0x00009B0E   STW R1 [R10 + TASK_PTBR]
+0x00009CFA   STW R1 [R10 + TASK_PTBR]
 
-0x00009B12       MOV R1 R12
-0x00009B16       LI  R3 PAGE_SIZE
-0x00009B1E       BL  mem_zero                   ; zero out the sensitive new page table
+0x00009CFE       MOV R1 R12
+0x00009D02       LI  R3 PAGE_SIZE
+0x00009D0A       BL  mem_zero                   ; zero out the sensitive new page table
 
-0x00009B26       MOV R1 R12
-0x00009B2A       BL map_common_kernel        ; map kernel space into new page table so task can run in it
+0x00009D12       MOV R1 R12
+0x00009D16       BL map_common_kernel        ; map kernel space into new page table so task can run in it
         ;and call kernel functions and access kernel data structures when needed
 
     ; Map only this task's executable page. User programs currently retain
     ; their assembled entry VAs; data and stack VAs are common to all tasks.
 ; macro: TASK_GET_PC R8, R10
-0x00009B32   LDW R8 [R10 + TASK_PC]
+0x00009D1E   LDW R8 [R10 + TASK_PC]
 ; macro: TASK_GET_PID R9, R10
-0x00009B36   LDW R9 [R10 + TASK_PID]
+0x00009D22   LDW R9 [R10 + TASK_PID]
 ; macro: TASK_GET_PTBR R1, R10
-0x00009B3A   LDW R1 [R10 + TASK_PTBR]
-0x00009B3E       MOV R2 R8
-0x00009B42       LI R3 0xFFFFF000
-0x00009B4A       AND R2 R2 R3
-0x00009B4E       MOV R3 R2
-0x00009B52       CMP R9 0
-0x00009B56       BEQ task_create_map_kernel_entry
-0x00009B5E       LI R4 USER_RX
-0x00009B66       B task_create_map_entry
+0x00009D26   LDW R1 [R10 + TASK_PTBR]
+0x00009D2A       MOV R2 R8
+0x00009D2E       LI R3 0xFFFFF000
+0x00009D36       AND R2 R2 R3
+0x00009D3A       MOV R3 R2
+0x00009D3E       CMP R9 0
+0x00009D42       BEQ task_create_map_kernel_entry
+0x00009D4A       LI R4 USER_RX
+0x00009D52       B task_create_map_entry
 task_create_map_kernel_entry:
-0x00009B6E       LI R4 KERNEL_FLAGS
+0x00009D5A       LI R4 KERNEL_FLAGS
 task_create_map_entry:
-0x00009B76       BL map_page
+0x00009D62       BL map_page
 
     ; ----------------------------------
     ; allocate user stack page
     ; ----------------------------------
 
-0x00009B7E       BL page_alloc
-0x00009B86       CMP R1 0
-0x00009B8A       BEQ task_create_fail
+0x00009D6A       BL page_alloc
+0x00009D72       CMP R1 0
+0x00009D76       BEQ task_create_fail
 
-0x00009B92       MOV R12 R1
+0x00009D7E       MOV R12 R1
 ; macro: TASK_SET_USTACK_PAGE R10, R12
-0x00009B96   STW R12 [R10 + TASK_USTACK_PAGE]
+0x00009D82   STW R12 [R10 + TASK_USTACK_PAGE]
 
-0x00009B9A       LI R11 USER_STACK_TOP
+0x00009D86       LI R11 USER_STACK_TOP
 ; macro: TASK_SET_USP R10, R11           ; all tasks use the same virtual stack top
-0x00009BA2   STW R11 [R10 + TASK_USP]
+0x00009D8E   STW R11 [R10 + TASK_USP]
 
 ; macro: TASK_GET_PTBR R1, R10       ; get task page table base to map user stack page into it
-0x00009BA6   LDW R1 [R10 + TASK_PTBR]
+0x00009D92   LDW R1 [R10 + TASK_PTBR]
 
-0x00009BAA       LI  R2 USER_STACK_VA
-0x00009BB2       MOV R3 R12
-0x00009BB6       LI  R4 USER_RW
+0x00009D96       LI  R2 USER_STACK_VA
+0x00009D9E       MOV R3 R12
+0x00009DA2       LI  R4 USER_RW
     ;R1 = page table base R2=va to map R3=pa of page to map R4=permissions
-0x00009BBE       BL map_page                 ; map user stack page into task page table with RW permissions for user
+0x00009DAA       BL map_page                 ; map user stack page into task page table with RW permissions for user
 
     ; ----------------------------------
     ; allocate kernel stack page
     ; ----------------------------------
 
-0x00009BC6       BL page_alloc
-0x00009BCE       CMP R1 0
-0x00009BD2       BEQ task_create_fail
+0x00009DB2       BL page_alloc
+0x00009DBA       CMP R1 0
+0x00009DBE       BEQ task_create_fail
 
 ; macro: TASK_SET_KSTACK_PAGE R10, R1
-0x00009BDA   STW R1 [R10 + TASK_KSTACK_PAGE]
-0x00009BDE       LI R2 PAGE_SIZE
+0x00009DC6   STW R1 [R10 + TASK_KSTACK_PAGE]
+0x00009DCA       LI R2 PAGE_SIZE
 
-0x00009BE6       MOV R12 SP             ; save kernel SP before we mess with it for stack frame setup
+0x00009DD2       MOV R12 SP             ; save kernel SP before we mess with it for stack frame setup
 
-0x00009BEA       ADD SP R1 R2           ; last address of the new allocated physical
+0x00009DD6       ADD SP R1 R2           ; last address of the new allocated physical
                            ; page for kernel stack top
 
 ; macro: TASK_GET_PC R8, R10
-0x00009BEE   LDW R8 [R10 + TASK_PC]
+0x00009DDA   LDW R8 [R10 + TASK_PC]
 ; macro: TASK_GET_PID R9, R10
-0x00009BF2   LDW R9 [R10 + TASK_PID]
+0x00009DDE   LDW R9 [R10 + TASK_PID]
 
     ; ----------------------------------
     ; build initial trap frame
@@ -7196,161 +7345,161 @@ task_create_map_entry:
     ; into that new page
     ; ----------------------------------
 
-0x00009BF6       LI R1 0
+0x00009DE2       LI R1 0
 
-0x00009BFE       PUSH R1            ; R1
-0x00009C02       PUSH R1            ; R2
-0x00009C06       PUSH R1            ; R3
-0x00009C0A       PUSH R1            ; R4
-0x00009C0E       PUSH R1            ; R5
-0x00009C12       PUSH R1            ; R6
-0x00009C16       PUSH R1            ; R7
-0x00009C1A       PUSH R1            ; R8
-0x00009C1E       PUSH R1            ; R9
-0x00009C22       PUSH R1            ; R10
-0x00009C26       PUSH R1            ; R11
-0x00009C2A       PUSH R1            ; R12
-0x00009C2E       PUSH R1            ; R14 (FP)
-0x00009C32       PUSH R1            ; R15 (LR)
+0x00009DEA       PUSH R1            ; R1
+0x00009DEE       PUSH R1            ; R2
+0x00009DF2       PUSH R1            ; R3
+0x00009DF6       PUSH R1            ; R4
+0x00009DFA       PUSH R1            ; R5
+0x00009DFE       PUSH R1            ; R6
+0x00009E02       PUSH R1            ; R7
+0x00009E06       PUSH R1            ; R8
+0x00009E0A       PUSH R1            ; R9
+0x00009E0E       PUSH R1            ; R10
+0x00009E12       PUSH R1            ; R11
+0x00009E16       PUSH R1            ; R12
+0x00009E1A       PUSH R1            ; R14 (FP)
+0x00009E1E       PUSH R1            ; R15 (LR)
 
-0x00009C36       PUSH R11           ; R11 - user SP top
+0x00009E22       PUSH R11           ; R11 - user SP top
 
-0x00009C3A       MOV R1 R8
-0x00009C3E       PUSH R1            ; sepc = entry
+0x00009E26       MOV R1 R8
+0x00009E2A       PUSH R1            ; sepc = entry
 
-0x00009C42       LI R1 0
-0x00009C4A       PUSH R1            ; sflags
+0x00009E2E       LI R1 0
+0x00009E36       PUSH R1            ; sflags
 
-0x00009C4E       CMP R9 0
-0x00009C52       BEQ task_create_kernel_status
-0x00009C5A       LI R1 0x20
-0x00009C62       B task_create_status_ready
+0x00009E3A       CMP R9 0
+0x00009E3E       BEQ task_create_kernel_status
+0x00009E46       LI R1 0x20
+0x00009E4E       B task_create_status_ready
 task_create_kernel_status:
-0x00009C6A       LI R1 0x120
+0x00009E56       LI R1 0x120
 task_create_status_ready:
-0x00009C72       PUSH R1            ; sstatus
+0x00009E5E       PUSH R1            ; sstatus
 
-0x00009C76       LI R1 0
-0x00009C7E       PUSH R1            ; scause
-0x00009C82       PUSH R1            ; stval
+0x00009E62       LI R1 0
+0x00009E6A       PUSH R1            ; scause
+0x00009E6E       PUSH R1            ; stval
 
     ; ----------------------------------
     ; task structure
     ; ----------------------------------
 
-0x00009C86       MOV R1 SP
+0x00009E72       MOV R1 SP
 ; macro: TASK_SET_KSP R10, R1                    ; save kernel trapframe SP in task struct
-0x00009C8A   STW R1 [R10 + TASK_KSP]
+0x00009E76   STW R1 [R10 + TASK_KSP]
 
-0x00009C8E       MOV SP R12         ; restore kernel SP after stack frame setup
+0x00009E7A       MOV SP R12         ; restore kernel SP after stack frame setup
 
 ; macro: TASK_SET_WAIT R10, WAIT_NONE            ; set wait reason to none (not sleeping)
-0x00009C92   LI R1 WAIT_NONE
-0x00009C9A   STW R1 [R10 + TASK_WAIT]
+0x00009E7E   LI R1 WAIT_NONE
+0x00009E86   STW R1 [R10 + TASK_WAIT]
 
 ; macro: TASK_SET_RESUME R10, RESUME_TRAP        ; set resume switch to trap - this means
-0x00009C9E   LI R1 RESUME_TRAP
-0x00009CA6   STW R1 [R10 + TASK_RESUME]
+0x00009E8A   LI R1 RESUME_TRAP
+0x00009E92   STW R1 [R10 + TASK_RESUME]
     ;when we schedule to this task it will run via trap restore path (usual case)
 
     ; ----------------------------------
     ; fd table
     ; ----------------------------------
 
-0x00009CAA       BL page_alloc
-0x00009CB2       CMP R1 0
-0x00009CB6       BEQ task_create_fail
+0x00009E96       BL page_alloc
+0x00009E9E       CMP R1 0
+0x00009EA2       BEQ task_create_fail
 
     ; set task fd_table ptr to new page
 
     ; R1 = newly allocated fd table page
 
-0x00009CBE       MOV R12 R1
+0x00009EAA       MOV R12 R1
 
-0x00009CC2       LI  R3 PAGE_SIZE
-0x00009CCA       MOV R1 R12
-0x00009CCE       BL  mem_zero
+0x00009EAE       LI  R3 PAGE_SIZE
+0x00009EB6       MOV R1 R12
+0x00009EBA       BL  mem_zero
 
     ; stdin
-0x00009CD6       LI  R2 file_stdin
-0x00009CDE       STW R2 [R12 + 0]
+0x00009EC2       LI  R2 file_stdin
+0x00009ECA       STW R2 [R12 + 0]
 
     ; stdout
-0x00009CE2       LI  R2 file_stdout
-0x00009CEA       STW R2 [R12 + 4]
+0x00009ECE       LI  R2 file_stdout
+0x00009ED6       STW R2 [R12 + 4]
 
     ; stderr
-0x00009CEE       LI  R2 file_stderr
-0x00009CF6       STW R2 [R12 + 8]
+0x00009EDA       LI  R2 file_stderr
+0x00009EE2       STW R2 [R12 + 8]
 
 ; macro: TASK_SET_FD_TABLE R10, R12
-0x00009CFA   STW R12 [R10 + TASK_FD_TABLE]
+0x00009EE6   STW R12 [R10 + TASK_FD_TABLE]
 
     ; ----------------------------------
     ; kernel buffers
     ; ----------------------------------
 
-0x00009CFE       BL page_alloc
-0x00009D06       CMP R1 0
-0x00009D0A       BEQ task_create_fail
+0x00009EEA       BL page_alloc
+0x00009EF2       CMP R1 0
+0x00009EF6       BEQ task_create_fail
 
 ; macro: TASK_SET_KBUF_WR R10, R1                ; set task kernel write buffer (upto whole page for now)
-0x00009D12   STW R1 [R10 + TASK_KBUF_WR_PTR]
+0x00009EFE   STW R1 [R10 + TASK_KBUF_WR_PTR]
 
-0x00009D16       BL page_alloc
-0x00009D1E       CMP R1 0
-0x00009D22       BEQ task_create_fail
+0x00009F02       BL page_alloc
+0x00009F0A       CMP R1 0
+0x00009F0E       BEQ task_create_fail
 
 ; macro: TASK_SET_KBUF_RD R10, R1                ; set task kernel read buffer
-0x00009D2A   STW R1 [R10 + TASK_KBUF_RD_PTR]
+0x00009F16   STW R1 [R10 + TASK_KBUF_RD_PTR]
 
     ; ----------------------------------
     ; data page - for user buffers and heap
     ; ----------------------------------
 
-0x00009D2E       BL page_alloc
-0x00009D36       CMP R1 0
-0x00009D3A       BEQ task_create_fail
+0x00009F1A       BL page_alloc
+0x00009F22       CMP R1 0
+0x00009F26       BEQ task_create_fail
 
 ; macro: TASK_SET_DATA_PAGE R10, R1              ; set task data page
-0x00009D42   STW R1 [R10 + TASK_DATA_PAGE]
+0x00009F2E   STW R1 [R10 + TASK_DATA_PAGE]
 
-0x00009D46       MOV R12 R1
+0x00009F32       MOV R12 R1
 
 ; macro: TASK_GET_PTBR R1, R10
-0x00009D4A   LDW R1 [R10 + TASK_PTBR]
-0x00009D4E       LI  R2 USER_DATA_VA
-0x00009D56       MOV R3 R12
-0x00009D5A       LI  R4 USER_RW
-0x00009D62       BL map_page                 ; map task data page into task page table with RW permissions for user
+0x00009F36   LDW R1 [R10 + TASK_PTBR]
+0x00009F3A       LI  R2 USER_DATA_VA
+0x00009F42       MOV R3 R12
+0x00009F46       LI  R4 USER_RW
+0x00009F4E       BL map_page                 ; map task data page into task page table with RW permissions for user
 
     ; initialize code page pointer to zero until execve or static code assignment
     ; This means the task currently has no execve-loaded program image.
     ; When execve runs, TASK_CODE_PAGE will be updated to point to the
     ; physical page currently mapped at USER_CODE_VA.
-0x00009D6A       LI R1 0
+0x00009F56       LI R1 0
 ; macro: TASK_SET_CODE_PAGE R10, R1
-0x00009D72   STW R1 [R10 + TASK_CODE_PAGE]
+0x00009F5E   STW R1 [R10 + TASK_CODE_PAGE]
 
     ; Publish the task only after every required resource and mapping exists.
 ; macro: TASK_SET_STATE R10, TASK_READY
-0x00009D76   LI R1 TASK_READY
-0x00009D7E   STW R1 [R10 + TASK_STATE]
+0x00009F62   LI R1 TASK_READY
+0x00009F6A   STW R1 [R10 + TASK_STATE]
 
     ; Initialize program break pointer to HEAP_START in User_Data_VA
-0x00009D82       LI R1 HEAP_START
+0x00009F6E       LI R1 HEAP_START
 ; macro: TASK_SET_BREAK R10, R1
-0x00009D8A   STW R1 [R10 + TASK_BREAK]
+0x00009F76   STW R1 [R10 + TASK_BREAK]
 
     ; Initialize parent PID to 0 by default
-0x00009D8E       LI R1 0
+0x00009F7A       LI R1 0
 ; macro: TASK_SET_PPID R10, R1
-0x00009D96   STW R1 [R10 + TASK_PPID]
+0x00009F82   STW R1 [R10 + TASK_PPID]
 
-0x00009D9A       MOV R1 R10                              ; return created task pointer
+0x00009F86       MOV R1 R10                              ; return created task pointer
 
-0x00009D9E       POP LR
-0x00009DA2       RET
+0x00009F8A       POP LR
+0x00009F8E       RET
 
 
 task_create_fail:
@@ -7358,68 +7507,68 @@ task_create_fail:
     ; so far and return 0.
 
     ; task_alloc can fail before R10 is assigned.
-0x00009DA6       CMP R10 0
-0x00009DAA       BEQ task_create_fail_return
+0x00009F92       CMP R10 0
+0x00009F96       BEQ task_create_fail_return
 
     ; Release every resource already attached to the unpublished task.
 ; macro: TASK_GET_PTBR R1, R10
-0x00009DB2   LDW R1 [R10 + TASK_PTBR]
-0x00009DB6       CMP R1 0
-0x00009DBA       BEQ task_create_free_ustack
-0x00009DC2       BL page_free
+0x00009F9E   LDW R1 [R10 + TASK_PTBR]
+0x00009FA2       CMP R1 0
+0x00009FA6       BEQ task_create_free_ustack
+0x00009FAE       BL page_put
 
 task_create_free_ustack:
 ; macro: TASK_GET_USTACK_PAGE R1, R10
-0x00009DCA   LDW R1 [R10 + TASK_USTACK_PAGE]
-0x00009DCE       CMP R1 0
-0x00009DD2       BEQ task_create_free_kstack
-0x00009DDA       BL page_free
+0x00009FB6   LDW R1 [R10 + TASK_USTACK_PAGE]
+0x00009FBA       CMP R1 0
+0x00009FBE       BEQ task_create_free_kstack
+0x00009FC6       BL page_put
 
 task_create_free_kstack:
 ; macro: TASK_GET_KSTACK_PAGE R1, R10
-0x00009DE2   LDW R1 [R10 + TASK_KSTACK_PAGE]
-0x00009DE6       CMP R1 0
-0x00009DEA       BEQ task_create_free_fd
-0x00009DF2       BL page_free
+0x00009FCE   LDW R1 [R10 + TASK_KSTACK_PAGE]
+0x00009FD2       CMP R1 0
+0x00009FD6       BEQ task_create_free_fd
+0x00009FDE       BL page_put
 
 task_create_free_fd:
 ; macro: TASK_GET_FD_TABLE R1, R10
-0x00009DFA   LDW R1 [R10 + TASK_FD_TABLE]
-0x00009DFE       CMP R1 0
-0x00009E02       BEQ task_create_free_kwr
-0x00009E0A       BL page_free
+0x00009FE6   LDW R1 [R10 + TASK_FD_TABLE]
+0x00009FEA       CMP R1 0
+0x00009FEE       BEQ task_create_free_kwr
+0x00009FF6       BL page_put
 
 task_create_free_kwr:
 ; macro: TASK_GET_KBUF_WR R1, R10
-0x00009E12   LDW R1 [R10 + TASK_KBUF_WR_PTR]
-0x00009E16       CMP R1 0
-0x00009E1A       BEQ task_create_free_krd
-0x00009E22       BL page_free
+0x00009FFE   LDW R1 [R10 + TASK_KBUF_WR_PTR]
+0x0000A002       CMP R1 0
+0x0000A006       BEQ task_create_free_krd
+0x0000A00E       BL page_put
 
 task_create_free_krd:
 ; macro: TASK_GET_KBUF_RD R1, R10
-0x00009E2A   LDW R1 [R10 + TASK_KBUF_RD_PTR]
-0x00009E2E       CMP R1 0
-0x00009E32       BEQ task_create_free_data
-0x00009E3A       BL page_free
+0x0000A016   LDW R1 [R10 + TASK_KBUF_RD_PTR]
+0x0000A01A       CMP R1 0
+0x0000A01E       BEQ task_create_free_data
+0x0000A026       BL page_put
 
 task_create_free_data:
 ; macro: TASK_GET_DATA_PAGE R1, R10
-0x00009E42   LDW R1 [R10 + TASK_DATA_PAGE]
-0x00009E46       CMP R1 0
-0x00009E4A       BEQ task_create_clear_slot
-0x00009E52       BL page_free
+0x0000A02E   LDW R1 [R10 + TASK_DATA_PAGE]
+0x0000A032       CMP R1 0
+0x0000A036       BEQ task_create_clear_slot
+0x0000A03E       BL page_put
 
 task_create_clear_slot:
-0x00009E5A       MOV R1 R10
-0x00009E5E       LI R3 TASK_SIZE
-0x00009E66       BL mem_zero
+0x0000A046       MOV R1 R10
+0x0000A04A       LI R3 TASK_SIZE
+0x0000A052       BL mem_zero
 
 task_create_fail_return:
-0x00009E6E       LI R1 0
+0x0000A05A       LI R1 0
 
-0x00009E76       POP LR
-0x00009E7A       RET
+0x0000A062       POP LR
+0x0000A066       RET
 
 ;================================================================
 ; task_clone_current - clone the currently running task for fork
@@ -7435,246 +7584,253 @@ task_create_fail_return:
 ; - preserve the current trapframe and return 0 in the child
 ;================================================================
 task_clone_current:
-0x00009E7E       MOV  R8 SP ;save sp to point to task trapframe!
-0x00009E82       PUSH LR
+0x0000A06A       MOV  R8 SP ;save sp to point to task trapframe!
+0x0000A06E       PUSH LR
 
     ; Get the current task slot and parent task pointer.
 ; macro: GET_CURR_TASK_IDX R6
-0x00009E86   LI R1 CURRENT_TASK
-0x00009E8E   LDW R6 [R1]
+0x0000A072   LI R1 CURRENT_TASK
+0x0000A07A   LDW R6 [R1]
 ; macro: GET_TASK_PTR R7, R6           ; R7 = parent task*
-0x00009E92   LI R1 TASK_SIZE
-0x00009E9A   MUL R3 R6 R1
-0x00009E9E   LI R7 tasks
-0x00009EA6   ADD R7 R7 R3
+0x0000A07E   LI R1 TASK_SIZE
+0x0000A086   MUL R3 R6 R1
+0x0000A08A   LI R7 tasks
+0x0000A092   ADD R7 R7 R3
 
     ; Allocate a fresh child task slot.
-0x00009EAA       BL task_alloc
-0x00009EB2       CMP R1 0
-0x00009EB6       BEQ clone_fail
-0x00009EBE       MOV R10 R1                    ; R10 = child task*
+0x0000A096       BL task_alloc
+0x0000A09E       CMP R1 0
+0x0000A0A2       BEQ clone_fail
+0x0000A0AA       MOV R10 R1                    ; R10 = child task*
 
     ; Clear the new child task slot before use.
-0x00009EC2       MOV R1 R10
-0x00009EC6       LI R3 TASK_SIZE
-0x00009ECE       BL mem_zero
+0x0000A0AE       MOV R1 R10
+0x0000A0B2       LI R3 TASK_SIZE
+0x0000A0BA       BL mem_zero
 
     ; Assign a new PID from the dynamic pid counter.
-0x00009ED6       LI R1 task_count
-0x00009EDE       LDW R2 [R1]
+0x0000A0C2       LI R1 task_count
+0x0000A0CA       LDW R2 [R1]
 
 ; macro: TASK_SET_PID R10, R2        ; set new child task Pid to child task (current task_count value)
-0x00009EE2   STW R2 [R10 + TASK_PID]
-0x00009EE6       ADD R2 R2 1
-0x00009EEA       STW R2 [R1]                 ; update task_count as we created a new task
+0x0000A0CE   STW R2 [R10 + TASK_PID]
+0x0000A0D2       ADD R2 R2 1
+0x0000A0D6       STW R2 [R1]                 ; update task_count as we created a new task
 
     ; Set child parent PID to the current task's PID.
 ; macro: TASK_GET_PID R2, R7
-0x00009EEE   LDW R2 [R7 + TASK_PID]
+0x0000A0DA   LDW R2 [R7 + TASK_PID]
 ; macro: TASK_SET_PPID R10, R2       ; pid - new, ppid - parent task's pid (new task)
-0x00009EF2   STW R2 [R10 + TASK_PPID]
+0x0000A0DE   STW R2 [R10 + TASK_PPID]
 
     ; Copy the current task's program break.
 ; macro: TASK_GET_BREAK R2, R7
-0x00009EF6   LDW R2 [R7 + TASK_BREAK]
+0x0000A0E2   LDW R2 [R7 + TASK_BREAK]
 ; macro: TASK_SET_BREAK R10, R2
-0x00009EFA   STW R2 [R10 + TASK_BREAK]
+0x0000A0E6   STW R2 [R10 + TASK_BREAK]
 
     ; Copy current task PC for debugging/metadata.
 ; macro: TASK_GET_PC R2, R7
-0x00009EFE   LDW R2 [R7 + TASK_PC]
+0x0000A0EA   LDW R2 [R7 + TASK_PC]
 ; macro: TASK_SET_PC R10, R2
-0x00009F02   STW R2 [R10 + TASK_PC]
+0x0000A0EE   STW R2 [R10 + TASK_PC]
 
     ; Allocate and initialize a fresh page table for the child.
-0x00009F06       BL page_alloc
-0x00009F0E       CMP R1 0
-0x00009F12       BEQ clone_fail
-0x00009F1A       MOV R11 R1
+0x0000A0F2       BL page_alloc
+0x0000A0FA       CMP R1 0
+0x0000A0FE       BEQ clone_fail
+0x0000A106       MOV R11 R1
 ; macro: TASK_SET_PTBR R10, R11
-0x00009F1E   STW R11 [R10 + TASK_PTBR]
+0x0000A10A   STW R11 [R10 + TASK_PTBR]
 
     ; Clone the parent's entire page table into the child.
 ; macro: TASK_GET_PTBR R1, R7
-0x00009F22   LDW R1 [R7 + TASK_PTBR]
-0x00009F26       MOV R2 R11
-0x00009F2A       LI R3 PAGE_SIZE
-0x00009F32       BL page_copy
+0x0000A10E   LDW R1 [R7 + TASK_PTBR]
+0x0000A112       MOV R2 R11
+0x0000A116       LI R3 PAGE_SIZE
+0x0000A11E       BL page_copy
 
-    ; Preserve the current exec code page pointer if the parent uses execve.
-; macro: TASK_GET_CODE_PAGE R2, R7
-0x00009F3A   LDW R2 [R7 + TASK_CODE_PAGE]
-; macro: TASK_SET_CODE_PAGE R10, R2
-0x00009F3E   STW R2 [R10 + TASK_CODE_PAGE]
+    ; child will inherit code page pa from parent
+; macro: TASK_GET_CODE_PAGE R2, R7   ; R2 = parent's code page PA
+0x0000A126   LDW R2 [R7 + TASK_CODE_PAGE]
+; macro: TASK_SET_CODE_PAGE R10, R2  ; set child's code page PA to parent's code page PA
+0x0000A12A   STW R2 [R10 + TASK_CODE_PAGE]
+    ; Now increment refcount for the shared code page (if code page is allocated).
+    ;(it is in case when execve was called before fork or when fork-execve, then fork-execve, then fork-execve etc. - all children share the same code page)
+0x0000A12E       CMP R2 0
+0x0000A132       BEQ skip_code_get
+0x0000A13A       MOV R1 R2
+0x0000A13E       BL page_get     ;increment refcount for the shared code page (if code page is allocated)
+skip_code_get:
 
     ; The child has inherited the parent's kernel and code mappings.
     ; We will override the user stack and data mappings below.
     ; Allocate and clone the user stack page.
-0x00009F42       BL page_alloc
-0x00009F4A       CMP R1 0
-0x00009F4E       BEQ clone_fail
-0x00009F56       MOV R12 R1
+0x0000A146       BL page_alloc
+0x0000A14E       CMP R1 0
+0x0000A152       BEQ clone_fail
+0x0000A15A       MOV R12 R1
 ; macro: TASK_SET_USTACK_PAGE R10, R12   ; set new page as child user stack page
-0x00009F5A   STW R12 [R10 + TASK_USTACK_PAGE]
+0x0000A15E   STW R12 [R10 + TASK_USTACK_PAGE]
 
 ; macro: TASK_GET_PTBR R1, R10
-0x00009F5E   LDW R1 [R10 + TASK_PTBR]
-0x00009F62       LI R2 USER_STACK_VA
-0x00009F6A       MOV R3 R12
-0x00009F6E       LI R4 USER_RW
-0x00009F76       BL map_page             ; map user stack page to child ptbr
+0x0000A162   LDW R1 [R10 + TASK_PTBR]
+0x0000A166       LI R2 USER_STACK_VA
+0x0000A16E       MOV R3 R12
+0x0000A172       LI R4 USER_RW
+0x0000A17A       BL map_page             ; map user stack page to child ptbr
 
 ; macro: TASK_GET_USTACK_PAGE R1, R7
-0x00009F7E   LDW R1 [R7 + TASK_USTACK_PAGE]
-0x00009F82       MOV R2 R12
-0x00009F86       LI R3 PAGE_SIZE
-0x00009F8E       BL page_copy            ; copy parent user stack page -> child user stack page
+0x0000A182   LDW R1 [R7 + TASK_USTACK_PAGE]
+0x0000A186       MOV R2 R12
+0x0000A18A       LI R3 PAGE_SIZE
+0x0000A192       BL page_copy            ; copy parent user stack page -> child user stack page
 
     ; Allocate and clone the user data page.
-0x00009F96       BL page_alloc
-0x00009F9E       CMP R1 0
-0x00009FA2       BEQ clone_fail
-0x00009FAA       MOV R12 R1
+0x0000A19A       BL page_alloc
+0x0000A1A2       CMP R1 0
+0x0000A1A6       BEQ clone_fail
+0x0000A1AE       MOV R12 R1
 ; macro: TASK_SET_DATA_PAGE R10, R12     ; set new page as child user data page
-0x00009FAE   STW R12 [R10 + TASK_DATA_PAGE]
+0x0000A1B2   STW R12 [R10 + TASK_DATA_PAGE]
 
 ; macro: TASK_GET_PTBR R1, R10
-0x00009FB2   LDW R1 [R10 + TASK_PTBR]
-0x00009FB6       LI R2 USER_DATA_VA
-0x00009FBE       MOV R3 R12
-0x00009FC2       LI R4 USER_RW
-0x00009FCA       BL map_page                     ; map user data page to child ptbr
+0x0000A1B6   LDW R1 [R10 + TASK_PTBR]
+0x0000A1BA       LI R2 USER_DATA_VA
+0x0000A1C2       MOV R3 R12
+0x0000A1C6       LI R4 USER_RW
+0x0000A1CE       BL map_page                     ; map user data page to child ptbr
 
 ; macro: TASK_GET_DATA_PAGE R1, R7
-0x00009FD2   LDW R1 [R7 + TASK_DATA_PAGE]
-0x00009FD6       MOV R2 R12
-0x00009FDA       LI R3 PAGE_SIZE
-0x00009FE2       BL page_copy                    ; copy parent user data page -> child user data page
+0x0000A1D6   LDW R1 [R7 + TASK_DATA_PAGE]
+0x0000A1DA       MOV R2 R12
+0x0000A1DE       LI R3 PAGE_SIZE
+0x0000A1E6       BL page_copy                    ; copy parent user data page -> child user data page
 
     ; Clone the fd table and honor open file refcounts.
-0x00009FEA       BL page_alloc
-0x00009FF2       CMP R1 0
-0x00009FF6       BEQ clone_fail
+0x0000A1EE       BL page_alloc
+0x0000A1F6       CMP R1 0
+0x0000A1FA       BEQ clone_fail
 
-0x00009FFE       MOV R12 R1
+0x0000A202       MOV R12 R1
 
 ; macro: TASK_SET_FD_TABLE R10, R12       ; set new page as child fd table page
-0x0000A002   STW R12 [R10 + TASK_FD_TABLE]
-0x0000A006       LI R3 PAGE_SIZE
-0x0000A00E       MOV R1 R12
-0x0000A012       BL mem_zero                     ; clear the child fd table page just in case
+0x0000A206   STW R12 [R10 + TASK_FD_TABLE]
+0x0000A20A       LI R3 PAGE_SIZE
+0x0000A212       MOV R1 R12
+0x0000A216       BL mem_zero                     ; clear the child fd table page just in case
 
 ; macro: TASK_GET_FD_TABLE R1, R7         ; R1 - parent fd table page
-0x0000A01A   LDW R1 [R7 + TASK_FD_TABLE]
-0x0000A01E       CMP R1 0
-0x0000A022       BEQ clone_fd_done                ; if parent has no fd table, skip fd cloning
+0x0000A21E   LDW R1 [R7 + TASK_FD_TABLE]
+0x0000A222       CMP R1 0
+0x0000A226       BEQ clone_fd_done                ; if parent has no fd table, skip fd cloning
 
     ; parent → child copy FIRST
-0x0000A02A       MOV R1 R1        ; parent fd page
-0x0000A02E       MOV R2 R12       ; child fd page
-0x0000A032       LI R3 PAGE_SIZE
-0x0000A03A       BL page_copy
+0x0000A22E       MOV R1 R1        ; parent fd page
+0x0000A232       MOV R2 R12       ; child fd page
+0x0000A236       LI R3 PAGE_SIZE
+0x0000A23E       BL page_copy
 
-0x0000A042       LI R4 3                      ; fd index loop + 3 stdin/out/err refcount=1, so start at 3
+0x0000A246       LI R4 3                      ; fd index loop + 3 stdin/out/err refcount=1, so start at 3
 
 clone_fd_loop:
-0x0000A04A       CMP R4 MAX_FDS
-0x0000A04E       BGE clone_fd_done
+0x0000A24E       CMP R4 MAX_FDS
+0x0000A252       BGE clone_fd_done
 
-0x0000A056       SHL R5 R4 2                 ; multiply fd index by 4 to get byte offset
-0x0000A05A       ADD R6 R12 R5               ; R6 = &child_fd_table[i]
+0x0000A25A       SHL R5 R4 2                 ; multiply fd index by 4 to get byte offset
+0x0000A25E       ADD R6 R12 R5               ; R6 = &child_fd_table[i]
 
-0x0000A05E       LDW R7 [R6]                 ; R7 = file* from child fd table
-0x0000A062       CMP R7 0
-0x0000A066       BEQ clone_fd_next           ; if fd slot is empty, skip to next
+0x0000A262       LDW R7 [R6]                 ; R7 = file* from child fd table
+0x0000A266       CMP R7 0
+0x0000A26A       BEQ clone_fd_next           ; if fd slot is empty, skip to next
 
-0x0000A06E       MOV R1 R7                   ; IMPORTANT: isolate argument
-0x0000A072       BL file_get                 ; increment refcount of the file* in child fd table
+0x0000A272       MOV R1 R7                   ; IMPORTANT: isolate argument
+0x0000A276       BL file_get                 ; increment refcount of the file* in child fd table
 
 clone_fd_next:
-0x0000A07A       ADD R4 R4 1
-0x0000A07E       B clone_fd_loop
+0x0000A27E       ADD R4 R4 1
+0x0000A282       B clone_fd_loop
 
 clone_fd_done:
     ; Allocate fresh kernel buffers for the child.
-0x0000A086       BL page_alloc
-0x0000A08E       CMP R1 0
-0x0000A092       BEQ clone_fail
+0x0000A28A       BL page_alloc
+0x0000A292       CMP R1 0
+0x0000A296       BEQ clone_fail
 
 ; macro: TASK_SET_KBUF_WR R10, R1        ; set new page as child kernel write buffer
-0x0000A09A   STW R1 [R10 + TASK_KBUF_WR_PTR]
-0x0000A09E       LI R3 PAGE_SIZE
-0x0000A0A6       BL mem_zero                     ; zero out the child kernel write buffer
+0x0000A29E   STW R1 [R10 + TASK_KBUF_WR_PTR]
+0x0000A2A2       LI R3 PAGE_SIZE
+0x0000A2AA       BL mem_zero                     ; zero out the child kernel write buffer
 
-0x0000A0AE       BL page_alloc
-0x0000A0B6       CMP R1 0
-0x0000A0BA       BEQ clone_fail
+0x0000A2B2       BL page_alloc
+0x0000A2BA       CMP R1 0
+0x0000A2BE       BEQ clone_fail
 ; macro: TASK_SET_KBUF_RD R10, R1        ; set new page as child kernel read buffer
-0x0000A0C2   STW R1 [R10 + TASK_KBUF_RD_PTR]
-0x0000A0C6       LI R3 PAGE_SIZE
-0x0000A0CE       BL mem_zero                     ; zero out the child kernel read buffer
+0x0000A2C6   STW R1 [R10 + TASK_KBUF_RD_PTR]
+0x0000A2CA       LI R3 PAGE_SIZE
+0x0000A2D2       BL mem_zero                     ; zero out the child kernel read buffer
 
     ; Allocate and initialize the child's kernel stack.
-0x0000A0D6       BL page_alloc
-0x0000A0DE       CMP R1 0
-0x0000A0E2       BEQ clone_fail
-0x0000A0EA       MOV R12 R1
+0x0000A2DA       BL page_alloc
+0x0000A2E2       CMP R1 0
+0x0000A2E6       BEQ clone_fail
+0x0000A2EE       MOV R12 R1
 ; macro: TASK_SET_KSTACK_PAGE R10, R12   ; set new page as child kernel stack page
-0x0000A0EE   STW R12 [R10 + TASK_KSTACK_PAGE]
-0x0000A0F2       LI R3 PAGE_SIZE
-0x0000A0FA       ADD R12 R12 R3                  ; R12 = child kernel stack top
+0x0000A2F2   STW R12 [R10 + TASK_KSTACK_PAGE]
+0x0000A2F6       LI R3 PAGE_SIZE
+0x0000A2FE       ADD R12 R12 R3                  ; R12 = child kernel stack top
 
 
     ; Copy the current kernel trapframe into the child's new kernel stack.
     ; The trapframe is at SP + 24 (after 6 pushes of 4 bytes each)
     ; Child trapframe goes at the top of child's stack (R12 - 80)
-0x0000A0FE       MOV R1 R8                     ; R1 = parent trapframe BASE saved in the beginiig of func
-0x0000A102       MOV R6 R12
-0x0000A106       LI R5 80                    ; trapframe size in bytes
-0x0000A10E       SUB R6 R6 R5               ; R6 = child trapframe base inside new kernel stack
-0x0000A112       MOV R2 R6
-0x0000A116       LI R3 80
-0x0000A11E       BL page_copy                ; so we copy 80 bytes from SP to R12-80 (child trapframe base)
+0x0000A302       MOV R1 R8                     ; R1 = parent trapframe BASE saved in the beginiig of func
+0x0000A306       MOV R6 R12
+0x0000A30A       LI R5 80                    ; trapframe size in bytes
+0x0000A312       SUB R6 R6 R5               ; R6 = child trapframe base inside new kernel stack
+0x0000A316       MOV R2 R6
+0x0000A31A       LI R3 80
+0x0000A322       BL page_copy                ; so we copy 80 bytes from SP to R12-80 (child trapframe base)
 
     ; Return 0 in the child syscall result register.
-0x0000A126       LI R4 0
-0x0000A12E       STW R4 [R6 + TF_R1]
+0x0000A32A       LI R4 0
+0x0000A332       STW R4 [R6 + TF_R1]
 
 
     ; Preserve the user SP for later trap/schedule bookkeeping.
     ; User SP is already in the trapframe we copied
     ; But we also need to set it in the child's task struct
-0x0000A132       LDW R4 [R6 + TF_USP]
+0x0000A336       LDW R4 [R6 + TF_USP]
 ; macro: TASK_SET_USP R10, R4
-0x0000A136   STW R4 [R10 + TASK_USP]
+0x0000A33A   STW R4 [R10 + TASK_USP]
 
     ; Save the child kernel trapframe pointer and make it runnable.
 ; macro: TASK_SET_KSP R10, R6                    ;R6 = child trapframe base inside new kernel stack
-0x0000A13A   STW R6 [R10 + TASK_KSP]
+0x0000A33E   STW R6 [R10 + TASK_KSP]
 ; macro: TASK_SET_RESUME R10, RESUME_TRAP
-0x0000A13E   LI R1 RESUME_TRAP
-0x0000A146   STW R1 [R10 + TASK_RESUME]
+0x0000A342   LI R1 RESUME_TRAP
+0x0000A34A   STW R1 [R10 + TASK_RESUME]
 ; macro: TASK_SET_WAIT R10, WAIT_NONE
-0x0000A14A   LI R1 WAIT_NONE
-0x0000A152   STW R1 [R10 + TASK_WAIT]
+0x0000A34E   LI R1 WAIT_NONE
+0x0000A356   STW R1 [R10 + TASK_WAIT]
 ; macro: TASK_SET_STATE R10, TASK_READY
-0x0000A156   LI R1 TASK_READY
-0x0000A15E   STW R1 [R10 + TASK_STATE]
+0x0000A35A   LI R1 TASK_READY
+0x0000A362   STW R1 [R10 + TASK_STATE]
 
-0x0000A162       MOV R1 R10          ; return child task pointer
+0x0000A366       MOV R1 R10          ; return child task pointer
 
-0x0000A166       POP LR
-0x0000A16A       RET
+0x0000A36A       POP LR
+0x0000A36E       RET
 
 clone_fail:
-0x0000A16E       CMP R10 0
-0x0000A172       BEQ clone_fail_return
-0x0000A17A       MOV R1 R10
-0x0000A17E       BL task_destroy
+0x0000A372       CMP R10 0
+0x0000A376       BEQ clone_fail_return
+0x0000A37E       MOV R1 R10
+0x0000A382       BL task_destroy
 clone_fail_return:
-0x0000A186       LI R1 0
-0x0000A18E       POP LR
-0x0000A192       RET
+0x0000A38A       LI R1 0
+0x0000A392       POP LR
+0x0000A396       RET
 
 ;================================================================
 ; task_destroy - free all resources of a task and clear its slot in task table
@@ -7687,94 +7843,94 @@ clone_fail_return:
 ;================================================================
 task_destroy:
 
-0x0000A196       PUSH LR
-0x0000A19A       push R12 ; preserve R12 which we use for temporary storage in this function
-0x0000A19E       mov  R12 R1 ; R12 = task pointer
+0x0000A39A       PUSH LR
+0x0000A39E       push R12 ; preserve R12 which we use for temporary storage in this function
+0x0000A3A2       mov  R12 R1 ; R12 = task pointer
 
 ; macro: TASK_GET_PTBR R2, R1
-0x0000A1A2   LDW R2 [R1 + TASK_PTBR]
-0x0000A1A6       CMP R2 0
-0x0000A1AA       BEQ td_skip_ptbr    ; if task has no page table, it also has no resources to free, so skip to clearing slot and returning
+0x0000A3A6   LDW R2 [R1 + TASK_PTBR]
+0x0000A3AA       CMP R2 0
+0x0000A3AE       BEQ td_skip_ptbr    ; if task has no page table, it also has no resources to free, so skip to clearing slot and returning
 
-0x0000A1B2       MOV R1 R2
-0x0000A1B6       BL page_free        ; free process page table
+0x0000A3B6       MOV R1 R2
+0x0000A3BA       BL page_put        ; put-free process page table
 
 td_skip_ptbr:
 
 ; macro: TASK_GET_USTACK_PAGE R2, R12
-0x0000A1BE   LDW R2 [R12 + TASK_USTACK_PAGE]
-0x0000A1C2       CMP R2 0
-0x0000A1C6       BEQ td_skip_ustack  ; if task has no user stack page, it also has no kernel stack page, fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
-0x0000A1CE       MOV R1 R2
-0x0000A1D2       BL page_free
+0x0000A3C2   LDW R2 [R12 + TASK_USTACK_PAGE]
+0x0000A3C6       CMP R2 0
+0x0000A3CA       BEQ td_skip_ustack  ; if task has no user stack page, it also has no kernel stack page, fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
+0x0000A3D2       MOV R1 R2
+0x0000A3D6       BL page_put        ; put-free user stack page
 
 td_skip_ustack:
 
 ; macro: TASK_GET_KSTACK_PAGE R2, R12
-0x0000A1DA   LDW R2 [R12 + TASK_KSTACK_PAGE]
-0x0000A1DE       CMP R2 0
-0x0000A1E2       BEQ td_skip_kstack  ; if task has no kernel stack page, it also has no fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
-0x0000A1EA       MOV R1 R2
-0x0000A1EE       BL page_free
+0x0000A3DE   LDW R2 [R12 + TASK_KSTACK_PAGE]
+0x0000A3E2       CMP R2 0
+0x0000A3E6       BEQ td_skip_kstack  ; if task has no kernel stack page, it also has no fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
+0x0000A3EE       MOV R1 R2
+0x0000A3F2       BL page_put        ; put-free kernel stack page
 
 td_skip_kstack:
 
 ; macro: TASK_GET_FD_TABLE R2, R12
-0x0000A1F6   LDW R2 [R12 + TASK_FD_TABLE]
-0x0000A1FA       CMP R2 0
-0x0000A1FE       BEQ td_skip_fd    ; if task has no fd table page, it also has no user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
-0x0000A206       MOV R1 R2
-0x0000A20A       BL page_free
+0x0000A3FA   LDW R2 [R12 + TASK_FD_TABLE]
+0x0000A3FE       CMP R2 0
+0x0000A402       BEQ td_skip_fd    ; if task has no fd table page, it also has no user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
+0x0000A40A       MOV R1 R2
+0x0000A40E       BL page_put        ; put-free fd table page
 
 td_skip_fd:
 
 ; macro: TASK_GET_KBUF_WR R2, R12
-0x0000A212   LDW R2 [R12 + TASK_KBUF_WR_PTR]
-0x0000A216       CMP R2 0
-0x0000A21A       BEQ td_skip_kwr   ; if task has no kernel write buffer page, it may still have kernel read buffer and user data page to free, but it has no user buffers to free because user buffers are allocated and mapped together in one page and there is no way to have user buffers without having kernel write buffer because we allocate kernel write buffer first before allocating and mapping user buffers in task_create, so if there is no kernel write buffer we can skip freeing user buffers and just move to checking and freeing kernel read buffer and user data page if they exist and then move to clearing slot and returning
-0x0000A222       MOV R1 R2
-0x0000A226       BL page_free
+0x0000A416   LDW R2 [R12 + TASK_KBUF_WR_PTR]
+0x0000A41A       CMP R2 0
+0x0000A41E       BEQ td_skip_kwr   ; if task has no kernel write buffer page, it may still have kernel read buffer and user data page to free, but it has no user buffers to free because user buffers are allocated and mapped together in one page and there is no way to have user buffers without having kernel write buffer because we allocate kernel write buffer first before allocating and mapping user buffers in task_create, so if there is no kernel write buffer we can skip freeing user buffers and just move to checking and freeing kernel read buffer and user data page if they exist and then move to clearing slot and returning
+0x0000A426       MOV R1 R2
+0x0000A42A       BL page_put       ; put free KBUF_WR Page
 
 td_skip_kwr:
 
 ; macro: TASK_GET_KBUF_RD R2, R12
-0x0000A22E   LDW R2 [R12 + TASK_KBUF_RD_PTR]
-0x0000A232       CMP R2 0
-0x0000A236       BEQ td_skip_krd  ; if task has no kernel read buffer page, it may still have user data page to free, but it has no user buffers to free for the same reason as in td_skip_kwr, so if there is no kernel read buffer we can skip freeing user buffers and just move to checking and freeing user data page if it exists and then move to clearing slot and returning
-0x0000A23E       MOV R1 R2
-0x0000A242       BL page_free
+0x0000A432   LDW R2 [R12 + TASK_KBUF_RD_PTR]
+0x0000A436       CMP R2 0
+0x0000A43A       BEQ td_skip_krd  ; if task has no kernel read buffer page, it may still have user data page to free, but it has no user buffers to free for the same reason as in td_skip_kwr, so if there is no kernel read buffer we can skip freeing user buffers and just move to checking and freeing user data page if it exists and then move to clearing slot and returning
+0x0000A442       MOV R1 R2
+0x0000A446       BL page_put       ; put free KBUF_RD Page
 
 td_skip_krd:
 
 ; macro: TASK_GET_DATA_PAGE R2, R12
-0x0000A24A   LDW R2 [R12 + TASK_DATA_PAGE]
-0x0000A24E       CMP R2 0
-0x0000A252       BEQ td_skip_code
-0x0000A25A       MOV R1 R2
-0x0000A25E       BL page_free
+0x0000A44E   LDW R2 [R12 + TASK_DATA_PAGE]
+0x0000A452       CMP R2 0
+0x0000A456       BEQ td_skip_code
+0x0000A45E       MOV R1 R2
+0x0000A462       BL page_put        ; put-free user data page
 
 td_skip_code:
 
 ; macro: TASK_GET_CODE_PAGE R2, R12
-0x0000A266   LDW R2 [R12 + TASK_CODE_PAGE]
-0x0000A26A       CMP R2 0
-0x0000A26E       BEQ td_done
-0x0000A276       MOV R1 R2
-0x0000A27A       BL page_free
+0x0000A46A   LDW R2 [R12 + TASK_CODE_PAGE]
+0x0000A46E       CMP R2 0
+0x0000A472       BEQ td_done
+0x0000A47A       MOV R1 R2
+0x0000A47E       BL page_put        ; put-free user code page
 
 td_done:
 
-0x0000A282       MOV R1 R12
-0x0000A286       LI  R3 TASK_SIZE
-0x0000A28E       BL  mem_zero    ; clear the whole task slot for clean slate,
+0x0000A486       MOV R1 R12
+0x0000A48A       LI  R3 TASK_SIZE
+0x0000A492       BL  mem_zero    ; clear the whole task slot for clean slate,
                     ;this also clears the state to TASK_DEAD which
                     ; is important to make sure scheduler won't schedule
                     ; this slot anymore and also to make sure task_create
                     ; can reuse this slot for a new task in the future
 
-0x0000A296       POP R12         ; restore R12
-0x0000A29A       POP LR
-0x0000A29E       RET
+0x0000A49A       POP R12         ; restore R12
+0x0000A49E       POP LR
+0x0000A4A2       RET
 
 ;================================================================
 ; Closes all open file descriptors of a task by calling file_free on each of them.
@@ -7784,97 +7940,97 @@ td_done:
 
 task_close_fds:
 
-0x0000A2A2       PUSH LR
-0x0000A2A6       PUSH R8
-0x0000A2AA       PUSH R9
-0x0000A2AE       PUSH R10
-0x0000A2B2       PUSH R11
-0x0000A2B6       PUSH R12
+0x0000A4A6       PUSH LR
+0x0000A4AA       PUSH R8
+0x0000A4AE       PUSH R9
+0x0000A4B2       PUSH R10
+0x0000A4B6       PUSH R11
+0x0000A4BA       PUSH R12
 
 ; macro: TASK_GET_FD_TABLE R4, R1
-0x0000A2BA   LDW R4 [R1 + TASK_FD_TABLE]
-0x0000A2BE       MOV R12 R4
+0x0000A4BE   LDW R4 [R1 + TASK_FD_TABLE]
+0x0000A4C2       MOV R12 R4
 
-0x0000A2C2       LI R5 3              ; skip stdin/out/err
-0x0000A2CA       MOV R11 R5
+0x0000A4C6       LI R5 3              ; skip stdin/out/err
+0x0000A4CE       MOV R11 R5
 
 fd_loop:
 
-0x0000A2CE       CMP R11 MAX_FDS
-0x0000A2D2       BGE fd_done         ; if we processed all fd slots, we are done
+0x0000A4D2       CMP R11 MAX_FDS
+0x0000A4D6       BGE fd_done         ; if we processed all fd slots, we are done
 
-0x0000A2DA       SHL R6 R11 2
-0x0000A2DE       ADD R10 R12 R6      ; R10 = &fd_table[fd]
+0x0000A4DE       SHL R6 R11 2
+0x0000A4E2       ADD R10 R12 R6      ; R10 = &fd_table[fd]
 
-0x0000A2E2       LDW R8 [R10]
-0x0000A2E6       CMP R8 0
-0x0000A2EA       BEQ fd_next         ; if fd slot is empty, skip to next
+0x0000A4E6       LDW R8 [R10]
+0x0000A4EA       CMP R8 0
+0x0000A4EE       BEQ fd_next         ; if fd slot is empty, skip to next
 
-0x0000A2F2       MOV R1 R8
-0x0000A2F6       BL file_free
-0x0000A2FE       LI R9 0
-0x0000A306       STW R9 [R10]        ; mark fd slot as free in task's fd table
+0x0000A4F6       MOV R1 R8
+0x0000A4FA       BL file_free
+0x0000A502       LI R9 0
+0x0000A50A       STW R9 [R10]        ; mark fd slot as free in task's fd table
 
 fd_next:
-0x0000A30A       ADD R11 R11 1
-0x0000A30E       B fd_loop
+0x0000A50E       ADD R11 R11 1
+0x0000A512       B fd_loop
 
 fd_done:
-0x0000A316       POP R12
-0x0000A31A       POP R11
-0x0000A31E       POP R10
-0x0000A322       POP R9
-0x0000A326       POP R8
-0x0000A32A       POP LR
-0x0000A32E       RET
+0x0000A51A       POP R12
+0x0000A51E       POP R11
+0x0000A522       POP R10
+0x0000A526       POP R9
+0x0000A52A       POP R8
+0x0000A52E       POP LR
+0x0000A532       RET
 
 ;================================================================
 ; Reclaim zombie tasks from a safe stack.
 ; Must only be called by a live task; it never destroys CURRENT_TASK.
 ;================================================================
 task_reap_zombies:
-0x0000A332       PUSH LR
-0x0000A336       PUSH R8
-0x0000A33A       PUSH R9
-0x0000A33E       PUSH R10
+0x0000A536       PUSH LR
+0x0000A53A       PUSH R8
+0x0000A53E       PUSH R9
+0x0000A542       PUSH R10
 
 ; macro: GET_CURR_TASK_IDX R10
-0x0000A342   LI R1 CURRENT_TASK
-0x0000A34A   LDW R10 [R1]
-0x0000A34E       LI R8 0
+0x0000A546   LI R1 CURRENT_TASK
+0x0000A54E   LDW R10 [R1]
+0x0000A552       LI R8 0
 
 task_reap_loop:
-0x0000A356       CMP R8 MAX_TASKS
-0x0000A35A       BGE task_reap_done
+0x0000A55A       CMP R8 MAX_TASKS
+0x0000A55E       BGE task_reap_done
 
-0x0000A362       CMP R8 R10
-0x0000A366       BEQ task_reap_next
+0x0000A566       CMP R8 R10
+0x0000A56A       BEQ task_reap_next
 
 ; macro: GET_TASK_PTR R9, R8
-0x0000A36E   LI R1 TASK_SIZE
-0x0000A376   MUL R3 R8 R1
-0x0000A37A   LI R9 tasks
-0x0000A382   ADD R9 R9 R3
+0x0000A572   LI R1 TASK_SIZE
+0x0000A57A   MUL R3 R8 R1
+0x0000A57E   LI R9 tasks
+0x0000A586   ADD R9 R9 R3
 ; macro: TASK_GET_STATE R1, R9
-0x0000A386   LDW R1 [R9 + TASK_STATE]
-0x0000A38A       CMP R1 TASK_ZOMBIE
-0x0000A38E       BNE task_reap_next
+0x0000A58A   LDW R1 [R9 + TASK_STATE]
+0x0000A58E       CMP R1 TASK_ZOMBIE
+0x0000A592       BNE task_reap_next
 
-0x0000A396       PUSH R8
-0x0000A39A       MOV R1 R9
-0x0000A39E       BL task_destroy
-0x0000A3A6       POP R8
+0x0000A59A       PUSH R8
+0x0000A59E       MOV R1 R9
+0x0000A5A2       BL task_destroy
+0x0000A5AA       POP R8
 
 task_reap_next:
-0x0000A3AA       ADD R8 R8 1
-0x0000A3AE       B task_reap_loop
+0x0000A5AE       ADD R8 R8 1
+0x0000A5B2       B task_reap_loop
 
 task_reap_done:
-0x0000A3B6       POP R10
-0x0000A3BA       POP R9
-0x0000A3BE       POP R8
-0x0000A3C2       POP LR
-0x0000A3C6       RET
+0x0000A5BA       POP R10
+0x0000A5BE       POP R9
+0x0000A5C2       POP R8
+0x0000A5C6       POP LR
+0x0000A5CA       RET
 
 ; ----------------------------------
 ; task_alloc
@@ -7886,30 +8042,30 @@ task_reap_done:
 
 task_alloc:
 
-0x0000A3CA       LI R1 tasks
-0x0000A3D2       LI R2 MAX_TASKS
+0x0000A5CE       LI R1 tasks
+0x0000A5D6       LI R2 MAX_TASKS
 
 task_alloc_loop:
 
 ; macro: TASK_GET_STATE R3, R1                   ; load task state into R3
-0x0000A3DA   LDW R3 [R1 + TASK_STATE]
+0x0000A5DE   LDW R3 [R1 + TASK_STATE]
 
-0x0000A3DE       CMP R3 TASK_DEAD                        ; check if this slot is free (0-dead)
-0x0000A3E2       BEQ task_alloc_found
+0x0000A5E2       CMP R3 TASK_DEAD                        ; check if this slot is free (0-dead)
+0x0000A5E6       BEQ task_alloc_found
 
-0x0000A3EA       ADD R1 R1 TASK_SIZE                     ; move to next task slot
+0x0000A5EE       ADD R1 R1 TASK_SIZE                     ; move to next task slot
 
-0x0000A3EE       SUB R2 R2 1
-0x0000A3F2       BNE task_alloc_loop
+0x0000A5F2       SUB R2 R2 1
+0x0000A5F6       BNE task_alloc_loop
 
 ; no free tasks slots
 
-0x0000A3FA       LI R1 0
-0x0000A402       RET
+0x0000A5FE       LI R1 0
+0x0000A606       RET
 
 task_alloc_found:                           ;R1 points to free task slot
 
-0x0000A406       RET
+0x0000A60A       RET
 
 
 ; ================================================================
@@ -7934,14 +8090,14 @@ console_mutex:
 ; R1 = mutex pointer
 ; ================================================================
 mutex_init:
-0x0000A412       PUSH R2
+0x0000A616       PUSH R2
 
-0x0000A416       LI R2 0
-0x0000A41E       STW R2 [R1 + MUTEX_OWNER]      ; owner = NULL
-0x0000A422       STW R2 [R1 + MUTEX_WAITQ]      ; waitq = 0 (empty)
+0x0000A61A       LI R2 0
+0x0000A622       STW R2 [R1 + MUTEX_OWNER]      ; owner = NULL
+0x0000A626       STW R2 [R1 + MUTEX_WAITQ]      ; waitq = 0 (empty)
 
-0x0000A426       POP R2
-0x0000A42A       RET
+0x0000A62A       POP R2
+0x0000A62E       RET
 
 ; ================================================================
 ; mutex_lock - Acquire a mutex (blocks if already locked)
@@ -7959,80 +8115,80 @@ mutex_init:
 
 mutex_lock:
 
-0x0000A42E       PUSH LR
-0x0000A432       PUSH R8
-0x0000A436       PUSH R9
-0x0000A43A       PUSH R10
+0x0000A632       PUSH LR
+0x0000A636       PUSH R8
+0x0000A63A       PUSH R9
+0x0000A63E       PUSH R10
 
-0x0000A43E       MOV R8 R1                  ; save mutex pointer
+0x0000A642       MOV R8 R1                  ; save mutex pointer
 ; macro: GET_CURR_TASK_IDX R9
-0x0000A442   LI R1 CURRENT_TASK
-0x0000A44A   LDW R9 [R1]
+0x0000A646   LI R1 CURRENT_TASK
+0x0000A64E   LDW R9 [R1]
 ; macro: GET_TASK_PTR R9, R9        ; R9 = current task*
-0x0000A44E   LI R1 TASK_SIZE
-0x0000A456   MUL R3 R9 R1
-0x0000A45A   LI R9 tasks
-0x0000A462   ADD R9 R9 R3
+0x0000A652   LI R1 TASK_SIZE
+0x0000A65A   MUL R3 R9 R1
+0x0000A65E   LI R9 tasks
+0x0000A666   ADD R9 R9 R3
 
 mutex_lock_retry:
     ; Check if mutex is already locked
-0x0000A466       LDW R10 [R8 + MUTEX_OWNER]
-0x0000A46A       CMP R10 0
-0x0000A46E       BEQ mutex_lock_acquire      ; if unlocked, acquire it
+0x0000A66A       LDW R10 [R8 + MUTEX_OWNER]
+0x0000A66E       CMP R10 0
+0x0000A672       BEQ mutex_lock_acquire      ; if unlocked, acquire it
 
     ; this Mutex is locked by someone else - block
     ; Add current task to mutex wait queue
-0x0000A476       MOV R1 R8
-0x0000A47A       ADD R1 R1 MUTEX_WAITQ
+0x0000A67A       MOV R1 R8
+0x0000A67E       ADD R1 R1 MUTEX_WAITQ
 
-0x0000A47E       LI R2 WAIT_MUTEX
-0x0000A486       LI R3 TASK_WAIT_MUTEX
-0x0000A48E       BL waitq_prepare_sleep
+0x0000A682       LI R2 WAIT_MUTEX
+0x0000A68A       LI R3 TASK_WAIT_MUTEX
+0x0000A692       BL waitq_prepare_sleep
 
     ; Re-check if mutex became available while preparing sleep
-0x0000A496       LDW R10 [R8 + MUTEX_OWNER]
-0x0000A49A       CMP R10 0
-0x0000A49E       BEQ mutex_lock_wake
+0x0000A69A       LDW R10 [R8 + MUTEX_OWNER]
+0x0000A69E       CMP R10 0
+0x0000A6A2       BEQ mutex_lock_wake
 
     ; Still locked - go to sleep
-0x0000A4A6       BL waitq_sleep_current
+0x0000A6AA       BL waitq_sleep_current
 
     ; Woken up - try to acquire again
-0x0000A4AE       B mutex_lock_retry
+0x0000A6B2       B mutex_lock_retry
 
 mutex_lock_wake:
     ; Mutex became available, cancel sleep and acquire
-0x0000A4B6       MOV R1 R8
-0x0000A4BA       ADD R1 R1 MUTEX_WAITQ
-0x0000A4BE       BL waitq_cancel_sleep_current
+0x0000A6BA       MOV R1 R8
+0x0000A6BE       ADD R1 R1 MUTEX_WAITQ
+0x0000A6C2       BL waitq_cancel_sleep_current
 
-0x0000A4C6       B mutex_lock_retry
+0x0000A6CA       B mutex_lock_retry
 
 mutex_lock_acquire:
     ; Disable interrupts to prevent race conditions
-0x0000A4CE       DISABLEINT
+0x0000A6D2       DISABLEINT
 
     ; Double-check it's still unlocked
-0x0000A4D2       LDW R10 [R8 + MUTEX_OWNER]
-0x0000A4D6       CMP R10 0
-0x0000A4DA       BNE mutex_lock_race
+0x0000A6D6       LDW R10 [R8 + MUTEX_OWNER]
+0x0000A6DA       CMP R10 0
+0x0000A6DE       BNE mutex_lock_race
 
     ; Set owner to current task
-0x0000A4E2       STW R9 [R8 + MUTEX_OWNER]
+0x0000A6E6       STW R9 [R8 + MUTEX_OWNER]
 
     ; Re-enable interrupts
-0x0000A4E6       ENABLEINT
+0x0000A6EA       ENABLEINT
 
-0x0000A4EA       POP R10
-0x0000A4EE       POP R9
-0x0000A4F2       POP R8
-0x0000A4F6       POP LR
-0x0000A4FA       RET
+0x0000A6EE       POP R10
+0x0000A6F2       POP R9
+0x0000A6F6       POP R8
+0x0000A6FA       POP LR
+0x0000A6FE       RET
 
 mutex_lock_race:
     ; Someone else acquired it while interrupts were disabled
-0x0000A4FE       ENABLEINT
-0x0000A502       B mutex_lock_retry
+0x0000A702       ENABLEINT
+0x0000A706       B mutex_lock_retry
 
 
 ; ================================================================
@@ -8045,128 +8201,128 @@ mutex_lock_race:
 ;        They will try to take the key
 ; ================================================================
 mutex_unlock:
-0x0000A50A       PUSH LR
-0x0000A50E       PUSH R8
-0x0000A512       PUSH R9
-0x0000A516       PUSH R10
+0x0000A70E       PUSH LR
+0x0000A712       PUSH R8
+0x0000A716       PUSH R9
+0x0000A71A       PUSH R10
 
-0x0000A51A       MOV  R8 R1                  ; save mutex pointer
+0x0000A71E       MOV  R8 R1                  ; save mutex pointer
 ; macro: GET_CURR_TASK_IDX R9
-0x0000A51E   LI R1 CURRENT_TASK
-0x0000A526   LDW R9 [R1]
+0x0000A722   LI R1 CURRENT_TASK
+0x0000A72A   LDW R9 [R1]
 ; macro: GET_TASK_PTR R9, R9        ; R9 = current task*
-0x0000A52A   LI R1 TASK_SIZE
-0x0000A532   MUL R3 R9 R1
-0x0000A536   LI R9 tasks
-0x0000A53E   ADD R9 R9 R3
+0x0000A72E   LI R1 TASK_SIZE
+0x0000A736   MUL R3 R9 R1
+0x0000A73A   LI R9 tasks
+0x0000A742   ADD R9 R9 R3
 
     ; Verify ownership
-0x0000A542       LDW  R10 [R8 + MUTEX_OWNER]
-0x0000A546       CMP  R10 R9
-0x0000A54A       BNE  mutex_unlock_error     ; Not owner - error!
+0x0000A746       LDW  R10 [R8 + MUTEX_OWNER]
+0x0000A74A       CMP  R10 R9
+0x0000A74E       BNE  mutex_unlock_error     ; Not owner - error!
 
     ; Release the mutex
-0x0000A552       LI  R10 0
-0x0000A55A       STW R10 [R8 + MUTEX_OWNER]
+0x0000A756       LI  R10 0
+0x0000A75E       STW R10 [R8 + MUTEX_OWNER]
 
     ; Wake one waiting task (if someone is waiting)
     ; waky next one (of any waiting)
-0x0000A55E       MOV R1 R8
-0x0000A562       ADD R1 R1 MUTEX_WAITQ
-0x0000A566       BL waitq_wake_one
+0x0000A762       MOV R1 R8
+0x0000A766       ADD R1 R1 MUTEX_WAITQ
+0x0000A76A       BL waitq_wake_one
 
 mutex_unlock_done:
-0x0000A56E       POP R10
-0x0000A572       POP R9
-0x0000A576       POP R8
-0x0000A57A       POP LR
-0x0000A57E       RET
+0x0000A772       POP R10
+0x0000A776       POP R9
+0x0000A77A       POP R8
+0x0000A77E       POP LR
+0x0000A782       RET
 
 mutex_unlock_error:
     ; Not owner - ignore (or panic)
-0x0000A582       POP R10
-0x0000A586       POP R9
-0x0000A58A       POP R8
-0x0000A58E       POP LR
-0x0000A592       RET
+0x0000A786       POP R10
+0x0000A78A       POP R9
+0x0000A78E       POP R8
+0x0000A792       POP LR
+0x0000A796       RET
 
 ; ================================================================
 ; waitq_wake_one - Wake exactly one task from the wait queue
 ; R1 = wait queue pointer
 ; ================================================================
 waitq_wake_one:
-0x0000A596       PUSH LR
-0x0000A59A       PUSH R8
-0x0000A59E       PUSH R9
-0x0000A5A2       PUSH R10
-0x0000A5A6       PUSH R11
+0x0000A79A       PUSH LR
+0x0000A79E       PUSH R8
+0x0000A7A2       PUSH R9
+0x0000A7A6       PUSH R10
+0x0000A7AA       PUSH R11
 
-0x0000A5AA       MOV R8 R1                  ; wait queue pointer
-0x0000A5AE       LDW R9 [R8 + WQ_MASK]      ; current wait queue mask
+0x0000A7AE       MOV R8 R1                  ; wait queue pointer
+0x0000A7B2       LDW R9 [R8 + WQ_MASK]      ; current wait queue mask
 
-0x0000A5B2       CMP R9 0
-0x0000A5B6       BEQ waitq_wake_one_done    ; No waiters
+0x0000A7B6       CMP R9 0
+0x0000A7BA       BEQ waitq_wake_one_done    ; No waiters
 
     ; Find the first waiting task
-0x0000A5BE       LI R10 0                   ; task index
+0x0000A7C2       LI R10 0                   ; task index
 
 waitq_wake_one_find:
-0x0000A5C6       CMP R10 MAX_TASKS
-0x0000A5CA       BGE waitq_wake_one_done
+0x0000A7CA       CMP R10 MAX_TASKS
+0x0000A7CE       BGE waitq_wake_one_done
 
-0x0000A5D2       LI R11 1
-0x0000A5DA       SHL R11 R11 R10            ; bit for this task
-0x0000A5DE       AND R2 R9 R11
-0x0000A5E2       CMP R2 0
-0x0000A5E6       BNE waitq_wake_one_found
+0x0000A7D6       LI R11 1
+0x0000A7DE       SHL R11 R11 R10            ; bit for this task
+0x0000A7E2       AND R2 R9 R11
+0x0000A7E6       CMP R2 0
+0x0000A7EA       BNE waitq_wake_one_found
 
-0x0000A5EE       ADD R10 R10 1
-0x0000A5F2       B waitq_wake_one_find
+0x0000A7F2       ADD R10 R10 1
+0x0000A7F6       B waitq_wake_one_find
 
 waitq_wake_one_found:
     ; Clear this task's bit from the wait queue
-0x0000A5FA       NOT R11 R11
-0x0000A5FE       AND R9 R9 R11
-0x0000A602       STW R9 [R8 + WQ_MASK]
+0x0000A7FE       NOT R11 R11
+0x0000A802       AND R9 R9 R11
+0x0000A806       STW R9 [R8 + WQ_MASK]
 
     ; Wake this task
 ; macro: GET_TASK_PTR R5, R10
-0x0000A606   LI R1 TASK_SIZE
-0x0000A60E   MUL R3 R10 R1
-0x0000A612   LI R5 tasks
-0x0000A61A   ADD R5 R5 R3
+0x0000A80A   LI R1 TASK_SIZE
+0x0000A812   MUL R3 R10 R1
+0x0000A816   LI R5 tasks
+0x0000A81E   ADD R5 R5 R3
 ; macro: TASK_SET_STATE R5, TASK_READY
-0x0000A61E   LI R1 TASK_READY
-0x0000A626   STW R1 [R5 + TASK_STATE]
+0x0000A822   LI R1 TASK_READY
+0x0000A82A   STW R1 [R5 + TASK_STATE]
 ; macro: TASK_SET_WAIT R5, WAIT_NONE
-0x0000A62A   LI R1 WAIT_NONE
-0x0000A632   STW R1 [R5 + TASK_WAIT]
+0x0000A82E   LI R1 WAIT_NONE
+0x0000A836   STW R1 [R5 + TASK_WAIT]
 
 waitq_wake_one_done:
-0x0000A636       POP R11
-0x0000A63A       POP R10
-0x0000A63E       POP R9
-0x0000A642       POP R8
-0x0000A646       POP LR
-0x0000A64A       RET
+0x0000A83A       POP R11
+0x0000A83E       POP R10
+0x0000A842       POP R9
+0x0000A846       POP R8
+0x0000A84A       POP LR
+0x0000A84E       RET
 
 ; ================================================================
 ; CONSOLE MUTEX WRAPPER FUNCTIONS
 ; ================================================================
 
 console_lock:
-0x0000A64E       PUSH LR
-0x0000A652       LI R1 console_mutex
-0x0000A65A       BL mutex_lock
-0x0000A662       POP LR
-0x0000A666       RET
+0x0000A852       PUSH LR
+0x0000A856       LI R1 console_mutex
+0x0000A85E       BL mutex_lock
+0x0000A866       POP LR
+0x0000A86A       RET
 
 console_unlock:
-0x0000A66A       PUSH LR
-0x0000A66E       LI R1 console_mutex
-0x0000A676       BL mutex_unlock
-0x0000A67E       POP LR
-0x0000A682       RET
+0x0000A86E       PUSH LR
+0x0000A872       LI R1 console_mutex
+0x0000A87A       BL mutex_unlock
+0x0000A882       POP LR
+0x0000A886       RET
 
 
 
@@ -8221,14 +8377,14 @@ write_loop1:
 0x00019058       LI R2 USER_WRITE_BUF    ; user buff
 0x00019060       LI R3 14                ; len
 0x00019068       SVC SYS_WRITE
-0x0001906C       DEBUG 1
-0x00019070       pop R1
-0x00019074       sub R1 R1 1
-0x00019078       cmp r1 0
-0x0001907C       BNE write_loop1
+    ;DEBUG 1
+0x0001906C       pop R1
+0x00019070       sub R1 R1 1
+0x00019074       cmp r1 0
+0x00019078       BNE write_loop1
     ; Exit after the write test.
-0x00019084       LI R1 SYS_EXIT
-0x0001908C       SVC SYS_EXIT
+0x00019080       LI R1 SYS_EXIT
+0x00019088       SVC SYS_EXIT
 
 
 ; ---TASK 2---------------------------------------------
@@ -8755,34 +8911,33 @@ tarfs_start:
     .ASCIIZ "5"
     .SPACE 354
 
-; bin/cat, 3523 bytes
+; bin/cat, 3491 bytes
     .ASCIIZ "bin/cat"
     .SPACE 116
-    .ASCIIZ "00000006703"
+    .ASCIIZ "00000006643"
     .SPACE 20
     .ASCIIZ "0"
     .SPACE 354
-    ; file data (3523 bytes, padded to 3584)
-    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x56000002, 0x30000000, 0x00043BFA, 0x56000002
-    .WORD 0x0F010000, 0x00000000, 0x10010000, 0x0F010000, 0x00000001, 0x400F0000, 0x56000002, 0x11010000
-    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x000430BC, 0x01890100
+    ; file data (3491 bytes, padded to 3584)
+    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x30000000, 0x00043BDA, 0x0F010000, 0x00000001
+    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x0004309C, 0x01890100
     .WORD 0x0F010000, 0x00000001, 0x01820800, 0x01830900, 0x40040000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BF8, 0x23010800, 0x0F010000, 0x00000001
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BD8, 0x23010800, 0x0F010000, 0x00000001
     .WORD 0x01820800, 0x0F030000, 0x00000001, 0x40040000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000
     .WORD 0x10080000, 0x10090000, 0x01880100, 0x0F090000, 0x00000000, 0x20020889, 0x04020080, 0x06000000
-    .WORD 0x000430F0, 0x02090981, 0x05000000, 0x000430D4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x000430D0, 0x02090981, 0x05000000, 0x000430B4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x200A0800
-    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004315C, 0x040A0080, 0x06000000, 0x0004314C, 0x02080881
-    .WORD 0x02090981, 0x05000000, 0x0004311C, 0x0F010000, 0x00000001, 0x05000000, 0x00043164, 0x0F010000
+    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004313C, 0x040A0080, 0x06000000, 0x0004312C, 0x02080881
+    .WORD 0x02090981, 0x05000000, 0x000430FC, 0x0F010000, 0x00000001, 0x05000000, 0x00043144, 0x0F010000
     .WORD 0x00000000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000
-    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431BC
-    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043194, 0x01810800
+    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x0004319C
+    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043174, 0x01810800
     .WORD 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x00043210, 0x23090800
-    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431F0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
+    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431F0, 0x23090800
+    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431D0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x40040000, 0x31000000, 0x40050000, 0x31000000, 0x40060000, 0x31000000
     .WORD 0x40070000, 0x31000000, 0x400E0000, 0x31000000, 0x400D0000, 0x31000000, 0x40100000, 0x31000000
-    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004326C, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004324C, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
@@ -8801,109 +8956,109 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x100F0000, 0x02010187, 0x0F020000
-    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004353C
-    .WORD 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
-    .WORD 0x07000000, 0x00043518, 0x22030204, 0x04030500, 0x15000000, 0x00043524, 0x02040481, 0x05000000
-    .WORD 0x000434D4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x000435BC, 0x01810500
-    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x000435B4, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
-    .WORD 0x000435B4, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
-    .WORD 0x04030080, 0x06000000, 0x00043598, 0x02040481, 0x05000000, 0x00043558, 0x25010200, 0x25050204
-    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x000435BC, 0x0F010000, 0x00000000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043628, 0x0F040000, 0x00000000, 0x040400B0
-    .WORD 0x15000000, 0x00043628, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
-    .WORD 0x22030200, 0x04030100, 0x06000000, 0x0004361C, 0x02040481, 0x05000000, 0x000435DC, 0x0F030000
-    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043274, 0x0F030000
-    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004366C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
-    .WORD 0x03030381, 0x05000000, 0x00043644, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
+    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004351C
+    .WORD 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
+    .WORD 0x07000000, 0x000434F8, 0x22030204, 0x04030500, 0x15000000, 0x00043504, 0x02040481, 0x05000000
+    .WORD 0x000434B4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x0004359C, 0x01810500
+    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x00043594, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
+    .WORD 0x00043594, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
+    .WORD 0x04030080, 0x06000000, 0x00043578, 0x02040481, 0x05000000, 0x00043538, 0x25010200, 0x25050204
+    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x0004359C, 0x0F010000, 0x00000000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043608, 0x0F040000, 0x00000000, 0x040400B0
+    .WORD 0x15000000, 0x00043608, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
+    .WORD 0x22030200, 0x04030100, 0x06000000, 0x000435FC, 0x02040481, 0x05000000, 0x000435BC, 0x0F030000
+    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043254, 0x0F030000
+    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004364C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
+    .WORD 0x03030381, 0x05000000, 0x00043624, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
     .WORD 0x100A0000, 0x100B0000, 0x100C0000, 0x01880100, 0x01890200, 0x018B0300, 0x018C0400, 0x030D0D05
-    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436E0, 0x04090080
-    .WORD 0x15000000, 0x000436E0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
-    .WORD 0x04090080, 0x07000000, 0x00043710, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
-    .WORD 0x00000000, 0x23020800, 0x05000000, 0x000437B0, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
-    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004373C, 0x020707B0, 0x05000000, 0x0004375C, 0x04070089
-    .WORD 0x14000000, 0x00043754, 0x020707B0, 0x05000000, 0x0004375C, 0x0307078A, 0x020707C1, 0x23070600
-    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x00043718, 0x03060681, 0x04040080
-    .WORD 0x06000000, 0x000437A4, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
-    .WORD 0x0004377C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
+    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436C0, 0x04090080
+    .WORD 0x15000000, 0x000436C0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
+    .WORD 0x04090080, 0x07000000, 0x000436F0, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
+    .WORD 0x00000000, 0x23020800, 0x05000000, 0x00043790, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
+    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004371C, 0x020707B0, 0x05000000, 0x0004373C, 0x04070089
+    .WORD 0x14000000, 0x00043734, 0x020707B0, 0x05000000, 0x0004373C, 0x0307078A, 0x020707C1, 0x23070600
+    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x000436F8, 0x03060681, 0x04040080
+    .WORD 0x06000000, 0x00043784, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
+    .WORD 0x0004375C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
     .WORD 0x110B0000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000
-    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043674, 0x110F0000
+    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043654, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x0F030000, 0x00000010, 0x0F040000, 0x00000000, 0x0F050000, 0x00000009
-    .WORD 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
-    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000
-    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043674
+    .WORD 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
+    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000
+    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043654
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000, 0x00000001, 0x0F050000
-    .WORD 0x00000022, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
-    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438E4, 0x02010181, 0x02040481, 0x05000000
-    .WORD 0x000438C0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
-    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004397C
-    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x000434B4, 0x11090000, 0x04010080, 0x06000000
-    .WORD 0x00043964, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
-    .WORD 0x00043984, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043984, 0x0F010000
+    .WORD 0x00000022, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
+    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438C4, 0x02010181, 0x02040481, 0x05000000
+    .WORD 0x000438A0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
+    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004395C
+    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x00043494, 0x11090000, 0x04010080, 0x06000000
+    .WORD 0x00043944, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
+    .WORD 0x00043964, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043964, 0x0F010000
     .WORD 0x00000000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439FC, 0x22010800, 0x01820900, 0x0F030000
-    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x00043A0C, 0x040100CC, 0x07000000, 0x000439FC
-    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x00043A14, 0x0F010000
-    .WORD 0xFFFFFFFF, 0x05000000, 0x00043A14, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A60, 0x22010800
-    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435C4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A68
-    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043AA0
+    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439DC, 0x22010800, 0x01820900, 0x0F030000
+    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x000439EC, 0x040100CC, 0x07000000, 0x000439DC
+    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x000439F4, 0x0F010000
+    .WORD 0xFFFFFFFF, 0x05000000, 0x000439F4, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A40, 0x22010800
+    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435A4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A48
+    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043A80
     .WORD 0x0F020000, 0x00000000, 0x25020104, 0x100F0000, 0x10080000, 0x01880100, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043AB8, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
-    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043AF8, 0x01820100
-    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A24, 0x05000000, 0x00043B00, 0x0F010000, 0x00000000
+    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043A98, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
+    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043AD8, 0x01820100
+    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A04, 0x05000000, 0x00043AE0, 0x0F010000, 0x00000000
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x030D0DCC, 0x01890D00
-    .WORD 0x01810800, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043BCC, 0x01880100, 0x01810800
-    .WORD 0x01820900, 0x30000000, 0x00043994, 0x04010080, 0x06000000, 0x00043BB0, 0x0F020000, 0xFFFFFFFF
-    .WORD 0x04010200, 0x06000000, 0x00043BCC, 0x0201098C, 0x30000000, 0x00043044, 0x22020908, 0x04020082
-    .WORD 0x07000000, 0x00043B98, 0x0F010000, 0x00043BE8, 0x30000000, 0x00043084, 0x0F010000, 0x00043BEC
-    .WORD 0x30000000, 0x00043084, 0x05000000, 0x00043B3C, 0x01810800, 0x30000000, 0x00043A24, 0x0F010000
-    .WORD 0x00000000, 0x05000000, 0x00043BD4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
+    .WORD 0x01810800, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043BAC, 0x01880100, 0x01810800
+    .WORD 0x01820900, 0x30000000, 0x00043974, 0x04010080, 0x06000000, 0x00043B90, 0x0F020000, 0xFFFFFFFF
+    .WORD 0x04010200, 0x06000000, 0x00043BAC, 0x0201098C, 0x30000000, 0x00043024, 0x22020908, 0x04020082
+    .WORD 0x07000000, 0x00043B78, 0x0F010000, 0x00043BC8, 0x30000000, 0x00043064, 0x0F010000, 0x00043BCC
+    .WORD 0x30000000, 0x00043064, 0x05000000, 0x00043B1C, 0x01810800, 0x30000000, 0x00043A04, 0x0F010000
+    .WORD 0x00000000, 0x05000000, 0x00043BB4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x0000002F, 0x0000000A, 0x31000000, 0x000A0020, 0x00000000, 0x00003100
     .WORD 0x0000100F, 0x00001006, 0x00001007, 0x00001008, 0x00001009, 0x0000100A, 0x0000100B, 0x0000100C
-    .WORD 0x01000F03, 0x0D030000, 0x0D00030D, 0x0100018C, 0x02000188, 0x00820189, 0x00000408, 0x3D761200
-    .WORD 0x00000004, 0x00010F0A, 0x00000000, 0x00000F06, 0x08000000, 0x0000040A, 0x3D3A1500, 0x0A000004
-    .WORD 0x02820182, 0x09020C02, 0x02000202, 0x00002201, 0x00000F02, 0x00000000, 0x32383000, 0x01000004
-    .WORD 0x0080018B, 0x0000040B, 0x3CEE1200, 0x0B000004, 0x0C000181, 0x00000182, 0x01000F03, 0x00000000
-    .WORD 0x32303000, 0x01000004, 0x00800187, 0x00000407, 0x3CD61300, 0x00000004, 0x00010F01, 0x0C000000
-    .WORD 0x07000182, 0x00000183, 0x32283000, 0x00000004, 0x3C8E0500, 0x0B000004, 0x00000181, 0x32403000
-    .WORD 0x0A810004, 0x0000020A, 0x3C520500, 0x00000004, 0x3DAF0F01, 0x00000004, 0x30443000, 0x0A000004
-    .WORD 0x02820182, 0x09020C02, 0x02000202, 0x00002201, 0x30443000, 0x00000004, 0x3BF60F01, 0x00000004
-    .WORD 0x30443000, 0x00000004, 0x00010F06, 0x0A810000, 0x0000020A, 0x3C520500, 0x00020004, 0x00005600
+    .WORD 0x01000F03, 0x0D030000, 0x0D00030D, 0x0100018C, 0x02000188, 0x00820189, 0x00000408, 0x3D561200
+    .WORD 0x00000004, 0x00010F0A, 0x00000000, 0x00000F06, 0x08000000, 0x0000040A, 0x3D1A1500, 0x0A000004
+    .WORD 0x02820182, 0x09020C02, 0x02000202, 0x00002201, 0x00000F02, 0x00000000, 0x32183000, 0x01000004
+    .WORD 0x0080018B, 0x0000040B, 0x3CCE1200, 0x0B000004, 0x0C000181, 0x00000182, 0x01000F03, 0x00000000
+    .WORD 0x32103000, 0x01000004, 0x00800187, 0x00000407, 0x3CB61300, 0x00000004, 0x00010F01, 0x0C000000
+    .WORD 0x07000182, 0x00000183, 0x32083000, 0x00000004, 0x3C6E0500, 0x0B000004, 0x00000181, 0x32203000
+    .WORD 0x0A810004, 0x0000020A, 0x3C320500, 0x00000004, 0x3D8F0F01, 0x00000004, 0x30243000, 0x0A000004
+    .WORD 0x02820182, 0x09020C02, 0x02000202, 0x00002201, 0x30243000, 0x00000004, 0x3BD60F01, 0x00000004
+    .WORD 0x30243000, 0x00000004, 0x00010F06, 0x0A810000, 0x0000020A, 0x3C320500, 0x00020004, 0x00005600
     .WORD 0x01000F02, 0x0D020000, 0x0002020D, 0x06005600, 0x00000181, 0x0000110C, 0x0000110B, 0x0000110A
-    .WORD 0x00001109, 0x00001108, 0x00001107, 0x00001106, 0x0000110F, 0x00023100, 0x00005600, 0x3D9A0F01
-    .WORD 0x00000004, 0x30443000, 0x00000004, 0x00010F06, 0x00000000, 0x3D3A0500, 0x73750004, 0x3A656761
+    .WORD 0x00001109, 0x00001108, 0x00001107, 0x00001106, 0x0000110F, 0x00023100, 0x00005600, 0x3D7A0F01
+    .WORD 0x00000004, 0x30243000, 0x00000004, 0x00010F06, 0x00000000, 0x3D1A0500, 0x73750004, 0x3A656761
     .WORD 0x74616320, 0x6C696620, 0x2E2E2065, 0x63000A2E, 0x203A7461, 0x6E6E6163, 0x6F20746F, 0x206E6570
     .WORD 0x00000A00, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
 
-; bin/echo, 3226 bytes
+; bin/echo, 3194 bytes
     .ASCIIZ "bin/echo"
     .SPACE 115
-    .ASCIIZ "00000006232"
+    .ASCIIZ "00000006172"
     .SPACE 20
     .ASCIIZ "0"
     .SPACE 354
-    ; file data (3226 bytes, padded to 3584)
-    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x56000002, 0x30000000, 0x00043BFA, 0x56000002
-    .WORD 0x0F010000, 0x00000000, 0x10010000, 0x0F010000, 0x00000001, 0x400F0000, 0x56000002, 0x11010000
-    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x000430BC, 0x01890100
+    ; file data (3194 bytes, padded to 3584)
+    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x30000000, 0x00043BDA, 0x0F010000, 0x00000001
+    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x0004309C, 0x01890100
     .WORD 0x0F010000, 0x00000001, 0x01820800, 0x01830900, 0x40040000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BF8, 0x23010800, 0x0F010000, 0x00000001
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BD8, 0x23010800, 0x0F010000, 0x00000001
     .WORD 0x01820800, 0x0F030000, 0x00000001, 0x40040000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000
     .WORD 0x10080000, 0x10090000, 0x01880100, 0x0F090000, 0x00000000, 0x20020889, 0x04020080, 0x06000000
-    .WORD 0x000430F0, 0x02090981, 0x05000000, 0x000430D4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x000430D0, 0x02090981, 0x05000000, 0x000430B4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x200A0800
-    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004315C, 0x040A0080, 0x06000000, 0x0004314C, 0x02080881
-    .WORD 0x02090981, 0x05000000, 0x0004311C, 0x0F010000, 0x00000001, 0x05000000, 0x00043164, 0x0F010000
+    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004313C, 0x040A0080, 0x06000000, 0x0004312C, 0x02080881
+    .WORD 0x02090981, 0x05000000, 0x000430FC, 0x0F010000, 0x00000001, 0x05000000, 0x00043144, 0x0F010000
     .WORD 0x00000000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000
-    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431BC
-    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043194, 0x01810800
+    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x0004319C
+    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043174, 0x01810800
     .WORD 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x00043210, 0x23090800
-    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431F0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
+    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431F0, 0x23090800
+    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431D0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x40040000, 0x31000000, 0x40050000, 0x31000000, 0x40060000, 0x31000000
     .WORD 0x40070000, 0x31000000, 0x400E0000, 0x31000000, 0x400D0000, 0x31000000, 0x40100000, 0x31000000
-    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004326C, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004324C, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
@@ -8922,68 +9077,68 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x100F0000, 0x02010187, 0x0F020000
-    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004353C
-    .WORD 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
-    .WORD 0x07000000, 0x00043518, 0x22030204, 0x04030500, 0x15000000, 0x00043524, 0x02040481, 0x05000000
-    .WORD 0x000434D4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x000435BC, 0x01810500
-    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x000435B4, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
-    .WORD 0x000435B4, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
-    .WORD 0x04030080, 0x06000000, 0x00043598, 0x02040481, 0x05000000, 0x00043558, 0x25010200, 0x25050204
-    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x000435BC, 0x0F010000, 0x00000000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043628, 0x0F040000, 0x00000000, 0x040400B0
-    .WORD 0x15000000, 0x00043628, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
-    .WORD 0x22030200, 0x04030100, 0x06000000, 0x0004361C, 0x02040481, 0x05000000, 0x000435DC, 0x0F030000
-    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043274, 0x0F030000
-    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004366C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
-    .WORD 0x03030381, 0x05000000, 0x00043644, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
+    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004351C
+    .WORD 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
+    .WORD 0x07000000, 0x000434F8, 0x22030204, 0x04030500, 0x15000000, 0x00043504, 0x02040481, 0x05000000
+    .WORD 0x000434B4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x0004359C, 0x01810500
+    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x00043594, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
+    .WORD 0x00043594, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
+    .WORD 0x04030080, 0x06000000, 0x00043578, 0x02040481, 0x05000000, 0x00043538, 0x25010200, 0x25050204
+    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x0004359C, 0x0F010000, 0x00000000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043608, 0x0F040000, 0x00000000, 0x040400B0
+    .WORD 0x15000000, 0x00043608, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
+    .WORD 0x22030200, 0x04030100, 0x06000000, 0x000435FC, 0x02040481, 0x05000000, 0x000435BC, 0x0F030000
+    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043254, 0x0F030000
+    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004364C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
+    .WORD 0x03030381, 0x05000000, 0x00043624, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
     .WORD 0x100A0000, 0x100B0000, 0x100C0000, 0x01880100, 0x01890200, 0x018B0300, 0x018C0400, 0x030D0D05
-    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436E0, 0x04090080
-    .WORD 0x15000000, 0x000436E0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
-    .WORD 0x04090080, 0x07000000, 0x00043710, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
-    .WORD 0x00000000, 0x23020800, 0x05000000, 0x000437B0, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
-    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004373C, 0x020707B0, 0x05000000, 0x0004375C, 0x04070089
-    .WORD 0x14000000, 0x00043754, 0x020707B0, 0x05000000, 0x0004375C, 0x0307078A, 0x020707C1, 0x23070600
-    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x00043718, 0x03060681, 0x04040080
-    .WORD 0x06000000, 0x000437A4, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
-    .WORD 0x0004377C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
+    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436C0, 0x04090080
+    .WORD 0x15000000, 0x000436C0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
+    .WORD 0x04090080, 0x07000000, 0x000436F0, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
+    .WORD 0x00000000, 0x23020800, 0x05000000, 0x00043790, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
+    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004371C, 0x020707B0, 0x05000000, 0x0004373C, 0x04070089
+    .WORD 0x14000000, 0x00043734, 0x020707B0, 0x05000000, 0x0004373C, 0x0307078A, 0x020707C1, 0x23070600
+    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x000436F8, 0x03060681, 0x04040080
+    .WORD 0x06000000, 0x00043784, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
+    .WORD 0x0004375C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
     .WORD 0x110B0000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000
-    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043674, 0x110F0000
+    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043654, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x0F030000, 0x00000010, 0x0F040000, 0x00000000, 0x0F050000, 0x00000009
-    .WORD 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
-    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000
-    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043674
+    .WORD 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
+    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000
+    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043654
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000, 0x00000001, 0x0F050000
-    .WORD 0x00000022, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
-    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438E4, 0x02010181, 0x02040481, 0x05000000
-    .WORD 0x000438C0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
-    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004397C
-    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x000434B4, 0x11090000, 0x04010080, 0x06000000
-    .WORD 0x00043964, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
-    .WORD 0x00043984, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043984, 0x0F010000
+    .WORD 0x00000022, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
+    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438C4, 0x02010181, 0x02040481, 0x05000000
+    .WORD 0x000438A0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
+    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004395C
+    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x00043494, 0x11090000, 0x04010080, 0x06000000
+    .WORD 0x00043944, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
+    .WORD 0x00043964, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043964, 0x0F010000
     .WORD 0x00000000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439FC, 0x22010800, 0x01820900, 0x0F030000
-    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x00043A0C, 0x040100CC, 0x07000000, 0x000439FC
-    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x00043A14, 0x0F010000
-    .WORD 0xFFFFFFFF, 0x05000000, 0x00043A14, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A60, 0x22010800
-    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435C4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A68
-    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043AA0
+    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439DC, 0x22010800, 0x01820900, 0x0F030000
+    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x000439EC, 0x040100CC, 0x07000000, 0x000439DC
+    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x000439F4, 0x0F010000
+    .WORD 0xFFFFFFFF, 0x05000000, 0x000439F4, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A40, 0x22010800
+    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435A4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A48
+    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043A80
     .WORD 0x0F020000, 0x00000000, 0x25020104, 0x100F0000, 0x10080000, 0x01880100, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043AB8, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
-    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043AF8, 0x01820100
-    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A24, 0x05000000, 0x00043B00, 0x0F010000, 0x00000000
+    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043A98, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
+    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043AD8, 0x01820100
+    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A04, 0x05000000, 0x00043AE0, 0x0F010000, 0x00000000
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x030D0DCC, 0x01890D00
-    .WORD 0x01810800, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043BCC, 0x01880100, 0x01810800
-    .WORD 0x01820900, 0x30000000, 0x00043994, 0x04010080, 0x06000000, 0x00043BB0, 0x0F020000, 0xFFFFFFFF
-    .WORD 0x04010200, 0x06000000, 0x00043BCC, 0x0201098C, 0x30000000, 0x00043044, 0x22020908, 0x04020082
-    .WORD 0x07000000, 0x00043B98, 0x0F010000, 0x00043BE8, 0x30000000, 0x00043084, 0x0F010000, 0x00043BEC
-    .WORD 0x30000000, 0x00043084, 0x05000000, 0x00043B3C, 0x01810800, 0x30000000, 0x00043A24, 0x0F010000
-    .WORD 0x00000000, 0x05000000, 0x00043BD4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
+    .WORD 0x01810800, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043BAC, 0x01880100, 0x01810800
+    .WORD 0x01820900, 0x30000000, 0x00043974, 0x04010080, 0x06000000, 0x00043B90, 0x0F020000, 0xFFFFFFFF
+    .WORD 0x04010200, 0x06000000, 0x00043BAC, 0x0201098C, 0x30000000, 0x00043024, 0x22020908, 0x04020082
+    .WORD 0x07000000, 0x00043B78, 0x0F010000, 0x00043BC8, 0x30000000, 0x00043064, 0x0F010000, 0x00043BCC
+    .WORD 0x30000000, 0x00043064, 0x05000000, 0x00043B1C, 0x01810800, 0x30000000, 0x00043A04, 0x0F010000
+    .WORD 0x00000000, 0x05000000, 0x00043BB4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x0000002F, 0x0000000A, 0x31000000, 0x000A0020, 0x00000000, 0x00020000
     .WORD 0x00005600, 0x0000100F, 0x00001008, 0x00001009, 0x0100100A, 0x02000188, 0x00000189, 0x00010F0A
-    .WORD 0x09000000, 0x0B84018B, 0x0800020B, 0x0000040A, 0x3C7E1500, 0x0B000004, 0x00002201, 0x30443000
-    .WORD 0x0A810004, 0x0B84020A, 0x0800020B, 0x0000040A, 0x3C6E1500, 0x00000004, 0x3BF40F01, 0x00000004
-    .WORD 0x30443000, 0x00000004, 0x3C2A0500, 0x00000004, 0x3BF60F01, 0x00000004, 0x30443000, 0x00000004
+    .WORD 0x09000000, 0x0B84018B, 0x0800020B, 0x0000040A, 0x3C5E1500, 0x0B000004, 0x00002201, 0x30243000
+    .WORD 0x0A810004, 0x0B84020A, 0x0800020B, 0x0000040A, 0x3C4E1500, 0x00000004, 0x3BD40F01, 0x00000004
+    .WORD 0x30243000, 0x00000004, 0x3C0A0500, 0x00000004, 0x3BD60F01, 0x00000004, 0x30243000, 0x00000004
     .WORD 0x00000F01, 0x00000000, 0x0000110A, 0x00001109, 0x00001108, 0x0000110F, 0x00003100, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
@@ -8996,35 +9151,35 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
 
-; bin/ls, 3675 bytes
+; bin/ls, 3647 bytes
     .ASCIIZ "bin/ls"
     .SPACE 117
-    .ASCIIZ "00000007133"
+    .ASCIIZ "00000007077"
     .SPACE 20
     .ASCIIZ "0"
     .SPACE 354
-    ; file data (3675 bytes, padded to 4096)
-    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x56000002, 0x30000000, 0x00043BFA, 0x56000002
-    .WORD 0x0F010000, 0x00000000, 0x10010000, 0x0F010000, 0x00000001, 0x400F0000, 0x56000002, 0x11010000
-    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x000430BC, 0x01890100
+    ; file data (3647 bytes, padded to 4096)
+    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x30000000, 0x00043BDA, 0x0F010000, 0x00000001
+    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x0004309C, 0x01890100
     .WORD 0x0F010000, 0x00000001, 0x01820800, 0x01830900, 0x40040000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BF8, 0x23010800, 0x0F010000, 0x00000001
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BD8, 0x23010800, 0x0F010000, 0x00000001
     .WORD 0x01820800, 0x0F030000, 0x00000001, 0x40040000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000
     .WORD 0x10080000, 0x10090000, 0x01880100, 0x0F090000, 0x00000000, 0x20020889, 0x04020080, 0x06000000
-    .WORD 0x000430F0, 0x02090981, 0x05000000, 0x000430D4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x000430D0, 0x02090981, 0x05000000, 0x000430B4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x200A0800
-    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004315C, 0x040A0080, 0x06000000, 0x0004314C, 0x02080881
-    .WORD 0x02090981, 0x05000000, 0x0004311C, 0x0F010000, 0x00000001, 0x05000000, 0x00043164, 0x0F010000
+    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004313C, 0x040A0080, 0x06000000, 0x0004312C, 0x02080881
+    .WORD 0x02090981, 0x05000000, 0x000430FC, 0x0F010000, 0x00000001, 0x05000000, 0x00043144, 0x0F010000
     .WORD 0x00000000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000
-    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431BC
-    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043194, 0x01810800
+    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x0004319C
+    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043174, 0x01810800
     .WORD 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x00043210, 0x23090800
-    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431F0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
+    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431F0, 0x23090800
+    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431D0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x40040000, 0x31000000, 0x40050000, 0x31000000, 0x40060000, 0x31000000
     .WORD 0x40070000, 0x31000000, 0x400E0000, 0x31000000, 0x400D0000, 0x31000000, 0x40100000, 0x31000000
-    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004326C, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004324C, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
@@ -9043,83 +9198,84 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x100F0000, 0x02010187, 0x0F020000
-    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004353C
-    .WORD 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
-    .WORD 0x07000000, 0x00043518, 0x22030204, 0x04030500, 0x15000000, 0x00043524, 0x02040481, 0x05000000
-    .WORD 0x000434D4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x000435BC, 0x01810500
-    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x000435B4, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
-    .WORD 0x000435B4, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
-    .WORD 0x04030080, 0x06000000, 0x00043598, 0x02040481, 0x05000000, 0x00043558, 0x25010200, 0x25050204
-    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x000435BC, 0x0F010000, 0x00000000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043628, 0x0F040000, 0x00000000, 0x040400B0
-    .WORD 0x15000000, 0x00043628, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
-    .WORD 0x22030200, 0x04030100, 0x06000000, 0x0004361C, 0x02040481, 0x05000000, 0x000435DC, 0x0F030000
-    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043274, 0x0F030000
-    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004366C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
-    .WORD 0x03030381, 0x05000000, 0x00043644, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
+    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004351C
+    .WORD 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
+    .WORD 0x07000000, 0x000434F8, 0x22030204, 0x04030500, 0x15000000, 0x00043504, 0x02040481, 0x05000000
+    .WORD 0x000434B4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x0004359C, 0x01810500
+    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x00043594, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
+    .WORD 0x00043594, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
+    .WORD 0x04030080, 0x06000000, 0x00043578, 0x02040481, 0x05000000, 0x00043538, 0x25010200, 0x25050204
+    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x0004359C, 0x0F010000, 0x00000000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043608, 0x0F040000, 0x00000000, 0x040400B0
+    .WORD 0x15000000, 0x00043608, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
+    .WORD 0x22030200, 0x04030100, 0x06000000, 0x000435FC, 0x02040481, 0x05000000, 0x000435BC, 0x0F030000
+    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043254, 0x0F030000
+    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004364C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
+    .WORD 0x03030381, 0x05000000, 0x00043624, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
     .WORD 0x100A0000, 0x100B0000, 0x100C0000, 0x01880100, 0x01890200, 0x018B0300, 0x018C0400, 0x030D0D05
-    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436E0, 0x04090080
-    .WORD 0x15000000, 0x000436E0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
-    .WORD 0x04090080, 0x07000000, 0x00043710, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
-    .WORD 0x00000000, 0x23020800, 0x05000000, 0x000437B0, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
-    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004373C, 0x020707B0, 0x05000000, 0x0004375C, 0x04070089
-    .WORD 0x14000000, 0x00043754, 0x020707B0, 0x05000000, 0x0004375C, 0x0307078A, 0x020707C1, 0x23070600
-    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x00043718, 0x03060681, 0x04040080
-    .WORD 0x06000000, 0x000437A4, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
-    .WORD 0x0004377C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
+    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436C0, 0x04090080
+    .WORD 0x15000000, 0x000436C0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
+    .WORD 0x04090080, 0x07000000, 0x000436F0, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
+    .WORD 0x00000000, 0x23020800, 0x05000000, 0x00043790, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
+    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004371C, 0x020707B0, 0x05000000, 0x0004373C, 0x04070089
+    .WORD 0x14000000, 0x00043734, 0x020707B0, 0x05000000, 0x0004373C, 0x0307078A, 0x020707C1, 0x23070600
+    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x000436F8, 0x03060681, 0x04040080
+    .WORD 0x06000000, 0x00043784, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
+    .WORD 0x0004375C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
     .WORD 0x110B0000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000
-    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043674, 0x110F0000
+    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043654, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x0F030000, 0x00000010, 0x0F040000, 0x00000000, 0x0F050000, 0x00000009
-    .WORD 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
-    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000
-    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043674
+    .WORD 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
+    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000
+    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043654
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000, 0x00000001, 0x0F050000
-    .WORD 0x00000022, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
-    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438E4, 0x02010181, 0x02040481, 0x05000000
-    .WORD 0x000438C0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
-    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004397C
-    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x000434B4, 0x11090000, 0x04010080, 0x06000000
-    .WORD 0x00043964, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
-    .WORD 0x00043984, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043984, 0x0F010000
+    .WORD 0x00000022, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
+    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438C4, 0x02010181, 0x02040481, 0x05000000
+    .WORD 0x000438A0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
+    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004395C
+    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x00043494, 0x11090000, 0x04010080, 0x06000000
+    .WORD 0x00043944, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
+    .WORD 0x00043964, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043964, 0x0F010000
     .WORD 0x00000000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439FC, 0x22010800, 0x01820900, 0x0F030000
-    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x00043A0C, 0x040100CC, 0x07000000, 0x000439FC
-    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x00043A14, 0x0F010000
-    .WORD 0xFFFFFFFF, 0x05000000, 0x00043A14, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A60, 0x22010800
-    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435C4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A68
-    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043AA0
+    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439DC, 0x22010800, 0x01820900, 0x0F030000
+    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x000439EC, 0x040100CC, 0x07000000, 0x000439DC
+    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x000439F4, 0x0F010000
+    .WORD 0xFFFFFFFF, 0x05000000, 0x000439F4, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A40, 0x22010800
+    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435A4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A48
+    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043A80
     .WORD 0x0F020000, 0x00000000, 0x25020104, 0x100F0000, 0x10080000, 0x01880100, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043AB8, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
-    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043AF8, 0x01820100
-    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A24, 0x05000000, 0x00043B00, 0x0F010000, 0x00000000
+    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043A98, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
+    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043AD8, 0x01820100
+    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A04, 0x05000000, 0x00043AE0, 0x0F010000, 0x00000000
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x030D0DCC, 0x01890D00
-    .WORD 0x01810800, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043BCC, 0x01880100, 0x01810800
-    .WORD 0x01820900, 0x30000000, 0x00043994, 0x04010080, 0x06000000, 0x00043BB0, 0x0F020000, 0xFFFFFFFF
-    .WORD 0x04010200, 0x06000000, 0x00043BCC, 0x0201098C, 0x30000000, 0x00043044, 0x22020908, 0x04020082
-    .WORD 0x07000000, 0x00043B98, 0x0F010000, 0x00043BE8, 0x30000000, 0x00043084, 0x0F010000, 0x00043BEC
-    .WORD 0x30000000, 0x00043084, 0x05000000, 0x00043B3C, 0x01810800, 0x30000000, 0x00043A24, 0x0F010000
-    .WORD 0x00000000, 0x05000000, 0x00043BD4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
+    .WORD 0x01810800, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043BAC, 0x01880100, 0x01810800
+    .WORD 0x01820900, 0x30000000, 0x00043974, 0x04010080, 0x06000000, 0x00043B90, 0x0F020000, 0xFFFFFFFF
+    .WORD 0x04010200, 0x06000000, 0x00043BAC, 0x0201098C, 0x30000000, 0x00043024, 0x22020908, 0x04020082
+    .WORD 0x07000000, 0x00043B78, 0x0F010000, 0x00043BC8, 0x30000000, 0x00043064, 0x0F010000, 0x00043BCC
+    .WORD 0x30000000, 0x00043064, 0x05000000, 0x00043B1C, 0x01810800, 0x30000000, 0x00043A04, 0x0F010000
+    .WORD 0x00000000, 0x05000000, 0x00043BB4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x0000002F, 0x0000000A, 0x31000000, 0x000A0020, 0x00000000, 0x0000100F
     .WORD 0x00001006, 0x00001007, 0x00001008, 0x00001009, 0x0000100A, 0x0000100B, 0x0000100C, 0x01000F03
-    .WORD 0x0D030000, 0x0D00030D, 0x0100018C, 0x02000188, 0x00820189, 0x00000408, 0x3DFA1200, 0x00000004
-    .WORD 0x00010F0A, 0x00000000, 0x00000F06, 0x08000000, 0x0000040A, 0x3DC61500, 0x0A000004, 0x02820182
-    .WORD 0x09020C02, 0x02000202, 0x00002201, 0x00001001, 0x3BF60F01, 0x00000004, 0x30443000, 0x00000004
-    .WORD 0x3E440F01, 0x00000004, 0x30443000, 0x0A000004, 0x02820182, 0x09020C02, 0x02000202, 0x00002201
-    .WORD 0x30443000, 0x00000004, 0x3E540F01, 0x00000004, 0x30443000, 0x00000004, 0x3BF60F01, 0x00000004
-    .WORD 0x30443000, 0x00000004, 0x00001101, 0x00000F02, 0x00000000, 0x32383000, 0x01000004, 0x0080018B
-    .WORD 0x0000040B, 0x3D7A1200, 0x0B000004, 0x0C000181, 0x00000182, 0x004C0F03, 0x00000000, 0x32303000
-    .WORD 0x01000004, 0x00800187, 0x00000407, 0x3D620600, 0x00CC0004, 0x00000407, 0x3D620700, 0x0C080004
-    .WORD 0x0C8C2005, 0x00000201, 0x30443000, 0x00820004, 0x00000405, 0x3D4A0700, 0x00000004, 0x3E590F01
-    .WORD 0x00000004, 0x30443000, 0x00000004, 0x3BF60F01, 0x00000004, 0x30443000, 0x00000004, 0x3CEA0500
-    .WORD 0x0B000004, 0x00000181, 0x32403000, 0x0A810004, 0x0000020A, 0x3C4E0500, 0x00000004, 0x3E330F01
-    .WORD 0x00000004, 0x30443000, 0x0A000004, 0x02820182, 0x09020C02, 0x02000202, 0x00002201, 0x30443000
-    .WORD 0x00000004, 0x3BF60F01, 0x00000004, 0x30443000, 0x00000004, 0x00010F06, 0x0A810000, 0x0000020A
-    .WORD 0x3C4E0500, 0x00000004, 0x01000F02, 0x0D020000, 0x0600020D, 0x00000181, 0x0000110C, 0x0000110B
-    .WORD 0x0000110A, 0x00001109, 0x00001108, 0x00001107, 0x00001106, 0x0000110F, 0x00003100, 0x3E1A0F01
-    .WORD 0x00000004, 0x30443000, 0x00000004, 0x00010F06, 0x00000000, 0x3DC60500, 0x73750004, 0x3A656761
-    .WORD 0x20736C20, 0x65726964, 0x726F7463, 0x2E2E2079, 0x6C000A2E, 0x63203A73, 0x6F6E6E61, 0x706F2074
-    .WORD 0x00206E65, 0x202D2D2D, 0x65726944, 0x726F7463, 0x00203A79, 0x2D2D2D20, 0x00002F00, 0x00000000
+    .WORD 0x0D030000, 0x0D00030D, 0x0100018C, 0x02000188, 0x00820189, 0x00000408, 0x3DDE1200, 0x00000004
+    .WORD 0x00010F0A, 0x00000000, 0x00000F06, 0x08000000, 0x0000040A, 0x3DA61500, 0x0A000004, 0x02820182
+    .WORD 0x09020C02, 0x02000202, 0x00002201, 0x00001001, 0x3BD60F01, 0x00000004, 0x30243000, 0x00000004
+    .WORD 0x3E280F01, 0x00000004, 0x30243000, 0x0A000004, 0x02820182, 0x09020C02, 0x02000202, 0x00002201
+    .WORD 0x30243000, 0x00000004, 0x3E380F01, 0x00000004, 0x30243000, 0x00000004, 0x3BD60F01, 0x00000004
+    .WORD 0x30243000, 0x00000004, 0x00001101, 0x00000F02, 0x00000000, 0x32183000, 0x01000004, 0x0080018B
+    .WORD 0x0000040B, 0x3D5A1200, 0x0B000004, 0x0C000181, 0x00000182, 0x004C0F03, 0x00000000, 0x32103000
+    .WORD 0x01000004, 0x00800187, 0x00000407, 0x3D420600, 0x00CC0004, 0x00000407, 0x3D420700, 0x0C080004
+    .WORD 0x0C8C2005, 0x00000201, 0x30243000, 0x00820004, 0x00000405, 0x3D2A0700, 0x00000004, 0x3E3D0F01
+    .WORD 0x00000004, 0x30243000, 0x00000004, 0x3BD60F01, 0x00000004, 0x30243000, 0x00000004, 0x3CCA0500
+    .WORD 0x0B000004, 0x00000181, 0x32203000, 0x0A810004, 0x0000020A, 0x3C2E0500, 0x00000004, 0x3E170F01
+    .WORD 0x00000004, 0x30243000, 0x0A000004, 0x02820182, 0x09020C02, 0x02000202, 0x00002201, 0x30243000
+    .WORD 0x00000004, 0x3BD60F01, 0x00000004, 0x30243000, 0x00000004, 0x00010F06, 0x0A810000, 0x0000020A
+    .WORD 0x3C2E0500, 0x00000004, 0x01000F02, 0x0D020000, 0x0600020D, 0x00020181, 0x00005600, 0x0000110C
+    .WORD 0x0000110B, 0x0000110A, 0x00001109, 0x00001108, 0x00001107, 0x00001106, 0x0000110F, 0x00003100
+    .WORD 0x3DFE0F01, 0x00000004, 0x30243000, 0x00000004, 0x00010F06, 0x00000000, 0x3DA60500, 0x73750004
+    .WORD 0x3A656761, 0x20736C20, 0x65726964, 0x726F7463, 0x2E2E2079, 0x6C000A2E, 0x63203A73, 0x6F6E6E61
+    .WORD 0x706F2074, 0x00206E65, 0x202D2D2D, 0x65726944, 0x726F7463, 0x00203A79, 0x2D2D2D20, 0x00002F00
+    .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
@@ -9134,34 +9290,33 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
 
-; bin/ls1, 3665 bytes
+; bin/ls1, 3633 bytes
     .ASCIIZ "bin/ls1"
     .SPACE 116
-    .ASCIIZ "00000007121"
+    .ASCIIZ "00000007061"
     .SPACE 20
     .ASCIIZ "0"
     .SPACE 354
-    ; file data (3665 bytes, padded to 4096)
-    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x56000002, 0x30000000, 0x00043BFA, 0x56000002
-    .WORD 0x0F010000, 0x00000000, 0x10010000, 0x0F010000, 0x00000001, 0x400F0000, 0x56000002, 0x11010000
-    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x000430BC, 0x01890100
+    ; file data (3633 bytes, padded to 4096)
+    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x30000000, 0x00043BDA, 0x0F010000, 0x00000001
+    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x0004309C, 0x01890100
     .WORD 0x0F010000, 0x00000001, 0x01820800, 0x01830900, 0x40040000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BF8, 0x23010800, 0x0F010000, 0x00000001
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BD8, 0x23010800, 0x0F010000, 0x00000001
     .WORD 0x01820800, 0x0F030000, 0x00000001, 0x40040000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000
     .WORD 0x10080000, 0x10090000, 0x01880100, 0x0F090000, 0x00000000, 0x20020889, 0x04020080, 0x06000000
-    .WORD 0x000430F0, 0x02090981, 0x05000000, 0x000430D4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x000430D0, 0x02090981, 0x05000000, 0x000430B4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x200A0800
-    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004315C, 0x040A0080, 0x06000000, 0x0004314C, 0x02080881
-    .WORD 0x02090981, 0x05000000, 0x0004311C, 0x0F010000, 0x00000001, 0x05000000, 0x00043164, 0x0F010000
+    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004313C, 0x040A0080, 0x06000000, 0x0004312C, 0x02080881
+    .WORD 0x02090981, 0x05000000, 0x000430FC, 0x0F010000, 0x00000001, 0x05000000, 0x00043144, 0x0F010000
     .WORD 0x00000000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000
-    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431BC
-    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043194, 0x01810800
+    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x0004319C
+    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043174, 0x01810800
     .WORD 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x00043210, 0x23090800
-    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431F0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
+    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431F0, 0x23090800
+    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431D0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x40040000, 0x31000000, 0x40050000, 0x31000000, 0x40060000, 0x31000000
     .WORD 0x40070000, 0x31000000, 0x400E0000, 0x31000000, 0x400D0000, 0x31000000, 0x40100000, 0x31000000
-    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004326C, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004324C, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
@@ -9180,81 +9335,81 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x100F0000, 0x02010187, 0x0F020000
-    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004353C
-    .WORD 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
-    .WORD 0x07000000, 0x00043518, 0x22030204, 0x04030500, 0x15000000, 0x00043524, 0x02040481, 0x05000000
-    .WORD 0x000434D4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x000435BC, 0x01810500
-    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x000435B4, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
-    .WORD 0x000435B4, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
-    .WORD 0x04030080, 0x06000000, 0x00043598, 0x02040481, 0x05000000, 0x00043558, 0x25010200, 0x25050204
-    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x000435BC, 0x0F010000, 0x00000000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043628, 0x0F040000, 0x00000000, 0x040400B0
-    .WORD 0x15000000, 0x00043628, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
-    .WORD 0x22030200, 0x04030100, 0x06000000, 0x0004361C, 0x02040481, 0x05000000, 0x000435DC, 0x0F030000
-    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043274, 0x0F030000
-    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004366C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
-    .WORD 0x03030381, 0x05000000, 0x00043644, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
+    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004351C
+    .WORD 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
+    .WORD 0x07000000, 0x000434F8, 0x22030204, 0x04030500, 0x15000000, 0x00043504, 0x02040481, 0x05000000
+    .WORD 0x000434B4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x0004359C, 0x01810500
+    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x00043594, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
+    .WORD 0x00043594, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
+    .WORD 0x04030080, 0x06000000, 0x00043578, 0x02040481, 0x05000000, 0x00043538, 0x25010200, 0x25050204
+    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x0004359C, 0x0F010000, 0x00000000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043608, 0x0F040000, 0x00000000, 0x040400B0
+    .WORD 0x15000000, 0x00043608, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
+    .WORD 0x22030200, 0x04030100, 0x06000000, 0x000435FC, 0x02040481, 0x05000000, 0x000435BC, 0x0F030000
+    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043254, 0x0F030000
+    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004364C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
+    .WORD 0x03030381, 0x05000000, 0x00043624, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
     .WORD 0x100A0000, 0x100B0000, 0x100C0000, 0x01880100, 0x01890200, 0x018B0300, 0x018C0400, 0x030D0D05
-    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436E0, 0x04090080
-    .WORD 0x15000000, 0x000436E0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
-    .WORD 0x04090080, 0x07000000, 0x00043710, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
-    .WORD 0x00000000, 0x23020800, 0x05000000, 0x000437B0, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
-    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004373C, 0x020707B0, 0x05000000, 0x0004375C, 0x04070089
-    .WORD 0x14000000, 0x00043754, 0x020707B0, 0x05000000, 0x0004375C, 0x0307078A, 0x020707C1, 0x23070600
-    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x00043718, 0x03060681, 0x04040080
-    .WORD 0x06000000, 0x000437A4, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
-    .WORD 0x0004377C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
+    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436C0, 0x04090080
+    .WORD 0x15000000, 0x000436C0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
+    .WORD 0x04090080, 0x07000000, 0x000436F0, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
+    .WORD 0x00000000, 0x23020800, 0x05000000, 0x00043790, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
+    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004371C, 0x020707B0, 0x05000000, 0x0004373C, 0x04070089
+    .WORD 0x14000000, 0x00043734, 0x020707B0, 0x05000000, 0x0004373C, 0x0307078A, 0x020707C1, 0x23070600
+    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x000436F8, 0x03060681, 0x04040080
+    .WORD 0x06000000, 0x00043784, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
+    .WORD 0x0004375C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
     .WORD 0x110B0000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000
-    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043674, 0x110F0000
+    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043654, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x0F030000, 0x00000010, 0x0F040000, 0x00000000, 0x0F050000, 0x00000009
-    .WORD 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
-    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000
-    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043674
+    .WORD 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
+    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000
+    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043654
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000, 0x00000001, 0x0F050000
-    .WORD 0x00000022, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
-    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438E4, 0x02010181, 0x02040481, 0x05000000
-    .WORD 0x000438C0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
-    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004397C
-    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x000434B4, 0x11090000, 0x04010080, 0x06000000
-    .WORD 0x00043964, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
-    .WORD 0x00043984, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043984, 0x0F010000
+    .WORD 0x00000022, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
+    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438C4, 0x02010181, 0x02040481, 0x05000000
+    .WORD 0x000438A0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
+    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004395C
+    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x00043494, 0x11090000, 0x04010080, 0x06000000
+    .WORD 0x00043944, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
+    .WORD 0x00043964, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043964, 0x0F010000
     .WORD 0x00000000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439FC, 0x22010800, 0x01820900, 0x0F030000
-    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x00043A0C, 0x040100CC, 0x07000000, 0x000439FC
-    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x00043A14, 0x0F010000
-    .WORD 0xFFFFFFFF, 0x05000000, 0x00043A14, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A60, 0x22010800
-    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435C4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A68
-    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043AA0
+    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439DC, 0x22010800, 0x01820900, 0x0F030000
+    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x000439EC, 0x040100CC, 0x07000000, 0x000439DC
+    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x000439F4, 0x0F010000
+    .WORD 0xFFFFFFFF, 0x05000000, 0x000439F4, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A40, 0x22010800
+    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435A4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A48
+    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043A80
     .WORD 0x0F020000, 0x00000000, 0x25020104, 0x100F0000, 0x10080000, 0x01880100, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043AB8, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
-    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043AF8, 0x01820100
-    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A24, 0x05000000, 0x00043B00, 0x0F010000, 0x00000000
+    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043A98, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
+    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043AD8, 0x01820100
+    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A04, 0x05000000, 0x00043AE0, 0x0F010000, 0x00000000
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x030D0DCC, 0x01890D00
-    .WORD 0x01810800, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043BCC, 0x01880100, 0x01810800
-    .WORD 0x01820900, 0x30000000, 0x00043994, 0x04010080, 0x06000000, 0x00043BB0, 0x0F020000, 0xFFFFFFFF
-    .WORD 0x04010200, 0x06000000, 0x00043BCC, 0x0201098C, 0x30000000, 0x00043044, 0x22020908, 0x04020082
-    .WORD 0x07000000, 0x00043B98, 0x0F010000, 0x00043BE8, 0x30000000, 0x00043084, 0x0F010000, 0x00043BEC
-    .WORD 0x30000000, 0x00043084, 0x05000000, 0x00043B3C, 0x01810800, 0x30000000, 0x00043A24, 0x0F010000
-    .WORD 0x00000000, 0x05000000, 0x00043BD4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
+    .WORD 0x01810800, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043BAC, 0x01880100, 0x01810800
+    .WORD 0x01820900, 0x30000000, 0x00043974, 0x04010080, 0x06000000, 0x00043B90, 0x0F020000, 0xFFFFFFFF
+    .WORD 0x04010200, 0x06000000, 0x00043BAC, 0x0201098C, 0x30000000, 0x00043024, 0x22020908, 0x04020082
+    .WORD 0x07000000, 0x00043B78, 0x0F010000, 0x00043BC8, 0x30000000, 0x00043064, 0x0F010000, 0x00043BCC
+    .WORD 0x30000000, 0x00043064, 0x05000000, 0x00043B1C, 0x01810800, 0x30000000, 0x00043A04, 0x0F010000
+    .WORD 0x00000000, 0x05000000, 0x00043BB4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x0000002F, 0x0000000A, 0x31000000, 0x000A0020, 0x00000000, 0x0000100F
     .WORD 0x00001006, 0x00001007, 0x00001008, 0x00001009, 0x0000100A, 0x0000100B, 0x0000100C, 0x004C0F03
-    .WORD 0x0D030000, 0x0D00030D, 0x0100018C, 0x02000188, 0x00820189, 0x00000408, 0x3DEE1200, 0x00000004
-    .WORD 0x00010F0A, 0x00000000, 0x00000F06, 0x08000000, 0x0000040A, 0x3DBA1500, 0x0A000004, 0x02820182
-    .WORD 0x09020C02, 0x02000202, 0x00002201, 0x00001001, 0x3BF60F01, 0x00000004, 0x30443000, 0x00000004
-    .WORD 0x3E380F01, 0x00000004, 0x30443000, 0x0A000004, 0x02820182, 0x09020C02, 0x02000202, 0x00002201
-    .WORD 0x30443000, 0x00000004, 0x3E480F01, 0x00000004, 0x30443000, 0x00000004, 0x3BF60F01, 0x00000004
-    .WORD 0x30443000, 0x00000004, 0x00001101, 0x38F03000, 0x01000004, 0x0080018B, 0x0000040B, 0x3D6E0600
-    .WORD 0x0B000004, 0x0C000181, 0x00000182, 0x39943000, 0x00800004, 0x00000401, 0x3D560600, 0x00000004
-    .WORD 0xFFFF0F02, 0x0200FFFF, 0x00000401, 0x3D560600, 0x0C080004, 0x0C8C2205, 0x00000201, 0x30443000
-    .WORD 0x00820004, 0x00000405, 0x3D3E0700, 0x00000004, 0x3E4D0F01, 0x00000004, 0x30443000, 0x00000004
-    .WORD 0x3BF60F01, 0x00000004, 0x30443000, 0x00000004, 0x3CE20500, 0x0B000004, 0x00000181, 0x3A243000
-    .WORD 0x0A810004, 0x0000020A, 0x3C4E0500, 0x00000004, 0x3E270F01, 0x00000004, 0x30443000, 0x0A000004
-    .WORD 0x02820182, 0x09020C02, 0x02000202, 0x00002201, 0x30443000, 0x00000004, 0x3E4F0F01, 0x00000004
-    .WORD 0x30443000, 0x00000004, 0x00010F06, 0x0A810000, 0x0000020A, 0x3C4E0500, 0x00000004, 0x004C0F03
+    .WORD 0x0D030000, 0x0D00030D, 0x0100018C, 0x02000188, 0x00820189, 0x00000408, 0x3DCE1200, 0x00000004
+    .WORD 0x00010F0A, 0x00000000, 0x00000F06, 0x08000000, 0x0000040A, 0x3D9A1500, 0x0A000004, 0x02820182
+    .WORD 0x09020C02, 0x02000202, 0x00002201, 0x00001001, 0x3BD60F01, 0x00000004, 0x30243000, 0x00000004
+    .WORD 0x3E180F01, 0x00000004, 0x30243000, 0x0A000004, 0x02820182, 0x09020C02, 0x02000202, 0x00002201
+    .WORD 0x30243000, 0x00000004, 0x3E280F01, 0x00000004, 0x30243000, 0x00000004, 0x3BD60F01, 0x00000004
+    .WORD 0x30243000, 0x00000004, 0x00001101, 0x38D03000, 0x01000004, 0x0080018B, 0x0000040B, 0x3D4E0600
+    .WORD 0x0B000004, 0x0C000181, 0x00000182, 0x39743000, 0x00800004, 0x00000401, 0x3D360600, 0x00000004
+    .WORD 0xFFFF0F02, 0x0200FFFF, 0x00000401, 0x3D360600, 0x0C080004, 0x0C8C2205, 0x00000201, 0x30243000
+    .WORD 0x00820004, 0x00000405, 0x3D1E0700, 0x00000004, 0x3E2D0F01, 0x00000004, 0x30243000, 0x00000004
+    .WORD 0x3BD60F01, 0x00000004, 0x30243000, 0x00000004, 0x3CC20500, 0x0B000004, 0x00000181, 0x3A043000
+    .WORD 0x0A810004, 0x0000020A, 0x3C2E0500, 0x00000004, 0x3E070F01, 0x00000004, 0x30243000, 0x0A000004
+    .WORD 0x02820182, 0x09020C02, 0x02000202, 0x00002201, 0x30243000, 0x00000004, 0x3E2F0F01, 0x00000004
+    .WORD 0x30243000, 0x00000004, 0x00010F06, 0x0A810000, 0x0000020A, 0x3C2E0500, 0x00000004, 0x004C0F03
     .WORD 0x0D030000, 0x0600020D, 0x00000181, 0x0000110C, 0x0000110B, 0x0000110A, 0x00001109, 0x00001108
-    .WORD 0x00001107, 0x00001106, 0x0000110F, 0x00003100, 0x3E0E0F01, 0x00000004, 0x30443000, 0x00000004
-    .WORD 0x00010F06, 0x00000000, 0x3DBA0500, 0x73750004, 0x3A656761, 0x20736C20, 0x65726964, 0x726F7463
+    .WORD 0x00001107, 0x00001106, 0x0000110F, 0x00003100, 0x3DEE0F01, 0x00000004, 0x30243000, 0x00000004
+    .WORD 0x00010F06, 0x00000000, 0x3D9A0500, 0x73750004, 0x3A656761, 0x20736C20, 0x65726964, 0x726F7463
     .WORD 0x2E2E2079, 0x6C000A2E, 0x63203A73, 0x6F6E6E61, 0x706F2074, 0x00206E65, 0x202D2D2D, 0x65726944
     .WORD 0x726F7463, 0x00203A79, 0x2D2D2D20, 0x0A002F00, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
@@ -9270,35 +9425,35 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
 
-; bin/sh, 3533 bytes
+; bin/sh, 3483 bytes
     .ASCIIZ "bin/sh"
     .SPACE 117
-    .ASCIIZ "00000006715"
+    .ASCIIZ "00000006633"
     .SPACE 20
     .ASCIIZ "0"
     .SPACE 354
-    ; file data (3533 bytes, padded to 3584)
-    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x56000002, 0x30000000, 0x00043BFA, 0x56000002
-    .WORD 0x0F010000, 0x00000000, 0x10010000, 0x0F010000, 0x00000001, 0x400F0000, 0x56000002, 0x11010000
-    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x000430BC, 0x01890100
+    ; file data (3483 bytes, padded to 3584)
+    .WORD 0x22010D00, 0x02020D84, 0x0F030000, 0x00000000, 0x30000000, 0x00043BDA, 0x0F010000, 0x00000001
+    .WORD 0x40010000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x30000000, 0x0004309C, 0x01890100
     .WORD 0x0F010000, 0x00000001, 0x01820800, 0x01830900, 0x40040000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BF8, 0x23010800, 0x0F010000, 0x00000001
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x0F080000, 0x00043BD8, 0x23010800, 0x0F010000, 0x00000001
     .WORD 0x01820800, 0x0F030000, 0x00000001, 0x40040000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000
     .WORD 0x10080000, 0x10090000, 0x01880100, 0x0F090000, 0x00000000, 0x20020889, 0x04020080, 0x06000000
-    .WORD 0x000430F0, 0x02090981, 0x05000000, 0x000430D4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x000430D0, 0x02090981, 0x05000000, 0x000430B4, 0x01810900, 0x11090000, 0x11080000, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x200A0800
-    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004315C, 0x040A0080, 0x06000000, 0x0004314C, 0x02080881
-    .WORD 0x02090981, 0x05000000, 0x0004311C, 0x0F010000, 0x00000001, 0x05000000, 0x00043164, 0x0F010000
+    .WORD 0x20010900, 0x040A0100, 0x07000000, 0x0004313C, 0x040A0080, 0x06000000, 0x0004312C, 0x02080881
+    .WORD 0x02090981, 0x05000000, 0x000430FC, 0x0F010000, 0x00000001, 0x05000000, 0x00043144, 0x0F010000
     .WORD 0x00000000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000
-    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431BC
-    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043194, 0x01810800
+    .WORD 0x10090000, 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x0004319C
+    .WORD 0x20010900, 0x23010800, 0x02080881, 0x02090981, 0x030A0A81, 0x05000000, 0x00043174, 0x01810800
     .WORD 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x00043210, 0x23090800
-    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431F0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
+    .WORD 0x100A0000, 0x01880100, 0x01890200, 0x018A0300, 0x040A0080, 0x06000000, 0x000431F0, 0x23090800
+    .WORD 0x02080881, 0x030A0A81, 0x05000000, 0x000431D0, 0x01810800, 0x110A0000, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x40040000, 0x31000000, 0x40050000, 0x31000000, 0x40060000, 0x31000000
     .WORD 0x40070000, 0x31000000, 0x400E0000, 0x31000000, 0x400D0000, 0x31000000, 0x40100000, 0x31000000
-    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004326C, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x400F0000, 0x31000000, 0x40010000, 0x05000000, 0x0004324C, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
@@ -9317,79 +9472,80 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x100F0000, 0x02010187, 0x0F020000
-    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004353C
-    .WORD 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
-    .WORD 0x07000000, 0x00043518, 0x22030204, 0x04030500, 0x15000000, 0x00043524, 0x02040481, 0x05000000
-    .WORD 0x000434D4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x000435BC, 0x01810500
-    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x000435B4, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
-    .WORD 0x000435B4, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
-    .WORD 0x04030080, 0x06000000, 0x00043598, 0x02040481, 0x05000000, 0x00043558, 0x25010200, 0x25050204
-    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x000435BC, 0x0F010000, 0x00000000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043628, 0x0F040000, 0x00000000, 0x040400B0
-    .WORD 0x15000000, 0x00043628, 0x0F020000, 0x00043274, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
-    .WORD 0x22030200, 0x04030100, 0x06000000, 0x0004361C, 0x02040481, 0x05000000, 0x000435DC, 0x0F030000
-    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043274, 0x0F030000
-    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004366C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
-    .WORD 0x03030381, 0x05000000, 0x00043644, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
+    .WORD 0xFFFFFFF8, 0x09010102, 0x01850100, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000, 0x0004351C
+    .WORD 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208, 0x04030080
+    .WORD 0x07000000, 0x000434F8, 0x22030204, 0x04030500, 0x15000000, 0x00043504, 0x02040481, 0x05000000
+    .WORD 0x000434B4, 0x0F030000, 0x00000001, 0x25030208, 0x22010200, 0x05000000, 0x0004359C, 0x01810500
+    .WORD 0x400C0000, 0x04010080, 0x12000000, 0x00043594, 0x0F040000, 0x00000000, 0x040400B0, 0x15000000
+    .WORD 0x00043594, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203, 0x22030208
+    .WORD 0x04030080, 0x06000000, 0x00043578, 0x02040481, 0x05000000, 0x00043538, 0x25010200, 0x25050204
+    .WORD 0x0F030000, 0x00000001, 0x25030208, 0x05000000, 0x0004359C, 0x0F010000, 0x00000000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x04010080, 0x06000000, 0x00043608, 0x0F040000, 0x00000000, 0x040400B0
+    .WORD 0x15000000, 0x00043608, 0x0F020000, 0x00043254, 0x0F030000, 0x0000000C, 0x08030403, 0x02020203
+    .WORD 0x22030200, 0x04030100, 0x06000000, 0x000435FC, 0x02040481, 0x05000000, 0x000435BC, 0x0F030000
+    .WORD 0x00000000, 0x25030208, 0x110F0000, 0x31000000, 0x100F0000, 0x0F010000, 0x00043254, 0x0F030000
+    .WORD 0x00000030, 0x04030080, 0x06000000, 0x0004364C, 0x0F020000, 0x00000000, 0x23020100, 0x02010181
+    .WORD 0x03030381, 0x05000000, 0x00043624, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
     .WORD 0x100A0000, 0x100B0000, 0x100C0000, 0x01880100, 0x01890200, 0x018B0300, 0x018C0400, 0x030D0D05
-    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436E0, 0x04090080
-    .WORD 0x15000000, 0x000436E0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
-    .WORD 0x04090080, 0x07000000, 0x00043710, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
-    .WORD 0x00000000, 0x23020800, 0x05000000, 0x000437B0, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
-    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004373C, 0x020707B0, 0x05000000, 0x0004375C, 0x04070089
-    .WORD 0x14000000, 0x00043754, 0x020707B0, 0x05000000, 0x0004375C, 0x0307078A, 0x020707C1, 0x23070600
-    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x00043718, 0x03060681, 0x04040080
-    .WORD 0x06000000, 0x000437A4, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
-    .WORD 0x0004377C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
+    .WORD 0x018A0100, 0x01860D00, 0x10050000, 0x01870600, 0x040C0081, 0x07000000, 0x000436C0, 0x04090080
+    .WORD 0x15000000, 0x000436C0, 0x0F020000, 0x0000002D, 0x23020800, 0x02080881, 0x28090900, 0x02090981
+    .WORD 0x04090080, 0x07000000, 0x000436F0, 0x0F020000, 0x00000030, 0x23020800, 0x02080881, 0x0F020000
+    .WORD 0x00000000, 0x23020800, 0x05000000, 0x00043790, 0x0F040000, 0x00000000, 0x01850900, 0x1606050B
+    .WORD 0x1707090B, 0x040B0090, 0x06000000, 0x0004371C, 0x020707B0, 0x05000000, 0x0004373C, 0x04070089
+    .WORD 0x14000000, 0x00043734, 0x020707B0, 0x05000000, 0x0004373C, 0x0307078A, 0x020707C1, 0x23070600
+    .WORD 0x02060681, 0x02040481, 0x01890500, 0x04090080, 0x07000000, 0x000436F8, 0x03060681, 0x04040080
+    .WORD 0x06000000, 0x00043784, 0x20020600, 0x23020800, 0x02080881, 0x03060681, 0x03040481, 0x05000000
+    .WORD 0x0004375C, 0x0F020000, 0x00000000, 0x23020800, 0x11050000, 0x020D0D05, 0x01810A00, 0x110C0000
     .WORD 0x110B0000, 0x110A0000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000
-    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043674, 0x110F0000
+    .WORD 0x0000000A, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000D, 0x30000000, 0x00043654, 0x110F0000
     .WORD 0x31000000, 0x100F0000, 0x0F030000, 0x00000010, 0x0F040000, 0x00000000, 0x0F050000, 0x00000009
-    .WORD 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
-    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000
-    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043674
+    .WORD 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000
+    .WORD 0x00000000, 0x0F050000, 0x00000021, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000
+    .WORD 0x0F030000, 0x00000010, 0x0F040000, 0x00000001, 0x0F050000, 0x0000000A, 0x30000000, 0x00043654
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x0F030000, 0x00000002, 0x0F040000, 0x00000001, 0x0F050000
-    .WORD 0x00000022, 0x30000000, 0x00043674, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
-    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438E4, 0x02010181, 0x02040481, 0x05000000
-    .WORD 0x000438C0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
-    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004397C
-    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x000434B4, 0x11090000, 0x04010080, 0x06000000
-    .WORD 0x00043964, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
-    .WORD 0x00043984, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043984, 0x0F010000
+    .WORD 0x00000022, 0x30000000, 0x00043654, 0x110F0000, 0x31000000, 0x100F0000, 0x01830100, 0x01840200
+    .WORD 0x20020400, 0x23020100, 0x04020080, 0x06000000, 0x000438C4, 0x02010181, 0x02040481, 0x05000000
+    .WORD 0x000438A0, 0x01810300, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100
+    .WORD 0x01810800, 0x0F020000, 0x00000000, 0x40060000, 0x01890100, 0x04010080, 0x12000000, 0x0004395C
+    .WORD 0x10090000, 0x0F010000, 0x00000008, 0x30000000, 0x00043494, 0x11090000, 0x04010080, 0x06000000
+    .WORD 0x00043944, 0x01880100, 0x25090800, 0x0F020000, 0x00000000, 0x25020804, 0x01810800, 0x05000000
+    .WORD 0x00043964, 0x01810900, 0x40070000, 0x0F010000, 0x00000000, 0x05000000, 0x00043964, 0x0F010000
     .WORD 0x00000000, 0x11090000, 0x11080000, 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000
-    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439FC, 0x22010800, 0x01820900, 0x0F030000
-    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x00043A0C, 0x040100CC, 0x07000000, 0x000439FC
-    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x00043A14, 0x0F010000
-    .WORD 0xFFFFFFFF, 0x05000000, 0x00043A14, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A60, 0x22010800
-    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435C4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A68
-    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043AA0
+    .WORD 0x01880100, 0x01890200, 0x04080080, 0x06000000, 0x000439DC, 0x22010800, 0x01820900, 0x0F030000
+    .WORD 0x0000004C, 0x40050000, 0x04010080, 0x06000000, 0x000439EC, 0x040100CC, 0x07000000, 0x000439DC
+    .WORD 0x22020804, 0x02020281, 0x25020804, 0x0F010000, 0x00000001, 0x05000000, 0x000439F4, 0x0F010000
+    .WORD 0xFFFFFFFF, 0x05000000, 0x000439F4, 0x0F010000, 0x00000000, 0x11090000, 0x11080000, 0x110F0000
+    .WORD 0x31000000, 0x100F0000, 0x10080000, 0x01880100, 0x04080080, 0x06000000, 0x00043A40, 0x22010800
+    .WORD 0x40070000, 0x01810800, 0x30000000, 0x000435A4, 0x0F010000, 0x00000000, 0x05000000, 0x00043A48
+    .WORD 0x0F010000, 0xFFFFFFFF, 0x11080000, 0x110F0000, 0x31000000, 0x04010080, 0x06000000, 0x00043A80
     .WORD 0x0F020000, 0x00000000, 0x25020104, 0x100F0000, 0x10080000, 0x01880100, 0x11080000, 0x110F0000
-    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043AB8, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
-    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043AF8, 0x01820100
-    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A24, 0x05000000, 0x00043B00, 0x0F010000, 0x00000000
+    .WORD 0x31000000, 0x04010080, 0x06000000, 0x00043A98, 0x22010100, 0x31000000, 0x0F010000, 0xFFFFFFFF
+    .WORD 0x31000000, 0x100F0000, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043AD8, 0x01820100
+    .WORD 0x0F010000, 0x00000001, 0x30000000, 0x00043A04, 0x05000000, 0x00043AE0, 0x0F010000, 0x00000000
     .WORD 0x110F0000, 0x31000000, 0x100F0000, 0x10080000, 0x10090000, 0x01880100, 0x030D0DCC, 0x01890D00
-    .WORD 0x01810800, 0x30000000, 0x000438F0, 0x04010080, 0x06000000, 0x00043BCC, 0x01880100, 0x01810800
-    .WORD 0x01820900, 0x30000000, 0x00043994, 0x04010080, 0x06000000, 0x00043BB0, 0x0F020000, 0xFFFFFFFF
-    .WORD 0x04010200, 0x06000000, 0x00043BCC, 0x0201098C, 0x30000000, 0x00043044, 0x22020908, 0x04020082
-    .WORD 0x07000000, 0x00043B98, 0x0F010000, 0x00043BE8, 0x30000000, 0x00043084, 0x0F010000, 0x00043BEC
-    .WORD 0x30000000, 0x00043084, 0x05000000, 0x00043B3C, 0x01810800, 0x30000000, 0x00043A24, 0x0F010000
-    .WORD 0x00000000, 0x05000000, 0x00043BD4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
+    .WORD 0x01810800, 0x30000000, 0x000438D0, 0x04010080, 0x06000000, 0x00043BAC, 0x01880100, 0x01810800
+    .WORD 0x01820900, 0x30000000, 0x00043974, 0x04010080, 0x06000000, 0x00043B90, 0x0F020000, 0xFFFFFFFF
+    .WORD 0x04010200, 0x06000000, 0x00043BAC, 0x0201098C, 0x30000000, 0x00043024, 0x22020908, 0x04020082
+    .WORD 0x07000000, 0x00043B78, 0x0F010000, 0x00043BC8, 0x30000000, 0x00043064, 0x0F010000, 0x00043BCC
+    .WORD 0x30000000, 0x00043064, 0x05000000, 0x00043B1C, 0x01810800, 0x30000000, 0x00043A04, 0x0F010000
+    .WORD 0x00000000, 0x05000000, 0x00043BB4, 0x0F010000, 0xFFFFFFFF, 0x020D0DCC, 0x11090000, 0x11080000
     .WORD 0x110F0000, 0x31000000, 0x0000002F, 0x0000000A, 0x31000000, 0x000A0020, 0x00000000, 0x0000100F
-    .WORD 0x00010F01, 0x00000000, 0x3CF20F02, 0x00000004, 0x00020F03, 0x00000000, 0x32283000, 0x00000004
-    .WORD 0x32483000, 0x00800004, 0x00000401, 0x3C5E0600, 0x00000004, 0x3CA21200, 0x00000004, 0xFFFF0F01
-    .WORD 0x0000FFFF, 0x00000F02, 0x00000000, 0x32583000, 0x00800004, 0x00000401, 0x3CBE1200, 0x00000004
-    .WORD 0x3DA70F01, 0x00000004, 0x3DBD0F02, 0x00000004, 0x00000F03, 0x00000000, 0x32503000, 0x00020004
-    .WORD 0x00005600, 0x3CF50F01, 0x00000004, 0x30443000, 0x00000004, 0x00010F01, 0x00000000, 0x32683000
-    .WORD 0x00000004, 0x3D010F01, 0x00000004, 0x30443000, 0x07000004, 0x0000018D, 0x3BFE0500, 0x00000004
-    .WORD 0x3D0B0F01, 0x00000004, 0x30443000, 0x07000004, 0x0000018D, 0x3BFE0500, 0x00000004, 0x00000F01
-    .WORD 0x00000000, 0x32683000, 0x00000004, 0x0000110F, 0x20243100, 0x45584500, 0x20455643, 0x0A525245
-    .WORD 0x524F4600, 0x5245204B, 0x57000A52, 0x20544941, 0x0A525245, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x00010F01, 0x00000000, 0x3CC20F02, 0x00000004, 0x00020F03, 0x00000000, 0x32083000, 0x00000004
+    .WORD 0x32283000, 0x00800004, 0x00000401, 0x3C4A0600, 0x00000004, 0x3C821200, 0x00020004, 0x00005600
+    .WORD 0x0000110F, 0x00003100, 0xFFFF0F01, 0x0000FFFF, 0x00000F02, 0x00000000, 0x32383000, 0x00800004
+    .WORD 0x00000401, 0x3C9E1200, 0x00000004, 0x3D770F01, 0x00000004, 0x3D8B0F02, 0x00000004, 0x00000F03
+    .WORD 0x00000000, 0x32303000, 0x00000004, 0x3CC50F01, 0x00000004, 0x30243000, 0x00000004, 0x0000110F
+    .WORD 0x00003100, 0x3CD10F01, 0x00000004, 0x30243000, 0x07000004, 0x0000018D, 0x3BDE0500, 0x00000004
+    .WORD 0x3CDB0F01, 0x00000004, 0x30243000, 0x07000004, 0x0000018D, 0x3BDE0500, 0x00000004, 0x0000110F
+    .WORD 0x20243100, 0x45584500, 0x20455643, 0x0A525245, 0x524F4600, 0x5245204B, 0x57000A52, 0x20544941
+    .WORD 0x0A525245, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
-    .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x6E696200, 0x00736C2F, 0x9500736C
-    .WORD 0x0000043D, 0x62000000, 0x6C2F6E69, 0x6C003173, 0x65003173, 0x002F6374, 0x2F62696C, 0x043DA700
-    .WORD 0x043DB300, 0x043DB800, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x00000000, 0x6E696200, 0x00736C2F, 0x6500736C, 0x0000043D, 0x62000000, 0x6C2F6E69, 0x736C0073
+    .WORD 0x63746500, 0x696C002F, 0x77002F62, 0x8100043D, 0x8600043D, 0x0000043D, 0x00000000, 0x00000000
+    .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
 
 ; etc/motd, 16 bytes
@@ -9417,14 +9573,14 @@ tarfs_start:
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
 
-; lib/libc.inc, 32709 bytes
+; lib/libc.inc, 32715 bytes
     .ASCIIZ "lib/libc.inc"
     .SPACE 111
-    .ASCIIZ "00000077705"
+    .ASCIIZ "00000077713"
     .SPACE 20
     .ASCIIZ "0"
     .SPACE 354
-    ; file data (32709 bytes, padded to 32768)
+    ; file data (32715 bytes, padded to 32768)
     .WORD 0x3D3D3D3B, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x0A3D3D3D, 0x694D203B, 0x616D696E, 0x524B206C, 0x75203233
@@ -9480,974 +9636,974 @@ tarfs_start:
     .WORD 0x20202020, 0x6E49203B, 0x61697469, 0x657A696C, 0x65687420, 0x6C6C6120, 0x7461636F, 0x2820726F
     .WORD 0x7473756D, 0x206F6420, 0x73696874, 0x72696620, 0x29217473, 0x203B200A, 0x41432020, 0x6D204C4C
     .WORD 0x6F6C6C61, 0x6E695F63, 0x200A7469, 0x2020203B, 0x20504F50, 0x0A335220, 0x20203B20, 0x504F5020
-    .WORD 0x32522020, 0x203B200A, 0x4F502020, 0x52202050, 0x20200A31, 0x65442020, 0x20677562, 0x20200A32
-    .WORD 0x4C422020, 0x69616D20, 0x2020206E, 0x20202020, 0x20202020, 0x3B202020, 0x6C616320, 0x616D206C
-    .WORD 0x6C206E69, 0x20706F6F, 0x736C202D, 0x74616320, 0x68636520, 0x7465206F, 0x20200A63, 0x65442020
-    .WORD 0x20677562, 0x20200A32, 0x494C2020, 0x20315220, 0x20200A30, 0x55502020, 0x52204853, 0x20202031
-    .WORD 0x20202020, 0x20202020, 0x3B202020, 0x69786520, 0x20302074, 0x7573202D, 0x73656363, 0x20312073
-    .WORD 0x7265202D, 0x0A726F72, 0x20202020, 0x5220494C, 0x20312031, 0x20202020, 0x20202020, 0x20202020
-    .WORD 0x70203B20, 0x74207475, 0x6C73206F, 0x20706565, 0x70206F73, 0x6E657261, 0x61772074, 0x69707469
-    .WORD 0x61632064, 0x6F77206E, 0x200A6B72, 0x53202020, 0x53204356, 0x535F5359, 0x5045454C, 0x2020200A
-    .WORD 0x62654420, 0x32206775, 0x2020200A, 0x504F5020, 0x31522020, 0x3B20200A, 0x494C2020, 0x20315220
-    .WORD 0x200A3234, 0x53202020, 0x53204356, 0x455F5359, 0x0A544958, 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x32522020, 0x203B200A, 0x4F502020, 0x52202050, 0x20200A31, 0x443B2020, 0x67756265, 0x200A3220
+    .WORD 0x42202020, 0x616D204C, 0x20206E69, 0x20202020, 0x20202020, 0x20202020, 0x6163203B, 0x6D206C6C
+    .WORD 0x206E6961, 0x706F6F6C, 0x6C202D20, 0x61632073, 0x63652074, 0x65206F68, 0x200A6374, 0x3B202020
+    .WORD 0x75626544, 0x0A322067, 0x203B2020, 0x20494C20, 0x30203152, 0x3B20200A, 0x55502020, 0x52204853
+    .WORD 0x20202031, 0x20202020, 0x20202020, 0x3B202020, 0x69786520, 0x20302074, 0x7573202D, 0x73656363
+    .WORD 0x20312073, 0x7265202D, 0x0A726F72, 0x203B2020, 0x20494C20, 0x31203152, 0x20202020, 0x20202020
+    .WORD 0x20202020, 0x203B2020, 0x20747570, 0x73206F74, 0x7065656C, 0x206F7320, 0x65726170, 0x7720746E
+    .WORD 0x70746961, 0x63206469, 0x77206E61, 0x0A6B726F, 0x203B2020, 0x43565320, 0x53595320, 0x454C535F
+    .WORD 0x200A5045, 0x3B202020, 0x75626544, 0x0A322067, 0x3B202020, 0x504F5020, 0x31522020, 0x2020200A
+    .WORD 0x20494C20, 0x31203152, 0x2020200A, 0x43565320, 0x53595320, 0x4958455F, 0x3B0A0A54, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x70203B0A, 0x20737475, 0x7257202D, 0x20657469, 0x6C6C756E, 0x7265742D, 0x616E696D
-    .WORD 0x20646574, 0x69727473, 0x7420676E, 0x7473206F, 0x74756F64, 0x74697720, 0x656E2068, 0x6E696C77
-    .WORD 0x203B0A65, 0x203A4E49, 0x20315220, 0x7473203D, 0x676E6972, 0x696F7020, 0x7265746E, 0x4F203B0A
-    .WORD 0x203A5455, 0x3D203152, 0x74796220, 0x77207365, 0x74746972, 0x6F206E65, 0x72652072, 0x20726F72
-    .WORD 0x65646F63, 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3B0A3D3D, 0x74757020, 0x202D2073, 0x74697257, 0x756E2065, 0x742D6C6C
+    .WORD 0x696D7265, 0x6574616E, 0x74732064, 0x676E6972, 0x206F7420, 0x6F647473, 0x77207475, 0x20687469
+    .WORD 0x6C77656E, 0x0A656E69, 0x4E49203B, 0x5220203A, 0x203D2031, 0x69727473, 0x7020676E, 0x746E696F
+    .WORD 0x3B0A7265, 0x54554F20, 0x3152203A, 0x62203D20, 0x73657479, 0x69727720, 0x6E657474, 0x20726F20
+    .WORD 0x6F727265, 0x6F632072, 0x3B0A6564, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x7475700A, 0x200A3A73, 0x50202020
-    .WORD 0x20485355, 0x200A524C, 0x50202020, 0x20485355, 0x200A3852, 0x50202020, 0x20485355, 0x200A3952
-    .WORD 0x4D202020, 0x5220564F, 0x31522038, 0x20202020, 0x20202020, 0x20202020, 0x6153203B, 0x73206576
-    .WORD 0x6E697274, 0x6F702067, 0x65746E69, 0x20200A72, 0x4C422020, 0x72747320, 0x206E656C, 0x20202020
-    .WORD 0x20202020, 0x3B202020, 0x74654720, 0x72747320, 0x20676E69, 0x676E656C, 0x200A6874, 0x4D202020
-    .WORD 0x5220564F, 0x31522039, 0x20202020, 0x20202020, 0x20202020, 0x6153203B, 0x6C206576, 0x74676E65
-    .WORD 0x20200A68, 0x494C2020, 0x20315220, 0x4F445453, 0x465F5455, 0x20200A44, 0x4F4D2020, 0x32522056
-    .WORD 0x20385220, 0x20202020, 0x20202020, 0x3B202020, 0x66754220, 0x20726566, 0x7473203D, 0x676E6972
-    .WORD 0x2020200A, 0x564F4D20, 0x20335220, 0x20203952, 0x20202020, 0x20202020, 0x203B2020, 0x6E756F43
-    .WORD 0x203D2074, 0x676E656C, 0x200A6874, 0x53202020, 0x53204356, 0x575F5359, 0x45544952, 0x2020200A
-    .WORD 0x504F5020, 0x0A395220, 0x20202020, 0x20504F50, 0x200A3852, 0x50202020, 0x4C20504F, 0x20200A52
-    .WORD 0x45522020, 0x3B0A0A54, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x700A3D3D, 0x3A737475
+    .WORD 0x2020200A, 0x53555020, 0x524C2048, 0x2020200A, 0x53555020, 0x38522048, 0x2020200A, 0x53555020
+    .WORD 0x39522048, 0x2020200A, 0x564F4D20, 0x20385220, 0x20203152, 0x20202020, 0x20202020, 0x203B2020
+    .WORD 0x65766153, 0x72747320, 0x20676E69, 0x6E696F70, 0x0A726574, 0x20202020, 0x73204C42, 0x656C7274
+    .WORD 0x2020206E, 0x20202020, 0x20202020, 0x47203B20, 0x73207465, 0x6E697274, 0x656C2067, 0x6874676E
+    .WORD 0x2020200A, 0x564F4D20, 0x20395220, 0x20203152, 0x20202020, 0x20202020, 0x203B2020, 0x65766153
+    .WORD 0x6E656C20, 0x0A687467, 0x20202020, 0x5220494C, 0x54532031, 0x54554F44, 0x0A44465F, 0x20202020
+    .WORD 0x20564F4D, 0x52203252, 0x20202038, 0x20202020, 0x20202020, 0x42203B20, 0x65666675, 0x203D2072
+    .WORD 0x69727473, 0x200A676E, 0x4D202020, 0x5220564F, 0x39522033, 0x20202020, 0x20202020, 0x20202020
+    .WORD 0x6F43203B, 0x20746E75, 0x656C203D, 0x6874676E, 0x2020200A, 0x43565320, 0x53595320, 0x4952575F
+    .WORD 0x200A4554, 0x50202020, 0x5220504F, 0x20200A39, 0x4F502020, 0x38522050, 0x2020200A, 0x504F5020
+    .WORD 0x0A524C20, 0x20202020, 0x0A544552, 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3B0A3D3D, 0x74757020, 0x72616863
-    .WORD 0x57202D20, 0x65746972, 0x6E697320, 0x20656C67, 0x72616863, 0x65746361, 0x6F742072, 0x64747320
-    .WORD 0x0A74756F, 0x4E49203B, 0x5220203A, 0x203D2031, 0x72616863, 0x65746361, 0x203B0A72, 0x3A54554F
-    .WORD 0x20315220, 0x7962203D, 0x20736574, 0x74697277, 0x206E6574, 0x20293128, 0x6520726F, 0x726F7272
-    .WORD 0x646F6320, 0x3D3B0A65, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x70203B0A
+    .WORD 0x68637475, 0x2D207261, 0x69725720, 0x73206574, 0x6C676E69, 0x68632065, 0x63617261, 0x20726574
+    .WORD 0x73206F74, 0x756F6474, 0x203B0A74, 0x203A4E49, 0x20315220, 0x6863203D, 0x63617261, 0x0A726574
+    .WORD 0x554F203B, 0x52203A54, 0x203D2031, 0x65747962, 0x72772073, 0x65747469, 0x3128206E, 0x726F2029
+    .WORD 0x72726520, 0x6320726F, 0x0A65646F, 0x3D3D3D3B, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x75700A3D, 0x61686374, 0x200A3A72
-    .WORD 0x50202020, 0x20485355, 0x200A524C, 0x50202020, 0x20485355, 0x200A3852, 0x4C202020, 0x38522049
-    .WORD 0x5F686320, 0x0A667562, 0x20202020, 0x20425453, 0x5B203152, 0x205D3852, 0x20202020, 0x20202020
-    .WORD 0x53203B20, 0x65726F74, 0x61686320, 0x6E692072, 0x61747320, 0x20636974, 0x66667562, 0x200A7265
-    .WORD 0x4C202020, 0x31522049, 0x44545320, 0x5F54554F, 0x200A4446, 0x4D202020, 0x5220564F, 0x38522032
-    .WORD 0x2020200A, 0x20494C20, 0x31203352, 0x2020200A, 0x43565320, 0x53595320, 0x4952575F, 0x200A4554
-    .WORD 0x50202020, 0x5220504F, 0x20200A38, 0x4F502020, 0x524C2050, 0x2020200A, 0x54455220, 0x3D3B0A0A
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x0A3D3D3D, 0x63747570
+    .WORD 0x3A726168, 0x2020200A, 0x53555020, 0x524C2048, 0x2020200A, 0x53555020, 0x38522048, 0x2020200A
+    .WORD 0x20494C20, 0x63203852, 0x75625F68, 0x20200A66, 0x54532020, 0x31522042, 0x38525B20, 0x2020205D
+    .WORD 0x20202020, 0x3B202020, 0x6F745320, 0x63206572, 0x20726168, 0x73206E69, 0x69746174, 0x75622063
+    .WORD 0x72656666, 0x2020200A, 0x20494C20, 0x53203152, 0x554F4454, 0x44465F54, 0x2020200A, 0x564F4D20
+    .WORD 0x20325220, 0x200A3852, 0x4C202020, 0x33522049, 0x200A3120, 0x53202020, 0x53204356, 0x575F5359
+    .WORD 0x45544952, 0x2020200A, 0x504F5020, 0x0A385220, 0x20202020, 0x20504F50, 0x200A524C, 0x52202020
+    .WORD 0x0A0A5445, 0x3D3D3D3B, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x0A3D3D3D, 0x7473203B, 0x6E656C72, 0x43202D20
+    .WORD 0x75636C61, 0x6574616C, 0x72747320, 0x20676E69, 0x676E656C, 0x3B0A6874, 0x3A4E4920, 0x31522020
+    .WORD 0x73203D20, 0x6E697274, 0x6F702067, 0x65746E69, 0x203B0A72, 0x3A54554F, 0x20315220, 0x656C203D
+    .WORD 0x6874676E, 0x78652820, 0x64756C63, 0x20676E69, 0x6C6C756E, 0x72657420, 0x616E696D, 0x29726F74
+    .WORD 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x203B0A3D, 0x6C727473, 0x2D206E65, 0x6C614320, 0x616C7563
-    .WORD 0x73206574, 0x6E697274, 0x656C2067, 0x6874676E, 0x49203B0A, 0x20203A4E, 0x3D203152, 0x72747320
-    .WORD 0x20676E69, 0x6E696F70, 0x0A726574, 0x554F203B, 0x52203A54, 0x203D2031, 0x676E656C, 0x28206874
-    .WORD 0x6C637865, 0x6E696475, 0x756E2067, 0x74206C6C, 0x696D7265, 0x6F74616E, 0x3B0A2972, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x730A3D3D, 0x656C7274, 0x200A3A6E, 0x50202020, 0x20485355, 0x200A524C
-    .WORD 0x50202020, 0x20485355, 0x200A3852, 0x50202020, 0x20485355, 0x200A3952, 0x4D202020, 0x5220564F
-    .WORD 0x31522038, 0x2020200A, 0x20494C20, 0x30203952, 0x7274730A, 0x5F6E656C, 0x706F6F6C, 0x20200A3A
-    .WORD 0x444C2020, 0x32522042, 0x38525B20, 0x52202B20, 0x20205D39, 0x3B202020, 0x61655220, 0x68632064
-    .WORD 0x63617261, 0x20726574, 0x63207461, 0x65727275, 0x6F20746E, 0x65736666, 0x20200A74, 0x4D432020
-    .WORD 0x32522050, 0x200A3020, 0x42202020, 0x73205145, 0x656C7274, 0x6F645F6E, 0x200A656E, 0x41202020
-    .WORD 0x52204444, 0x39522039, 0x20203120, 0x20202020, 0x20202020, 0x6E49203B, 0x6D657263, 0x20746E65
-    .WORD 0x6E756F63, 0x0A726574, 0x20202020, 0x74732042, 0x6E656C72, 0x6F6F6C5F, 0x74730A70, 0x6E656C72
-    .WORD 0x6E6F645F, 0x200A3A65, 0x4D202020, 0x5220564F, 0x39522031, 0x2020200A, 0x504F5020, 0x0A395220
-    .WORD 0x20202020, 0x20504F50, 0x200A3852, 0x50202020, 0x4C20504F, 0x20200A52, 0x45522020, 0x3B0A0A54
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3B0A3D3D, 0x72747320, 0x20706D63, 0x6F43202D, 0x7261706D
-    .WORD 0x77742065, 0x7473206F, 0x676E6972, 0x203B0A73, 0x203A4E49, 0x20315220, 0x7473203D, 0x676E6972
-    .WORD 0x52202C31, 0x203D2032, 0x69727473, 0x0A32676E, 0x554F203B, 0x52203A54, 0x203D2031, 0x66692031
-    .WORD 0x75716520, 0x202C6C61, 0x66692030, 0x66696420, 0x65726566, 0x3B0A746E, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x730A3D3D, 0x6D637274, 0x200A3A70, 0x50202020, 0x20485355, 0x200A524C, 0x50202020
-    .WORD 0x20485355, 0x200A3852, 0x50202020, 0x20485355, 0x200A3952, 0x50202020, 0x20485355, 0x0A303152
-    .WORD 0x20202020, 0x20564F4D, 0x52203852, 0x20200A31, 0x4F4D2020, 0x39522056, 0x0A325220, 0x63727473
-    .WORD 0x6C5F706D, 0x3A706F6F, 0x2020200A, 0x42444C20, 0x30315220, 0x38525B20, 0x2020205D, 0x20202020
-    .WORD 0x203B2020, 0x64616F4C, 0x61686320, 0x72662072, 0x73206D6F, 0x6E697274, 0x200A3167, 0x4C202020
-    .WORD 0x52204244, 0x525B2031, 0x20205D39, 0x20202020, 0x20202020, 0x6F4C203B, 0x63206461, 0x20726168
-    .WORD 0x6D6F7266, 0x72747320, 0x32676E69, 0x2020200A, 0x504D4320, 0x30315220, 0x0A315220, 0x20202020
-    .WORD 0x20454E42, 0x63727473, 0x6E5F706D, 0x20202065, 0x20202020, 0x4D203B20, 0x616D7369, 0x20686374
-    .WORD 0x6E756F66, 0x20200A64, 0x4D432020, 0x31522050, 0x0A302030, 0x20202020, 0x20514542, 0x63727473
-    .WORD 0x655F706D, 0x20202071, 0x20202020, 0x42203B20, 0x2068746F, 0x69727473, 0x2073676E, 0x65646E65
-    .WORD 0x74612064, 0x6D617320, 0x69742065, 0x200A656D, 0x41202020, 0x52204444, 0x38522038, 0x20203120
-    .WORD 0x20202020, 0x20202020, 0x6441203B, 0x636E6176, 0x6F622065, 0x70206874, 0x746E696F, 0x0A737265
-    .WORD 0x20202020, 0x20444441, 0x52203952, 0x0A312039, 0x20202020, 0x74732042, 0x706D6372, 0x6F6F6C5F
-    .WORD 0x74730A70, 0x706D6372, 0x3A71655F, 0x2020200A, 0x20494C20, 0x31203152, 0x2020200A, 0x73204220
-    .WORD 0x6D637274, 0x6F645F70, 0x730A656E, 0x6D637274, 0x656E5F70, 0x20200A3A, 0x494C2020, 0x20315220
-    .WORD 0x74730A30, 0x706D6372, 0x6E6F645F, 0x200A3A65, 0x50202020, 0x5220504F, 0x200A3031, 0x50202020
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x7274730A, 0x3A6E656C, 0x2020200A, 0x53555020
+    .WORD 0x524C2048, 0x2020200A, 0x53555020, 0x38522048, 0x2020200A, 0x53555020, 0x39522048, 0x2020200A
+    .WORD 0x564F4D20, 0x20385220, 0x200A3152, 0x4C202020, 0x39522049, 0x730A3020, 0x656C7274, 0x6F6C5F6E
+    .WORD 0x0A3A706F, 0x20202020, 0x2042444C, 0x5B203252, 0x2B203852, 0x5D395220, 0x20202020, 0x52203B20
+    .WORD 0x20646165, 0x72616863, 0x65746361, 0x74612072, 0x72756320, 0x746E6572, 0x66666F20, 0x0A746573
+    .WORD 0x20202020, 0x20504D43, 0x30203252, 0x2020200A, 0x51454220, 0x72747320, 0x5F6E656C, 0x656E6F64
+    .WORD 0x2020200A, 0x44444120, 0x20395220, 0x31203952, 0x20202020, 0x20202020, 0x203B2020, 0x72636E49
+    .WORD 0x6E656D65, 0x6F632074, 0x65746E75, 0x20200A72, 0x20422020, 0x6C727473, 0x6C5F6E65, 0x0A706F6F
+    .WORD 0x6C727473, 0x645F6E65, 0x3A656E6F, 0x2020200A, 0x564F4D20, 0x20315220, 0x200A3952, 0x50202020
     .WORD 0x5220504F, 0x20200A39, 0x4F502020, 0x38522050, 0x2020200A, 0x504F5020, 0x0A524C20, 0x20202020
     .WORD 0x0A544552, 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x6D203B0A, 0x70636D65, 0x202D2079
-    .WORD 0x79706F43, 0x6D656D20, 0x2079726F, 0x636F6C62, 0x203B0A6B, 0x203A4E49, 0x20315220, 0x6564203D
-    .WORD 0x202C7473, 0x3D203252, 0x63727320, 0x3352202C, 0x63203D20, 0x746E756F, 0x4F203B0A, 0x203A5455
-    .WORD 0x3D203152, 0x73656420, 0x65282074, 0x7020646E, 0x7469736F, 0x296E6F69, 0x3D3D3B0A, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x73203B0A, 0x6D637274, 0x202D2070
+    .WORD 0x706D6F43, 0x20657261, 0x206F7774, 0x69727473, 0x0A73676E, 0x4E49203B, 0x5220203A, 0x203D2031
+    .WORD 0x69727473, 0x2C31676E, 0x20325220, 0x7473203D, 0x676E6972, 0x203B0A32, 0x3A54554F, 0x20315220
+    .WORD 0x2031203D, 0x65206669, 0x6C617571, 0x2030202C, 0x64206669, 0x65666669, 0x746E6572, 0x3D3D3B0A
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x6D656D0A, 0x3A797063, 0x2020200A, 0x53555020, 0x524C2048, 0x2020200A
-    .WORD 0x53555020, 0x38522048, 0x2020200A, 0x53555020, 0x39522048, 0x2020200A, 0x53555020, 0x31522048
-    .WORD 0x20200A30, 0x4F4D2020, 0x38522056, 0x0A315220, 0x20202020, 0x20564F4D, 0x52203952, 0x20200A32
-    .WORD 0x4F4D2020, 0x31522056, 0x33522030, 0x6D656D0A, 0x5F797063, 0x706F6F6C, 0x20200A3A, 0x4D432020
-    .WORD 0x31522050, 0x0A302030, 0x20202020, 0x20514542, 0x636D656D, 0x645F7970, 0x0A656E6F, 0x20202020
-    .WORD 0x2042444C, 0x5B203152, 0x205D3952, 0x20202020, 0x20202020, 0x52203B20, 0x20646165, 0x65747962
-    .WORD 0x6F726620, 0x6F73206D, 0x65637275, 0x2020200A, 0x42545320, 0x20315220, 0x5D38525B, 0x20202020
-    .WORD 0x20202020, 0x203B2020, 0x74697257, 0x79622065, 0x74206574, 0x6564206F, 0x6E697473, 0x6F697461
-    .WORD 0x20200A6E, 0x44412020, 0x38522044, 0x20385220, 0x20202031, 0x20202020, 0x3B202020, 0x76644120
-    .WORD 0x65636E61, 0x746F6220, 0x6F702068, 0x65746E69, 0x200A7372, 0x41202020, 0x52204444, 0x39522039
-    .WORD 0x200A3120, 0x53202020, 0x52204255, 0x52203031, 0x31203031, 0x20202020, 0x20202020, 0x6544203B
-    .WORD 0x6D657263, 0x20746E65, 0x6E756F63, 0x0A726574, 0x20202020, 0x656D2042, 0x7970636D, 0x6F6F6C5F
-    .WORD 0x656D0A70, 0x7970636D, 0x6E6F645F, 0x200A3A65, 0x4D202020, 0x5220564F, 0x38522031, 0x2020200A
-    .WORD 0x504F5020, 0x30315220, 0x2020200A, 0x504F5020, 0x0A395220, 0x20202020, 0x20504F50, 0x200A3852
-    .WORD 0x50202020, 0x4C20504F, 0x20200A52, 0x45522020, 0x3B0A0A54, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x7274730A, 0x3A706D63, 0x2020200A, 0x53555020, 0x524C2048
+    .WORD 0x2020200A, 0x53555020, 0x38522048, 0x2020200A, 0x53555020, 0x39522048, 0x2020200A, 0x53555020
+    .WORD 0x31522048, 0x20200A30, 0x4F4D2020, 0x38522056, 0x0A315220, 0x20202020, 0x20564F4D, 0x52203952
+    .WORD 0x74730A32, 0x706D6372, 0x6F6F6C5F, 0x200A3A70, 0x4C202020, 0x52204244, 0x5B203031, 0x205D3852
+    .WORD 0x20202020, 0x20202020, 0x6F4C203B, 0x63206461, 0x20726168, 0x6D6F7266, 0x72747320, 0x31676E69
+    .WORD 0x2020200A, 0x42444C20, 0x20315220, 0x5D39525B, 0x20202020, 0x20202020, 0x203B2020, 0x64616F4C
+    .WORD 0x61686320, 0x72662072, 0x73206D6F, 0x6E697274, 0x200A3267, 0x43202020, 0x5220504D, 0x52203031
+    .WORD 0x20200A31, 0x4E422020, 0x74732045, 0x706D6372, 0x20656E5F, 0x20202020, 0x3B202020, 0x73694D20
+    .WORD 0x6374616D, 0x6F662068, 0x0A646E75, 0x20202020, 0x20504D43, 0x20303152, 0x20200A30, 0x45422020
+    .WORD 0x74732051, 0x706D6372, 0x2071655F, 0x20202020, 0x3B202020, 0x746F4220, 0x74732068, 0x676E6972
+    .WORD 0x6E652073, 0x20646564, 0x73207461, 0x20656D61, 0x656D6974, 0x2020200A, 0x44444120, 0x20385220
+    .WORD 0x31203852, 0x20202020, 0x20202020, 0x203B2020, 0x61766441, 0x2065636E, 0x68746F62, 0x696F7020
+    .WORD 0x7265746E, 0x20200A73, 0x44412020, 0x39522044, 0x20395220, 0x20200A31, 0x20422020, 0x63727473
+    .WORD 0x6C5F706D, 0x0A706F6F, 0x63727473, 0x655F706D, 0x200A3A71, 0x4C202020, 0x31522049, 0x200A3120
+    .WORD 0x42202020, 0x72747320, 0x5F706D63, 0x656E6F64, 0x7274730A, 0x5F706D63, 0x0A3A656E, 0x20202020
+    .WORD 0x5220494C, 0x0A302031, 0x63727473, 0x645F706D, 0x3A656E6F, 0x2020200A, 0x504F5020, 0x30315220
+    .WORD 0x2020200A, 0x504F5020, 0x0A395220, 0x20202020, 0x20504F50, 0x200A3852, 0x50202020, 0x4C20504F
+    .WORD 0x20200A52, 0x45522020, 0x3B0A0A54, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3B0A3D3D, 0x6D656D20
+    .WORD 0x20797063, 0x6F43202D, 0x6D207970, 0x726F6D65, 0x6C622079, 0x0A6B636F, 0x4E49203B, 0x5220203A
+    .WORD 0x203D2031, 0x74736564, 0x3252202C, 0x73203D20, 0x202C6372, 0x3D203352, 0x756F6320, 0x3B0A746E
+    .WORD 0x54554F20, 0x3152203A, 0x64203D20, 0x20747365, 0x646E6528, 0x736F7020, 0x6F697469, 0x3B0A296E
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3B0A3D3D, 0x6D656D20, 0x20746573, 0x6946202D, 0x6D206C6C, 0x726F6D65, 0x69772079, 0x63206874
-    .WORD 0x74736E6F, 0x20746E61, 0x65747962, 0x49203B0A, 0x20203A4E, 0x3D203152, 0x73656420, 0x52202C74
-    .WORD 0x203D2032, 0x756C6176, 0x52202C65, 0x203D2033, 0x6E756F63, 0x203B0A74, 0x3A54554F, 0x20315220
-    .WORD 0x6564203D, 0x28207473, 0x20646E65, 0x69736F70, 0x6E6F6974, 0x3D3B0A29, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x6D0A3D3D, 0x70636D65, 0x200A3A79, 0x50202020, 0x20485355
+    .WORD 0x200A524C, 0x50202020, 0x20485355, 0x200A3852, 0x50202020, 0x20485355, 0x200A3952, 0x50202020
+    .WORD 0x20485355, 0x0A303152, 0x20202020, 0x20564F4D, 0x52203852, 0x20200A31, 0x4F4D2020, 0x39522056
+    .WORD 0x0A325220, 0x20202020, 0x20564F4D, 0x20303152, 0x6D0A3352, 0x70636D65, 0x6F6C5F79, 0x0A3A706F
+    .WORD 0x20202020, 0x20504D43, 0x20303152, 0x20200A30, 0x45422020, 0x656D2051, 0x7970636D, 0x6E6F645F
+    .WORD 0x20200A65, 0x444C2020, 0x31522042, 0x39525B20, 0x2020205D, 0x20202020, 0x3B202020, 0x61655220
+    .WORD 0x79622064, 0x66206574, 0x206D6F72, 0x72756F73, 0x200A6563, 0x53202020, 0x52204254, 0x525B2031
+    .WORD 0x20205D38, 0x20202020, 0x20202020, 0x7257203B, 0x20657469, 0x65747962, 0x206F7420, 0x74736564
+    .WORD 0x74616E69, 0x0A6E6F69, 0x20202020, 0x20444441, 0x52203852, 0x20312038, 0x20202020, 0x20202020
+    .WORD 0x41203B20, 0x6E617664, 0x62206563, 0x2068746F, 0x6E696F70, 0x73726574, 0x2020200A, 0x44444120
+    .WORD 0x20395220, 0x31203952, 0x2020200A, 0x42555320, 0x30315220, 0x30315220, 0x20203120, 0x20202020
+    .WORD 0x203B2020, 0x72636544, 0x6E656D65, 0x6F632074, 0x65746E75, 0x20200A72, 0x20422020, 0x636D656D
+    .WORD 0x6C5F7970, 0x0A706F6F, 0x636D656D, 0x645F7970, 0x3A656E6F, 0x2020200A, 0x564F4D20, 0x20315220
+    .WORD 0x200A3852, 0x50202020, 0x5220504F, 0x200A3031, 0x50202020, 0x5220504F, 0x20200A39, 0x4F502020
+    .WORD 0x38522050, 0x2020200A, 0x504F5020, 0x0A524C20, 0x20202020, 0x0A544552, 0x3D3D3B0A, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x656D0A3D, 0x7465736D, 0x20200A3A, 0x55502020, 0x4C204853, 0x20200A52, 0x55502020
-    .WORD 0x52204853, 0x20200A38, 0x55502020, 0x52204853, 0x20200A39, 0x55502020, 0x52204853, 0x200A3031
-    .WORD 0x4D202020, 0x5220564F, 0x31522038, 0x2020200A, 0x564F4D20, 0x20395220, 0x200A3252, 0x4D202020
-    .WORD 0x5220564F, 0x52203031, 0x656D0A33, 0x7465736D, 0x6F6F6C5F, 0x200A3A70, 0x43202020, 0x5220504D
-    .WORD 0x30203031, 0x2020200A, 0x51454220, 0x6D656D20, 0x5F746573, 0x656E6F64, 0x2020200A, 0x42545320
-    .WORD 0x20395220, 0x5D38525B, 0x20202020, 0x20202020, 0x203B2020, 0x726F7453, 0x61762065, 0x2065756C
-    .WORD 0x63207461, 0x65727275, 0x7020746E, 0x7469736F, 0x0A6E6F69, 0x20202020, 0x20444441, 0x52203852
-    .WORD 0x20312038, 0x20202020, 0x20202020, 0x41203B20, 0x6E617664, 0x70206563, 0x746E696F, 0x200A7265
-    .WORD 0x53202020, 0x52204255, 0x52203031, 0x31203031, 0x20202020, 0x20202020, 0x6544203B, 0x6D657263
-    .WORD 0x20746E65, 0x6E756F63, 0x0A726574, 0x20202020, 0x656D2042, 0x7465736D, 0x6F6F6C5F, 0x656D0A70
-    .WORD 0x7465736D, 0x6E6F645F, 0x200A3A65, 0x4D202020, 0x5220564F, 0x38522031, 0x2020200A, 0x504F5020
-    .WORD 0x30315220, 0x2020200A, 0x504F5020, 0x0A395220, 0x20202020, 0x20504F50, 0x200A3852, 0x50202020
-    .WORD 0x4C20504F, 0x20200A52, 0x45522020, 0x3B0A0A54, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x6D203B0A, 0x65736D65, 0x202D2074, 0x6C6C6946, 0x6D656D20, 0x2079726F
+    .WORD 0x68746977, 0x6E6F6320, 0x6E617473, 0x79622074, 0x3B0A6574, 0x3A4E4920, 0x31522020, 0x64203D20
+    .WORD 0x2C747365, 0x20325220, 0x6176203D, 0x2C65756C, 0x20335220, 0x6F63203D, 0x0A746E75, 0x554F203B
+    .WORD 0x52203A54, 0x203D2031, 0x74736564, 0x6E652820, 0x6F702064, 0x69746973, 0x0A296E6F, 0x3D3D3D3B
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x0A3D3D3D, 0x736D656D, 0x0A3A7465, 0x20202020, 0x48535550, 0x0A524C20
+    .WORD 0x20202020, 0x48535550, 0x0A385220, 0x20202020, 0x48535550, 0x0A395220, 0x20202020, 0x48535550
+    .WORD 0x30315220, 0x2020200A, 0x564F4D20, 0x20385220, 0x200A3152, 0x4D202020, 0x5220564F, 0x32522039
+    .WORD 0x2020200A, 0x564F4D20, 0x30315220, 0x0A335220, 0x736D656D, 0x6C5F7465, 0x3A706F6F, 0x2020200A
+    .WORD 0x504D4320, 0x30315220, 0x200A3020, 0x42202020, 0x6D205145, 0x65736D65, 0x6F645F74, 0x200A656E
+    .WORD 0x53202020, 0x52204254, 0x525B2039, 0x20205D38, 0x20202020, 0x20202020, 0x7453203B, 0x2065726F
+    .WORD 0x756C6176, 0x74612065, 0x72756320, 0x746E6572, 0x736F7020, 0x6F697469, 0x20200A6E, 0x44412020
+    .WORD 0x38522044, 0x20385220, 0x20202031, 0x20202020, 0x3B202020, 0x76644120, 0x65636E61, 0x696F7020
+    .WORD 0x7265746E, 0x2020200A, 0x42555320, 0x30315220, 0x30315220, 0x20203120, 0x20202020, 0x203B2020
+    .WORD 0x72636544, 0x6E656D65, 0x6F632074, 0x65746E75, 0x20200A72, 0x20422020, 0x736D656D, 0x6C5F7465
+    .WORD 0x0A706F6F, 0x736D656D, 0x645F7465, 0x3A656E6F, 0x2020200A, 0x564F4D20, 0x20315220, 0x200A3852
+    .WORD 0x50202020, 0x5220504F, 0x200A3031, 0x50202020, 0x5220504F, 0x20200A39, 0x4F502020, 0x38522050
+    .WORD 0x2020200A, 0x504F5020, 0x0A524C20, 0x20202020, 0x0A544552, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x77203B0A, 0x65746972, 0x2C646628, 0x66756220, 0x656C202C, 0x3B0A296E, 0x49203B0A
+    .WORD 0x3B0A3A4E, 0x52202020, 0x203D2031, 0x3B0A6466, 0x52202020, 0x203D2032, 0x66667562, 0x3B0A7265
+    .WORD 0x52202020, 0x203D2033, 0x676E656C, 0x3B0A6874, 0x4F203B0A, 0x0A3A5455, 0x2020203B, 0x3D203152
+    .WORD 0x74796220, 0x77207365, 0x74746972, 0x2F206E65, 0x72726520, 0x3B0A6F6E, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x770A2D2D, 0x65746972, 0x20200A3A, 0x56532020, 0x59532043, 0x52575F53, 0x0A455449
+    .WORD 0x20202020, 0x0A544552, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x64616572
+    .WORD 0x2C646628, 0x66756220, 0x656C202C, 0x3B0A296E, 0x49203B0A, 0x3B0A3A4E, 0x52202020, 0x203D2031
+    .WORD 0x3B0A6466, 0x52202020, 0x203D2032, 0x66667562, 0x3B0A7265, 0x52202020, 0x203D2033, 0x676E656C
+    .WORD 0x3B0A6874, 0x4F203B0A, 0x0A3A5455, 0x2020203B, 0x3D203152, 0x74796220, 0x72207365, 0x0A646165
+    .WORD 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x64616572, 0x20200A3A, 0x56532020, 0x59532043
+    .WORD 0x45525F53, 0x200A4441, 0x52202020, 0x0A0A5445, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x6F203B0A, 0x286E6570, 0x68746170, 0x6C66202C, 0x29736761, 0x3B0A3B0A, 0x3A4E4920, 0x20203B0A
+    .WORD 0x20315220, 0x6170203D, 0x3B0A6874, 0x52202020, 0x203D2032, 0x67616C66, 0x0A3B0A73, 0x554F203B
+    .WORD 0x3B0A3A54, 0x52202020, 0x203D2031, 0x3B0A6466, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6F0A2D2D
+    .WORD 0x3A6E6570, 0x2020200A, 0x43565320, 0x53595320, 0x45504F5F, 0x20200A4E, 0x45522020, 0x0A0A0A54
+    .WORD 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x6C63203B, 0x2865736F, 0x0A296466, 0x2D2D2D3B
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x736F6C63, 0x200A3A65, 0x53202020, 0x53204356, 0x435F5359
+    .WORD 0x45534F4C, 0x2020200A, 0x54455220, 0x3B0A0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D
-    .WORD 0x69727720, 0x66286574, 0x62202C64, 0x202C6675, 0x296E656C, 0x3B0A3B0A, 0x3A4E4920, 0x20203B0A
-    .WORD 0x20315220, 0x6466203D, 0x20203B0A, 0x20325220, 0x7562203D, 0x72656666, 0x20203B0A, 0x20335220
-    .WORD 0x656C203D, 0x6874676E, 0x3B0A3B0A, 0x54554F20, 0x203B0A3A, 0x31522020, 0x62203D20, 0x73657479
-    .WORD 0x69727720, 0x6E657474, 0x65202F20, 0x6F6E7272, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x726F6620, 0x0A29286B, 0x203B0A3B, 0x65726170, 0x0A3A746E, 0x2020203B, 0x3D203152, 0x69686320
+    .WORD 0x7020646C, 0x3B0A6469, 0x63203B0A, 0x646C6968, 0x203B0A3A, 0x31522020, 0x30203D20, 0x2D2D3B0A
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x6972770A, 0x0A3A6574, 0x20202020, 0x20435653, 0x5F535953, 0x54495257, 0x20200A45, 0x45522020
-    .WORD 0x0A0A0A54, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x726F660A, 0x200A3A6B, 0x53202020, 0x53204356, 0x465F5359
+    .WORD 0x0A4B524F, 0x20202020, 0x0A544552, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x6572203B, 0x66286461, 0x62202C64
-    .WORD 0x202C6675, 0x296E656C, 0x3B0A3B0A, 0x3A4E4920, 0x20203B0A, 0x20315220, 0x6466203D, 0x20203B0A
-    .WORD 0x20325220, 0x7562203D, 0x72656666, 0x20203B0A, 0x20335220, 0x656C203D, 0x6874676E, 0x3B0A3B0A
-    .WORD 0x54554F20, 0x203B0A3A, 0x31522020, 0x62203D20, 0x73657479, 0x61657220, 0x2D3B0A64, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D
+    .WORD 0x63657865, 0x70286576, 0x2C687461, 0x67726120, 0x65202C76, 0x2970766E, 0x2D2D3B0A, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x65720A2D, 0x0A3A6461, 0x20202020, 0x20435653, 0x5F535953, 0x44414552
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x6578650A, 0x3A657663, 0x2020200A, 0x43565320, 0x53595320, 0x4558455F
+    .WORD 0x0A455643, 0x20202020, 0x0A544552, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D
+    .WORD 0x74696177, 0x28646970, 0x2C646970, 0x74617473, 0x0A297375, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x0A2D2D2D, 0x74696177, 0x3A646970, 0x2020200A, 0x43565320, 0x53595320, 0x4941575F, 0x44495054
     .WORD 0x2020200A, 0x54455220, 0x3B0A0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D, 0x65706F20
-    .WORD 0x6170286E, 0x202C6874, 0x67616C66, 0x3B0A2973, 0x49203B0A, 0x3B0A3A4E, 0x52202020, 0x203D2031
-    .WORD 0x68746170, 0x20203B0A, 0x20325220, 0x6C66203D, 0x0A736761, 0x203B0A3B, 0x3A54554F, 0x20203B0A
-    .WORD 0x20315220, 0x6466203D, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x65706F0A, 0x200A3A6E
-    .WORD 0x53202020, 0x53204356, 0x4F5F5359, 0x0A4E4550, 0x20202020, 0x0A544552, 0x2D3B0A0A, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D, 0x656C7320
+    .WORD 0x6D287065, 0x696C6C69, 0x6F636573, 0x2973646E, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x736F6C63, 0x64662865, 0x2D3B0A29, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x656C730A, 0x0A3A7065, 0x20202020, 0x20435653, 0x5F535953, 0x45454C53, 0x20200A50, 0x45522020
+    .WORD 0x0A0A0A54, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x7865203B, 0x73287469, 0x75746174
+    .WORD 0x3B0A2973, 0x6E203B0A, 0x72657665, 0x74657220, 0x736E7275, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x6C630A2D, 0x3A65736F, 0x2020200A, 0x43565320, 0x53595320, 0x4F4C435F, 0x200A4553
-    .WORD 0x52202020, 0x0A0A5445, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x66203B0A, 0x286B726F
-    .WORD 0x0A3B0A29, 0x6170203B, 0x746E6572, 0x203B0A3A, 0x31522020, 0x63203D20, 0x646C6968, 0x64697020
-    .WORD 0x3B0A3B0A, 0x69686320, 0x0A3A646C, 0x2020203B, 0x3D203152, 0x3B0A3020, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x660A2D2D, 0x3A6B726F, 0x2020200A, 0x43565320, 0x53595320, 0x524F465F, 0x20200A4B
-    .WORD 0x45522020, 0x0A0A0A54, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x7865203B, 0x65766365
-    .WORD 0x74617028, 0x61202C68, 0x2C766772, 0x766E6520, 0x3B0A2970, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x650A2D2D, 0x76636578, 0x200A3A65, 0x53202020, 0x53204356, 0x455F5359, 0x56434558, 0x20200A45
-    .WORD 0x45522020, 0x0A0A0A54, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x6177203B, 0x69707469
-    .WORD 0x69702864, 0x74732C64, 0x73757461, 0x2D3B0A29, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x61770A2D
-    .WORD 0x69707469, 0x200A3A64, 0x53202020, 0x53204356, 0x575F5359, 0x50544941, 0x200A4449, 0x52202020
-    .WORD 0x0A0A5445, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x73203B0A, 0x7065656C, 0x6C696D28
-    .WORD 0x6573696C, 0x646E6F63, 0x3B0A2973, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x730A2D2D, 0x7065656C
-    .WORD 0x20200A3A, 0x56532020, 0x59532043, 0x4C535F53, 0x0A504545, 0x20202020, 0x0A544552, 0x2D3B0A0A
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x74697865, 0x61747328, 0x29737574, 0x3B0A3B0A
-    .WORD 0x76656E20, 0x72207265, 0x72757465, 0x3B0A736E, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x650A2D2D
-    .WORD 0x3A746978, 0x2020200A, 0x43565320, 0x53595320, 0x4958455F, 0x650A0A54, 0x5F746978, 0x676E6168
-    .WORD 0x20200A3A, 0x20422020, 0x74697865, 0x6E61685F, 0x0A0A0A67, 0x3D3D3D3B, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x2D2D2D2D, 0x6978650A, 0x200A3A74, 0x53202020, 0x53204356, 0x455F5359, 0x0A544958, 0x6978650A
+    .WORD 0x61685F74, 0x0A3A676E, 0x20202020, 0x78652042, 0x685F7469, 0x0A676E61, 0x3D3B0A0A, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x0A3D3D3D, 0x454D203B, 0x59524F4D, 0x4E414D20, 0x4D454741, 0x0A544E45, 0x3D3D3D3B, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x203B0A3D, 0x4F4D454D, 0x4D205952, 0x47414E41, 0x4E454D45, 0x3D3B0A54
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x0A3D3D3D, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3B0A0A3D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x56203B0A, 0x20595245
-    .WORD 0x504D4953, 0x4D20454C, 0x524F4D45, 0x4C412059, 0x41434F4C, 0x0A524F54, 0x203B0A3B, 0x73696854
-    .WORD 0x20736920, 0x696D2061, 0x616D696E, 0x616D206C, 0x636F6C6C, 0x6572662F, 0x6D692065, 0x6D656C70
-    .WORD 0x61746E65, 0x6E6F6974, 0x61687420, 0x3B0A3A74, 0x202E3120, 0x73657355, 0x66206120, 0x64657869
-    .WORD 0x72726120, 0x74207961, 0x7274206F, 0x206B6361, 0x6F6D656D, 0x62207972, 0x6B636F6C, 0x203B0A73
-    .WORD 0x44202E32, 0x2073656F, 0x20544F4E, 0x6C616F63, 0x65637365, 0x656D2820, 0x20656772, 0x616A6461
-    .WORD 0x746E6563, 0x65726620, 0x6C622065, 0x736B636F, 0x203B0A29, 0x44202E33, 0x2073656F, 0x20544F4E
-    .WORD 0x696C7073, 0x6C622074, 0x736B636F, 0x73752820, 0x65207365, 0x7269746E, 0x6C622065, 0x206B636F
-    .WORD 0x692D7361, 0x3B0A2973, 0x202E3420, 0x73657355, 0x72696620, 0x662D7473, 0x73207469, 0x63726165
-    .WORD 0x66282068, 0x73646E69, 0x72696620, 0x62207473, 0x6B636F6C, 0x61687420, 0x20732774, 0x20676962
-    .WORD 0x756F6E65, 0x0A296867, 0x2E35203B, 0x65735520, 0x62732073, 0x73206B72, 0x61637379, 0x74206C6C
-    .WORD 0x6567206F, 0x6F6D2074, 0x6D206572, 0x726F6D65, 0x72662079, 0x6B206D6F, 0x656E7265, 0x0A3B0A6C
-    .WORD 0x7254203B, 0x2D656461, 0x7366666F, 0x203B0A3A, 0x6556202B, 0x73207972, 0x6C706D69, 0x6E612065
-    .WORD 0x61652064, 0x74207973, 0x6E75206F, 0x73726564, 0x646E6174, 0x2B203B0A, 0x65725020, 0x74636964
-    .WORD 0x656C6261, 0x6D656D20, 0x2079726F, 0x67617375, 0x66282065, 0x64657869, 0x62617420, 0x0A29656C
-    .WORD 0x202B203B, 0x63206F4E, 0x6C706D6F, 0x6C207865, 0x656B6E69, 0x696C2064, 0x6D207473, 0x67616E61
-    .WORD 0x6E656D65, 0x203B0A74, 0x654D202D, 0x79726F6D, 0x61726620, 0x6E656D67, 0x69746174, 0x28206E6F
-    .WORD 0x276E6163, 0x656D2074, 0x20656772, 0x65657266, 0x6F6C6220, 0x29736B63, 0x2D203B0A, 0x73615720
-    .WORD 0x20646574, 0x63617073, 0x63282065, 0x74276E61, 0x6C707320, 0x6C207469, 0x65677261, 0x6F6C6220
-    .WORD 0x29736B63, 0x2D203B0A, 0x6D694C20, 0x64657469, 0x206F7420, 0x5F58414D, 0x434F4C42, 0x6120534B
-    .WORD 0x636F6C6C, 0x6F697461, 0x3B0A736E, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A0A2D2D, 0x2D2D2D3B
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D
+    .WORD 0x52455620, 0x49532059, 0x454C504D, 0x4D454D20, 0x2059524F, 0x4F4C4C41, 0x4F544143, 0x0A3B0A52
+    .WORD 0x6854203B, 0x69207369, 0x20612073, 0x696E696D, 0x206C616D, 0x6C6C616D, 0x662F636F, 0x20656572
+    .WORD 0x6C706D69, 0x6E656D65, 0x69746174, 0x74206E6F, 0x3A746168, 0x31203B0A, 0x7355202E, 0x61207365
+    .WORD 0x78696620, 0x61206465, 0x79617272, 0x206F7420, 0x63617274, 0x656D206B, 0x79726F6D, 0x6F6C6220
+    .WORD 0x0A736B63, 0x2E32203B, 0x656F4420, 0x4F4E2073, 0x6F632054, 0x73656C61, 0x28206563, 0x6772656D
+    .WORD 0x64612065, 0x6563616A, 0x6620746E, 0x20656572, 0x636F6C62, 0x0A29736B, 0x2E33203B, 0x656F4420
+    .WORD 0x4F4E2073, 0x70732054, 0x2074696C, 0x636F6C62, 0x2820736B, 0x73657375, 0x746E6520, 0x20657269
+    .WORD 0x636F6C62, 0x7361206B, 0x2973692D, 0x34203B0A, 0x7355202E, 0x66207365, 0x74737269, 0x7469662D
+    .WORD 0x61657320, 0x20686372, 0x6E696628, 0x66207364, 0x74737269, 0x6F6C6220, 0x74206B63, 0x27746168
+    .WORD 0x69622073, 0x6E652067, 0x6867756F, 0x203B0A29, 0x55202E35, 0x20736573, 0x6B726273, 0x73797320
+    .WORD 0x6C6C6163, 0x206F7420, 0x20746567, 0x65726F6D, 0x6D656D20, 0x2079726F, 0x6D6F7266, 0x72656B20
+    .WORD 0x0A6C656E, 0x203B0A3B, 0x64617254, 0x666F2D65, 0x0A3A7366, 0x202B203B, 0x79726556, 0x6D697320
+    .WORD 0x20656C70, 0x20646E61, 0x79736165, 0x206F7420, 0x65646E75, 0x61747372, 0x3B0A646E, 0x50202B20
+    .WORD 0x69646572, 0x62617463, 0x6D20656C, 0x726F6D65, 0x73752079, 0x20656761, 0x78696628, 0x74206465
+    .WORD 0x656C6261, 0x203B0A29, 0x6F4E202B, 0x6D6F6320, 0x78656C70, 0x6E696C20, 0x2064656B, 0x7473696C
+    .WORD 0x6E616D20, 0x6D656761, 0x0A746E65, 0x202D203B, 0x6F6D654D, 0x66207972, 0x6D676172, 0x61746E65
+    .WORD 0x6E6F6974, 0x61632820, 0x2074276E, 0x6772656D, 0x72662065, 0x62206565, 0x6B636F6C, 0x3B0A2973
+    .WORD 0x57202D20, 0x65747361, 0x70732064, 0x20656361, 0x6E616328, 0x73207427, 0x74696C70, 0x72616C20
+    .WORD 0x62206567, 0x6B636F6C, 0x3B0A2973, 0x4C202D20, 0x74696D69, 0x74206465, 0x414D206F, 0x4C425F58
+    .WORD 0x534B434F, 0x6C6C6120, 0x7461636F, 0x736E6F69, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x4F43203B, 0x4154534E, 0x0A53544E, 0x2D2D2D3B, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x0A2D2D2D, 0x51452E0A, 0x414D2055, 0x4C425F58, 0x534B434F, 0x3834202C, 0x20202020
-    .WORD 0x3B202020, 0x78614D20, 0x6D756D69, 0x6D756E20, 0x20726562, 0x6220666F, 0x6B636F6C, 0x65772073
-    .WORD 0x6E616320, 0x61727420, 0x200A6B63, 0x20202020, 0x20202020, 0x20202020, 0x20202020, 0x20202020
-    .WORD 0x20202020, 0x28203B20, 0x276E6163, 0x6C612074, 0x61636F6C, 0x6D206574, 0x2065726F, 0x6E616874
-    .WORD 0x20323320, 0x656D6974, 0x69772073, 0x756F6874, 0x72662074, 0x6E696565, 0x0A0A2967, 0x6C42203B
-    .WORD 0x206B636F, 0x63736564, 0x74706972, 0x6F20726F, 0x65736666, 0x28207374, 0x68636165, 0x6F6C6220
-    .WORD 0x6E206B63, 0x73646565, 0x65687420, 0x33206573, 0x6C617620, 0x29736575, 0x51452E0A, 0x4C422055
-    .WORD 0x5F4B434F, 0x52444441, 0x3020202C, 0x20202020, 0x3B202020, 0x66664F20, 0x3A746573, 0x61747320
-    .WORD 0x6E697472, 0x64612067, 0x73657264, 0x666F2073, 0x65687420, 0x6F6C6220, 0x28206B63, 0x79622034
-    .WORD 0x29736574, 0x51452E0A, 0x4C422055, 0x5F4B434F, 0x455A4953, 0x3420202C, 0x20202020, 0x3B202020
-    .WORD 0x66664F20, 0x3A746573, 0x7A697320, 0x666F2065, 0x65687420, 0x6F6C6220, 0x69206B63, 0x7962206E
-    .WORD 0x20736574, 0x62203428, 0x73657479, 0x0A202029, 0x5551452E, 0x4F4C4220, 0x555F4B43, 0x2C444553
-    .WORD 0x20382020, 0x20202020, 0x203B2020, 0x7366664F, 0x203A7465, 0x72663D30, 0x202C6565, 0x73753D31
-    .WORD 0x28206465, 0x79622034, 0x29736574, 0x51452E0A, 0x4C422055, 0x5F4B434F, 0x43534544, 0x3120202C
-    .WORD 0x20202032, 0x3B202020, 0x746F5420, 0x73206C61, 0x20657A69, 0x6F20666F, 0x6220656E, 0x6B636F6C
-    .WORD 0x73656420, 0x70697263, 0x20726F74, 0x77203328, 0x7364726F, 0x31203D20, 0x79622032, 0x29736574
     .WORD 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x41544144, 0x43455320, 0x4E4F4954
-    .WORD 0x54202D20, 0x62206568, 0x6B636F6C, 0x62617420, 0x0A20656C, 0x6F6E203B, 0x6C616D72, 0x6D20796C
-    .WORD 0x726F6D65, 0x6C622079, 0x736B636F, 0x74656720, 0x73657220, 0x76657265, 0x66206465, 0x206D6F72
-    .WORD 0x50414548, 0x69687720, 0x69206863, 0x6F6C2073, 0x65746163, 0x74612064, 0x74616420, 0x65732061
-    .WORD 0x6E656D67, 0x3B0A2074, 0x67617020, 0x70282065, 0x20656761, 0x72646461, 0x20737365, 0x63657073
-    .WORD 0x65696669, 0x73612064, 0x65737520, 0x61645F72, 0x765F6174, 0x0A202961, 0x2D2D2D3B, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x534E4F43, 0x544E4154, 0x2D3B0A53
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x0A2D2D2D, 0x6F6C620A, 0x745F6B63, 0x656C6261, 0x20200A3A, 0x203B2020, 0x73696854
-    .WORD 0x20736920, 0x61206E61, 0x79617272, 0x20666F20, 0x5F58414D, 0x434F4C42, 0x6420534B, 0x72637365
-    .WORD 0x6F747069, 0x0A2E7372, 0x20202020, 0x6145203B, 0x64206863, 0x72637365, 0x6F747069, 0x61682072
-    .WORD 0x61203A73, 0x65726464, 0x202C7373, 0x657A6973, 0x7375202C, 0x665F6465, 0x0A67616C, 0x20202020
-    .WORD 0x6F54203B, 0x206C6174, 0x657A6973, 0x414D203A, 0x4C425F58, 0x534B434F, 0x31202A20, 0x79622032
-    .WORD 0x0A736574, 0x20202020, 0x4150532E, 0x4D204543, 0x425F5841, 0x4B434F4C, 0x202A2053, 0x434F4C42
-    .WORD 0x45445F4B, 0x0A0A4353, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2E0A0A2D, 0x20555145, 0x5F58414D, 0x434F4C42, 0x202C534B
+    .WORD 0x20203834, 0x20202020, 0x4D203B20, 0x6D697861, 0x6E206D75, 0x65626D75, 0x666F2072, 0x6F6C6220
+    .WORD 0x20736B63, 0x63206577, 0x74206E61, 0x6B636172, 0x2020200A, 0x20202020, 0x20202020, 0x20202020
+    .WORD 0x20202020, 0x20202020, 0x3B202020, 0x61632820, 0x2074276E, 0x6F6C6C61, 0x65746163, 0x726F6D20
+    .WORD 0x68742065, 0x33206E61, 0x69742032, 0x2073656D, 0x68746977, 0x2074756F, 0x65657266, 0x29676E69
+    .WORD 0x203B0A0A, 0x636F6C42, 0x6564206B, 0x69726373, 0x726F7470, 0x66666F20, 0x73746573, 0x61652820
+    .WORD 0x62206863, 0x6B636F6C, 0x65656E20, 0x74207364, 0x65736568, 0x76203320, 0x65756C61, 0x2E0A2973
+    .WORD 0x20555145, 0x434F4C42, 0x44415F4B, 0x202C5244, 0x20203020, 0x20202020, 0x4F203B20, 0x65736666
+    .WORD 0x73203A74, 0x74726174, 0x20676E69, 0x72646461, 0x20737365, 0x7420666F, 0x62206568, 0x6B636F6C
+    .WORD 0x20342820, 0x65747962, 0x2E0A2973, 0x20555145, 0x434F4C42, 0x49535F4B, 0x202C455A, 0x20203420
+    .WORD 0x20202020, 0x4F203B20, 0x65736666, 0x73203A74, 0x20657A69, 0x7420666F, 0x62206568, 0x6B636F6C
+    .WORD 0x206E6920, 0x65747962, 0x34282073, 0x74796220, 0x20297365, 0x452E0A20, 0x42205551, 0x4B434F4C
+    .WORD 0x4553555F, 0x20202C44, 0x20202038, 0x20202020, 0x664F203B, 0x74657366, 0x3D30203A, 0x65657266
+    .WORD 0x3D31202C, 0x64657375, 0x20342820, 0x65747962, 0x2E0A2973, 0x20555145, 0x434F4C42, 0x45445F4B
+    .WORD 0x202C4353, 0x20323120, 0x20202020, 0x54203B20, 0x6C61746F, 0x7A697320, 0x666F2065, 0x656E6F20
+    .WORD 0x6F6C6220, 0x64206B63, 0x72637365, 0x6F747069, 0x33282072, 0x726F7720, 0x3D207364, 0x20323120
+    .WORD 0x65747962, 0x0A0A2973, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x616D203B, 0x636F6C6C
-    .WORD 0x7A697328, 0x3B0A2965, 0x41203B0A, 0x636F6C6C, 0x73657461, 0x6D656D20, 0x2079726F, 0x6D6F7266
-    .WORD 0x65687420, 0x61656820, 0x3B0A2E70, 0x48203B0A, 0x6920776F, 0x6F772074, 0x3A736B72, 0x31203B0A
-    .WORD 0x6C41202E, 0x206E6769, 0x20656874, 0x75716572, 0x65747365, 0x69732064, 0x7420657A, 0x2038206F
-    .WORD 0x65747962, 0x6D282073, 0x73656B61, 0x6D656D20, 0x2079726F, 0x616E616D, 0x656D6567, 0x6520746E
-    .WORD 0x65697361, 0x3B0A2972, 0x202E3220, 0x72616553, 0x74206863, 0x62206568, 0x6B636F6C, 0x62617420
-    .WORD 0x6620656C, 0x6120726F, 0x65726620, 0x6C622065, 0x206B636F, 0x74616874, 0x6C207327, 0x65677261
-    .WORD 0x6F6E6520, 0x0A686775, 0x2E33203B, 0x20664920, 0x6E756F66, 0x6D202C64, 0x206B7261, 0x61207469
-    .WORD 0x73752073, 0x61206465, 0x7220646E, 0x72757465, 0x7469206E, 0x64612073, 0x73657264, 0x203B0A73
-    .WORD 0x49202E34, 0x6F6E2066, 0x6F662074, 0x2C646E75, 0x6B736120, 0x65687420, 0x72656B20, 0x206C656E
-    .WORD 0x20726F66, 0x65726F6D, 0x6D656D20, 0x2079726F, 0x20616976, 0x6B726273, 0x73797320, 0x6C6C6163
-    .WORD 0x35203B0A, 0x6441202E, 0x68742064, 0x656E2065, 0x656D2077, 0x79726F6D, 0x206F7420, 0x20656874
-    .WORD 0x636F6C62, 0x6174206B, 0x20656C62, 0x20646E61, 0x75746572, 0x69206E72, 0x0A3B0A74, 0x6E49203B
-    .WORD 0x3A747570, 0x31522020, 0x73203D20, 0x20657A69, 0x62206E69, 0x73657479, 0x2E652820, 0x202C2E67
-    .WORD 0x29303031, 0x4F203B0A, 0x75707475, 0x52203A74, 0x203D2031, 0x6E696F70, 0x20726574, 0x61206F74
-    .WORD 0x636F6C6C, 0x64657461, 0x6D656D20, 0x2079726F, 0x20726F28, 0x66692030, 0x69616620, 0x2964656C
-    .WORD 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x4144203B, 0x53204154
+    .WORD 0x49544345, 0x2D204E4F, 0x65685420, 0x6F6C6220, 0x74206B63, 0x656C6261, 0x203B0A20, 0x6D726F6E
+    .WORD 0x796C6C61, 0x6D656D20, 0x2079726F, 0x636F6C62, 0x6720736B, 0x72207465, 0x72657365, 0x64657665
+    .WORD 0x6F726620, 0x4548206D, 0x77205041, 0x68636968, 0x20736920, 0x61636F6C, 0x20646574, 0x64207461
+    .WORD 0x20617461, 0x6D676573, 0x20746E65, 0x70203B0A, 0x20656761, 0x67617028, 0x64612065, 0x73657264
+    .WORD 0x70732073, 0x66696365, 0x20646569, 0x75207361, 0x5F726573, 0x61746164, 0x2961765F, 0x2D3B0A20
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6C616D0A, 0x3A636F6C, 0x2020200A, 0x53203B20
-    .WORD 0x20657661, 0x69676572, 0x72657473, 0x65772073, 0x206C6C27, 0x20657375, 0x206F7328, 0x64206577
-    .WORD 0x74276E6F, 0x726F6320, 0x74707572, 0x6C616320, 0x2772656C, 0x61762073, 0x7365756C, 0x20200A29
-    .WORD 0x55502020, 0x4C204853, 0x20202052, 0x20202020, 0x20202020, 0x20202020, 0x6153203B, 0x72206576
-    .WORD 0x72757465, 0x6461206E, 0x73657264, 0x20200A73, 0x200A2020, 0x3B202020, 0x65745320, 0x3A312070
-    .WORD 0x696C4120, 0x73206E67, 0x20657A69, 0x6D206F74, 0x69746C75, 0x20656C70, 0x3820666F, 0x74796220
-    .WORD 0x200A7365, 0x3B202020, 0x79685720, 0x614D203F, 0x4320796E, 0x20735550, 0x6B726F77, 0x73616620
-    .WORD 0x20726574, 0x68746977, 0x696C6120, 0x64656E67, 0x6D656D20, 0x0A79726F, 0x20202020, 0x7845203B
-    .WORD 0x6C706D61, 0x73203A65, 0x3D657A69, 0x0A303031, 0x20202020, 0x2020203B, 0x20444441, 0x37203152
-    .WORD 0x20202020, 0x31203E2D, 0x200A3730, 0x3B202020, 0x41202020, 0x3020444E, 0x46464678, 0x46464646
-    .WORD 0x3E2D2038, 0x34303120, 0x756D2820, 0x7069746C, 0x6F20656C, 0x29382066, 0x2020200A, 0x44444120
-    .WORD 0x20315220, 0x37203152, 0x20202020, 0x20202020, 0x3B202020, 0x64644120, 0x74203720, 0x6F72206F
-    .WORD 0x20646E75, 0x200A7075, 0x4C202020, 0x52202049, 0x78302032, 0x46464646, 0x38464646, 0x20200A20
-    .WORD 0x4E412020, 0x31522044, 0x20315220, 0x20203252, 0x20202020, 0x20202020, 0x6C43203B, 0x20726165
-    .WORD 0x65776F6C, 0x20332072, 0x73746962, 0x616D2820, 0x6D20656B, 0x69746C75, 0x20656C70, 0x3820666F
-    .WORD 0x20200A29, 0x4F4D2020, 0x35522056, 0x20315220, 0x20202020, 0x20202020, 0x20202020, 0x3552203B
-    .WORD 0x61203D20, 0x6E67696C, 0x73206465, 0x20657A69, 0x672E6528, 0x31202C2E, 0x0A293430, 0x20202020
-    .WORD 0x2020200A, 0x53203B20, 0x20706574, 0x53203A32, 0x63726165, 0x6F662068, 0x20612072, 0x65657266
-    .WORD 0x6F6C6220, 0x69206B63, 0x6874206E, 0x61742065, 0x0A656C62, 0x20202020, 0x6557203B, 0x206C6C27
-    .WORD 0x20657375, 0x61203452, 0x6E692073, 0x20786564, 0x6F746E69, 0x6F6C6220, 0x745F6B63, 0x656C6261
-    .WORD 0x20302820, 0x4D206F74, 0x425F5841, 0x4B434F4C, 0x29312D53, 0x2020200A, 0x20494C20, 0x30203452
-    .WORD 0x20202020, 0x20202020, 0x20202020, 0x3B202020, 0x61745320, 0x61207472, 0x69662074, 0x20747372
-    .WORD 0x636F6C62, 0x6928206B, 0x7865646E, 0x0A293020, 0x20202020, 0x6C616D0A, 0x5F636F6C, 0x706F6F6C
-    .WORD 0x20200A3A, 0x203B2020, 0x63656843, 0x6669206B, 0x27657720, 0x73206576, 0x63726165, 0x20646568
-    .WORD 0x206C6C61, 0x636F6C62, 0x200A736B, 0x43202020, 0x5220504D, 0x414D2034, 0x4C425F58, 0x534B434F
-    .WORD 0x20202020, 0x43203B20, 0x61706D6F, 0x69206572, 0x7865646E, 0x74697720, 0x616D2068, 0x756D6978
-    .WORD 0x20200A6D, 0x47422020, 0x616D2045, 0x636F6C6C, 0x7262735F, 0x2020206B, 0x20202020, 0x6649203B
-    .WORD 0x646E6920, 0x3E207865, 0x414D203D, 0x4C425F58, 0x534B434F, 0x6F6E202C, 0x65726620, 0x6C622065
-    .WORD 0x206B636F, 0x6E756F66, 0x20200A64, 0x200A2020, 0x3B202020, 0x6C614320, 0x616C7563, 0x61206574
-    .WORD 0x65726464, 0x6F207373, 0x68742066, 0x62207369, 0x6B636F6C, 0x64207327, 0x72637365, 0x6F747069
-    .WORD 0x20200A72, 0x203B2020, 0x636F6C62, 0x61745F6B, 0x20656C62, 0x6928202B, 0x7865646E, 0x64202A20
-    .WORD 0x72637365, 0x6F747069, 0x69735F72, 0x0A29657A, 0x20202020, 0x5220494C, 0x6C622032, 0x5F6B636F
-    .WORD 0x6C626174, 0x20202065, 0x203B2020, 0x3D203252, 0x73616220, 0x64612065, 0x73657264, 0x666F2073
-    .WORD 0x6F6C6220, 0x745F6B63, 0x656C6261, 0x2020200A, 0x20494C20, 0x42203352, 0x4B434F4C, 0x5345445F
-    .WORD 0x20202043, 0x3B202020, 0x20335220, 0x6973203D, 0x6F20657A, 0x6E6F2066, 0x65642065, 0x69726373
-    .WORD 0x726F7470, 0x32312820, 0x74796220, 0x0A297365, 0x20202020, 0x204C554D, 0x52203352, 0x33522034
-    .WORD 0x20202020, 0x20202020, 0x203B2020, 0x3D203352, 0x646E6920, 0x2A207865, 0x20323120, 0x66666F28
-    .WORD 0x20746573, 0x6F746E69, 0x62617420, 0x0A29656C, 0x20202020, 0x20444441, 0x52203252, 0x33522032
-    .WORD 0x20202020, 0x20202020, 0x203B2020, 0x3D203252, 0x6C622620, 0x5B6B636F, 0x65646E69, 0x200A5D78
-    .WORD 0x0A202020, 0x20202020, 0x6843203B, 0x206B6365, 0x74206669, 0x20736968, 0x636F6C62, 0x7369206B
-    .WORD 0x65726620, 0x55282065, 0x20444553, 0x67616C66, 0x30203D20, 0x20200A29, 0x444C2020, 0x33522057
-    .WORD 0x32525B20, 0x42202B20, 0x4B434F4C, 0x4553555F, 0x20205D44, 0x6F4C203B, 0x74206461, 0x26206568
-    .WORD 0x636F6C62, 0x6E695B6B, 0x5D786564, 0x6F6C622E, 0x755F6B63, 0x20646573, 0x67616C66, 0x2020200A
-    .WORD 0x504D4320, 0x20335220, 0x20202030, 0x20202020, 0x20202020, 0x3B202020, 0x20734920, 0x30207469
-    .WORD 0x72662820, 0x3F296565, 0x2020200A, 0x454E4220, 0x6C616D20, 0x5F636F6C, 0x7478656E, 0x20202020
-    .WORD 0x3B202020, 0x20664920, 0x20746F6E, 0x65657266, 0x73752820, 0x2C296465, 0x696B7320, 0x6F742070
-    .WORD 0x78656E20, 0x6C622074, 0x0A6B636F, 0x20202020, 0x2020200A, 0x66203B20, 0x2E656572, 0x65684320
-    .WORD 0x69206B63, 0x68742066, 0x62207369, 0x6B636F6C, 0x20736920, 0x6772616C, 0x6E652065, 0x6867756F
-    .WORD 0x726F6620, 0x72756F20, 0x71657220, 0x74736575, 0x2020200A, 0x57444C20, 0x20335220, 0x2032525B
-    .WORD 0x4C42202B, 0x5F4B434F, 0x455A4953, 0x3B20205D, 0x616F4C20, 0x68742064, 0x6C622065, 0x206B636F
-    .WORD 0x657A6973, 0x2020200A, 0x504D4320, 0x20335220, 0x20203552, 0x20202020, 0x20202020, 0x3B202020
-    .WORD 0x20734920, 0x636F6C62, 0x6973206B, 0x3E20657A, 0x6572203D, 0x73657571, 0x20646574, 0x657A6973
-    .WORD 0x20200A3F, 0x47422020, 0x616D2045, 0x636F6C6C, 0x756F665F, 0x2020646E, 0x20202020, 0x6559203B
-    .WORD 0x57202173, 0x6F662065, 0x20646E75, 0x75732061, 0x62617469, 0x6220656C, 0x6B636F6C, 0x2020200A
-    .WORD 0x616D0A20, 0x636F6C6C, 0x78656E5F, 0x200A3A74, 0x3B202020, 0x69685420, 0x6C622073, 0x206B636F
-    .WORD 0x65207369, 0x65687469, 0x73752072, 0x6F206465, 0x6F742072, 0x6D73206F, 0x2C6C6C61, 0x79727420
-    .WORD 0x78656E20, 0x6E6F2074, 0x20200A65, 0x44412020, 0x34522044, 0x20345220, 0x20202031, 0x20202020
-    .WORD 0x20202020, 0x6E49203B, 0x6D657263, 0x20746E65, 0x65646E69, 0x6F742078, 0x65686320, 0x6E206B63
-    .WORD 0x20747865, 0x636F6C62, 0x20200A6B, 0x20422020, 0x6C6C616D, 0x6C5F636F, 0x20706F6F, 0x20202020
-    .WORD 0x20202020, 0x6F47203B, 0x63616220, 0x6F74206B, 0x61747320, 0x6F207472, 0x6F6C2066, 0x0A0A706F
-    .WORD 0x6C6C616D, 0x665F636F, 0x646E756F, 0x20200A3A, 0x203B2020, 0x70657453, 0x203A3320, 0x66206557
-    .WORD 0x646E756F, 0x66206120, 0x20656572, 0x636F6C62, 0x616C206B, 0x20656772, 0x756F6E65, 0x0A216867
-    .WORD 0x20202020, 0x3252203B, 0x70203D20, 0x746E696F, 0x74207265, 0x6874206F, 0x6C622065, 0x206B636F
-    .WORD 0x63736564, 0x74706972, 0x200A726F, 0x3B202020, 0x20335220, 0x6C62203D, 0x206B636F, 0x657A6973
-    .WORD 0x65772820, 0x6E6F6420, 0x75207427, 0x69206573, 0x6F662074, 0x70732072, 0x7474696C, 0x20676E69
-    .WORD 0x74206E69, 0x20736968, 0x706D6973, 0x7620656C, 0x69737265, 0x0A296E6F, 0x20202020, 0x2020200A
-    .WORD 0x4D203B20, 0x206B7261, 0x20656874, 0x636F6C62, 0x7361206B, 0x65737520, 0x55282064, 0x20444553
-    .WORD 0x67616C66, 0x31203D20, 0x20200A29, 0x494C2020, 0x20335220, 0x20202031, 0x20202020, 0x20202020
-    .WORD 0x20202020, 0x3352203B, 0x31203D20, 0x73752820, 0x0A296465, 0x20202020, 0x20575453, 0x5B203352
-    .WORD 0x2B203252, 0x4F4C4220, 0x555F4B43, 0x5D444553, 0x203B2020, 0x726F7453, 0x20312065, 0x74206E69
-    .WORD 0x55206568, 0x20444553, 0x6C656966, 0x20200A64, 0x200A2020, 0x3B202020, 0x74654720, 0x65687420
-    .WORD 0x6F6C6220, 0x73276B63, 0x61747320, 0x6E697472, 0x64612067, 0x73657264, 0x6E612073, 0x65722064
-    .WORD 0x6E727574, 0x0A746920, 0x20202020, 0x2057444C, 0x5B203152, 0x2B203252, 0x4F4C4220, 0x415F4B43
-    .WORD 0x5D524444, 0x203B2020, 0x3D203152, 0x64646120, 0x73736572, 0x20666F20, 0x73696874, 0x6F6C6220
-    .WORD 0x200A6B63, 0x42202020, 0x6C616D20, 0x5F636F6C, 0x656E6F64, 0x20202020, 0x20202020, 0x4A203B20
-    .WORD 0x20706D75, 0x63206F74, 0x6E61656C, 0x61207075, 0x7220646E, 0x72757465, 0x6D0A0A6E, 0x6F6C6C61
-    .WORD 0x62735F63, 0x0A3A6B72, 0x20202020, 0x7453203B, 0x34207065, 0x6F4E203A, 0x65726620, 0x6C622065
-    .WORD 0x206B636F, 0x6E756F66, 0x6E692064, 0x62617420, 0x200A656C, 0x3B202020, 0x6B734120, 0x65687420
-    .WORD 0x72656B20, 0x206C656E, 0x20726F66, 0x65726F6D, 0x6D656D20, 0x2079726F, 0x6E697375, 0x62732067
-    .WORD 0x73206B72, 0x61637379, 0x200A6C6C, 0x0A202020, 0x20202020, 0x3552203B, 0x726C6120, 0x79646165
-    .WORD 0x73616820, 0x65687420, 0x696C6120, 0x64656E67, 0x7A697320, 0x65772065, 0x65656E20, 0x20200A64
-    .WORD 0x4F4D2020, 0x31522056, 0x20355220, 0x20202020, 0x20202020, 0x20202020, 0x3152203B, 0x73203D20
-    .WORD 0x20657A69, 0x61206F74, 0x636F6C6C, 0x0A657461, 0x20202020, 0x20435653, 0x5F535953, 0x4B524253
-    .WORD 0x20202020, 0x20202020, 0x203B2020, 0x6C6C6143, 0x72656B20, 0x3A6C656E, 0x72627320, 0x6973286B
-    .WORD 0x0A29657A, 0x20202020, 0x2020200A, 0x43203B20, 0x6B636568, 0x20666920, 0x6B726273, 0x69616620
-    .WORD 0x2064656C, 0x74657228, 0x736E7275, 0x20312D20, 0x3020726F, 0x206E6F20, 0x6F727265, 0x200A2972
-    .WORD 0x43202020, 0x5220504D, 0x20302031, 0x20202020, 0x20202020, 0x20202020, 0x44203B20, 0x73206469
-    .WORD 0x206B7262, 0x75746572, 0x30206E72, 0x20726F20, 0x6167656E, 0x65766974, 0x20200A3F, 0x4C422020
-    .WORD 0x616D2054, 0x636F6C6C, 0x7272655F, 0x2020726F, 0x20202020, 0x6649203B, 0x72726520, 0x202C726F
-    .WORD 0x75746572, 0x4E206E72, 0x0A4C4C55, 0x20202020, 0x2020200A, 0x53203B20, 0x20706574, 0x73203A35
-    .WORD 0x206B7262, 0x63637573, 0x65646565, 0x77202C64, 0x61682065, 0x6E206576, 0x6D207765, 0x726F6D65
-    .WORD 0x74612079, 0x64646120, 0x73736572, 0x206E6920, 0x200A3152, 0x3B202020, 0x776F4E20, 0x20657720
-    .WORD 0x6465656E, 0x206F7420, 0x20646461, 0x73696874, 0x77656E20, 0x6F6C6220, 0x74206B63, 0x756F206F
-    .WORD 0x61742072, 0x0A656C62, 0x20202020, 0x2020200A, 0x46203B20, 0x20646E69, 0x65206E61, 0x7974706D
-    .WORD 0x6F6C7320, 0x6E692074, 0x65687420, 0x6F6C6220, 0x74206B63, 0x656C6261, 0x2020200A, 0x20494C20
-    .WORD 0x30203452, 0x20202020, 0x20202020, 0x20202020, 0x3B202020, 0x61745320, 0x61207472, 0x69662074
-    .WORD 0x20747372, 0x636F6C62, 0x20200A6B, 0x6D0A2020, 0x6F6C6C61, 0x64615F63, 0x200A3A64, 0x3B202020
-    .WORD 0x65684320, 0x69206B63, 0x65772066, 0x20657627, 0x72616573, 0x64656863, 0x6C6C6120, 0x6F6C6220
-    .WORD 0x0A736B63, 0x20202020, 0x20504D43, 0x4D203452, 0x425F5841, 0x4B434F4C, 0x20202053, 0x200A2020
-    .WORD 0x42202020, 0x6D204547, 0x6F6C6C61, 0x72655F63, 0x20726F72, 0x20202020, 0x4E203B20, 0x6D65206F
-    .WORD 0x20797470, 0x746F6C73, 0x73282021, 0x6C756F68, 0x74276E64, 0x70616820, 0x296E6570, 0x2020200A
-    .WORD 0x20200A20, 0x203B2020, 0x20746547, 0x63736564, 0x74706972, 0x6120726F, 0x65726464, 0x200A7373
-    .WORD 0x4C202020, 0x32522049, 0x6F6C6220, 0x745F6B63, 0x656C6261, 0x2020200A, 0x20494C20, 0x42203352
-    .WORD 0x4B434F4C, 0x5345445F, 0x20200A43, 0x554D2020, 0x3352204C, 0x20345220, 0x200A3352, 0x41202020
-    .WORD 0x52204444, 0x32522032, 0x20335220, 0x20202020, 0x3B202020, 0x6C622620, 0x5B6B636F, 0x65646E69
-    .WORD 0x5D345278, 0x2020200A, 0x20200A20, 0x203B2020, 0x63656843, 0x6669206B, 0x69687420, 0x6C732073
-    .WORD 0x6920746F, 0x72662073, 0x28206565, 0x44455355, 0x616C6620, 0x203D2067, 0x200A2930, 0x4C202020
-    .WORD 0x52205744, 0x525B2033, 0x202B2032, 0x434F4C42, 0x53555F4B, 0x0A5D4445, 0x20202020, 0x20504D43
-    .WORD 0x30203352, 0x2020200A, 0x51454220, 0x6C616D20, 0x5F636F6C, 0x5F646461, 0x6E756F66, 0x3B202064
-    .WORD 0x756F4620, 0x6120646E, 0x6D65206E, 0x20797470, 0x746F6C73, 0x20200A21, 0x200A2020, 0x3B202020
-    .WORD 0x6F6C5320, 0x73692074, 0x65737520, 0x74202C64, 0x6E207972, 0x20747865, 0x0A656E6F, 0x20202020
-    .WORD 0x20444441, 0x52203452, 0x0A312034, 0x20202020, 0x616D2042, 0x636F6C6C, 0x6464615F, 0x616D0A0A
-    .WORD 0x636F6C6C, 0x6464615F, 0x756F665F, 0x0A3A646E, 0x20202020, 0x6557203B, 0x756F6620, 0x6120646E
-    .WORD 0x6D65206E, 0x20797470, 0x746F6C73, 0x20746120, 0x200A3252, 0x3B202020, 0x6F745320, 0x74206572
-    .WORD 0x6E206568, 0x62207765, 0x6B636F6C, 0x69207327, 0x726F666E, 0x6974616D, 0x200A6E6F, 0x0A202020
-    .WORD 0x20202020, 0x7453203B, 0x2065726F, 0x20656874, 0x72646461, 0x20737365, 0x20315228, 0x6D6F7266
-    .WORD 0x72627320, 0x200A296B, 0x53202020, 0x52205754, 0x525B2031, 0x202B2032, 0x434F4C42, 0x44415F4B
-    .WORD 0x205D5244, 0x203B2020, 0x636F6C62, 0x64612E6B, 0x73657264, 0x203D2073, 0x72646461, 0x20737365
-    .WORD 0x6D6F7266, 0x72627320, 0x20200A6B, 0x200A2020, 0x3B202020, 0x6F745320, 0x74206572, 0x73206568
-    .WORD 0x20657A69, 0x20355228, 0x6C61203D, 0x656E6769, 0x69732064, 0x0A29657A, 0x20202020, 0x20575453
-    .WORD 0x5B203552, 0x2B203252, 0x4F4C4220, 0x535F4B43, 0x5D455A49, 0x3B202020, 0x6F6C6220, 0x732E6B63
-    .WORD 0x20657A69, 0x6973203D, 0x200A657A, 0x0A202020, 0x20202020, 0x614D203B, 0x61206B72, 0x73752073
-    .WORD 0x28206465, 0x44455355, 0x31203D20, 0x20200A29, 0x494C2020, 0x20335220, 0x20200A31, 0x54532020
-    .WORD 0x33522057, 0x32525B20, 0x42202B20, 0x4B434F4C, 0x4553555F, 0x20205D44, 0x62203B20, 0x6B636F6C
-    .WORD 0x6573752E, 0x203D2064, 0x20200A31, 0x200A2020, 0x3B202020, 0x20315220, 0x65726C61, 0x20796461
-    .WORD 0x20736168, 0x20656874, 0x72646461, 0x20737365, 0x6D6F7266, 0x72627320, 0x73202C6B, 0x756A206F
-    .WORD 0x72207473, 0x72757465, 0x7469206E, 0x2020200A, 0x6D204220, 0x6F6C6C61, 0x6F645F63, 0x0A0A656E
-    .WORD 0x6C6C616D, 0x655F636F, 0x726F7272, 0x20200A3A, 0x203B2020, 0x656D6F53, 0x6E696874, 0x65772067
-    .WORD 0x7720746E, 0x676E6F72, 0x72202D20, 0x72757465, 0x554E206E, 0x28204C4C, 0x200A2930, 0x4C202020
-    .WORD 0x31522049, 0x0A0A3020, 0x6C6C616D, 0x645F636F, 0x3A656E6F, 0x2020200A, 0x504F5020, 0x20524C20
-    .WORD 0x20202020, 0x20202020, 0x20202020, 0x3B202020, 0x73655220, 0x65726F74, 0x74657220, 0x206E7275
-    .WORD 0x72646461, 0x0A737365, 0x20202020, 0x20544552, 0x20202020, 0x20202020, 0x20202020, 0x20202020
-    .WORD 0x203B2020, 0x75746552, 0x74206E72, 0x6163206F, 0x72656C6C, 0x74697720, 0x31522068, 0x70203D20
-    .WORD 0x746E696F, 0x6F207265, 0x554E2072, 0x0A0A4C4C, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D
-    .WORD 0x7266203B, 0x70286565, 0x0A297274, 0x203B0A3B, 0x65657246, 0x72702073, 0x6F697665, 0x796C7375
-    .WORD 0x6C6C6120, 0x7461636F, 0x6D206465, 0x726F6D65, 0x3B0A2E79, 0x48203B0A, 0x6920776F, 0x6F772074
-    .WORD 0x3A736B72, 0x31203B0A, 0x6946202E, 0x7420646E, 0x62206568, 0x6B636F6C, 0x73656420, 0x70697263
-    .WORD 0x20726F74, 0x20726F66, 0x73696874, 0x64646120, 0x73736572, 0x32203B0A, 0x614D202E, 0x69206B72
-    .WORD 0x73612074, 0x65726620, 0x55282065, 0x20444553, 0x2930203D, 0x33203B0A, 0x654D202E, 0x79726F6D
-    .WORD 0x20736920, 0x20776F6E, 0x69617661, 0x6C62616C, 0x6F662065, 0x75662072, 0x65727574, 0x6C616D20
-    .WORD 0x20636F6C, 0x6C6C6163, 0x0A3B0A73, 0x6F4E203B, 0x203A6574, 0x73696854, 0x6D697320, 0x20656C70
-    .WORD 0x73726576, 0x206E6F69, 0x73656F64, 0x544F4E20, 0x616F6320, 0x6373656C, 0x64612065, 0x6563616A
-    .WORD 0x6620746E, 0x20656572, 0x636F6C62, 0x0A21736B, 0x2020203B, 0x20202020, 0x66206F53, 0x6D676172
-    .WORD 0x61746E65, 0x6E6F6974, 0x6E616320, 0x63636F20, 0x6F207275, 0x20726576, 0x656D6974, 0x0A3B0A2E
-    .WORD 0x6E49203B, 0x3A747570, 0x31522020, 0x70203D20, 0x746E696F, 0x74207265, 0x656D206F, 0x79726F6D
-    .WORD 0x206F7420, 0x65657266, 0x72662820, 0x6D206D6F, 0x6F6C6C61, 0x3B0A2963, 0x74754F20, 0x3A747570
-    .WORD 0x746F4E20, 0x676E6968, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x620A0A2D, 0x6B636F6C, 0x6261745F, 0x0A3A656C, 0x20202020
+    .WORD 0x6854203B, 0x69207369, 0x6E612073, 0x72726120, 0x6F207961, 0x414D2066, 0x4C425F58, 0x534B434F
+    .WORD 0x73656420, 0x70697263, 0x73726F74, 0x20200A2E, 0x203B2020, 0x68636145, 0x73656420, 0x70697263
+    .WORD 0x20726F74, 0x3A736168, 0x64646120, 0x73736572, 0x6973202C, 0x202C657A, 0x64657375, 0x616C665F
+    .WORD 0x20200A67, 0x203B2020, 0x61746F54, 0x6973206C, 0x203A657A, 0x5F58414D, 0x434F4C42, 0x2A20534B
+    .WORD 0x20323120, 0x65747962, 0x20200A73, 0x532E2020, 0x45434150, 0x58414D20, 0x4F4C425F, 0x20534B43
+    .WORD 0x4C42202A, 0x5F4B434F, 0x43534544, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6572660A, 0x200A3A65
-    .WORD 0x3B202020, 0x76615320, 0x65722065, 0x74736967, 0x0A737265, 0x20202020, 0x48535550, 0x0A524C20
-    .WORD 0x20202020, 0x2020200A, 0x53203B20, 0x20706574, 0x43203A31, 0x6B636568, 0x20666920, 0x6E696F70
-    .WORD 0x20726574, 0x4E207369, 0x0A4C4C55, 0x20202020, 0x20504D43, 0x30203152, 0x20202020, 0x20202020
-    .WORD 0x20202020, 0x203B2020, 0x52207349, 0x3D3D2031, 0x0A3F3020, 0x20202020, 0x20514542, 0x65657266
-    .WORD 0x6E6F645F, 0x20202065, 0x20202020, 0x203B2020, 0x4E206649, 0x2C4C4C55, 0x746F6E20, 0x676E6968
-    .WORD 0x206F7420, 0x65657266, 0x756A202C, 0x72207473, 0x72757465, 0x20200A6E, 0x200A2020, 0x3B202020
-    .WORD 0x65745320, 0x3A322070, 0x61655320, 0x20686372, 0x20656874, 0x636F6C62, 0x6174206B, 0x20656C62
-    .WORD 0x20726F66, 0x73696874, 0x64646120, 0x73736572, 0x2020200A, 0x20494C20, 0x30203452, 0x20202020
-    .WORD 0x20202020, 0x20202020, 0x3B202020, 0x61745320, 0x61207472, 0x69662074, 0x20747372, 0x636F6C62
-    .WORD 0x20200A6B, 0x660A2020, 0x5F656572, 0x706F6F6C, 0x20200A3A, 0x203B2020, 0x63656843, 0x6669206B
-    .WORD 0x27657720, 0x73206576, 0x63726165, 0x20646568, 0x206C6C61, 0x636F6C62, 0x200A736B, 0x43202020
-    .WORD 0x5220504D, 0x414D2034, 0x4C425F58, 0x534B434F, 0x2020200A, 0x45474220, 0x65726620, 0x6F645F65
-    .WORD 0x2020656E, 0x20202020, 0x3B202020, 0x746F4E20, 0x756F6620, 0x2D20646E, 0x6E676920, 0x2065726F
-    .WORD 0x756F6328, 0x6220646C, 0x6E692065, 0x696C6176, 0x6F702064, 0x65746E69, 0x200A2972, 0x0A202020
-    .WORD 0x20202020, 0x6547203B, 0x65642074, 0x69726373, 0x726F7470, 0x64646120, 0x73736572, 0x2020200A
-    .WORD 0x20494C20, 0x62203252, 0x6B636F6C, 0x6261745F, 0x200A656C, 0x4C202020, 0x33522049, 0x4F4C4220
-    .WORD 0x445F4B43, 0x20435345, 0x20202020, 0x6C203B20, 0x74676E65, 0x666F2068, 0x656E6F20, 0x6F6C6220
-    .WORD 0x64206B63, 0x72637365, 0x6F747069, 0x20200A72, 0x554D2020, 0x3352204C, 0x20345220, 0x20203352
-    .WORD 0x20202020, 0x20202020, 0x3472203B, 0x6F6C6220, 0x69206B63, 0x200A7864, 0x41202020, 0x52204444
-    .WORD 0x32522032, 0x20335220, 0x20202020, 0x20202020, 0x52203B20, 0x203D2032, 0x6F6C6226, 0x695B6B63
-    .WORD 0x20200A5D, 0x200A2020, 0x3B202020, 0x65684320, 0x69206B63, 0x68742066, 0x62207369, 0x6B636F6C
-    .WORD 0x61207327, 0x65726464, 0x6D207373, 0x68637461, 0x74207365, 0x70206568, 0x746E696F, 0x200A7265
-    .WORD 0x4C202020, 0x52205744, 0x525B2033, 0x202B2032, 0x434F4C42, 0x44415F4B, 0x205D5244, 0x52203B20
-    .WORD 0x203D2033, 0x6C622620, 0x5B6B636F, 0x622E5D69, 0x6B636F6C, 0x64646120, 0x73736572, 0x2020200A
-    .WORD 0x504D4320, 0x20335220, 0x20203152, 0x20202020, 0x20202020, 0x3B202020, 0x20734920, 0x73696874
-    .WORD 0x72756F20, 0x6F6C6220, 0x0A3F6B63, 0x20202020, 0x20514542, 0x65657266, 0x756F665F, 0x2020646E
-    .WORD 0x20202020, 0x203B2020, 0x2C736559, 0x20657720, 0x6E756F66, 0x74692064, 0x20200A21, 0x200A2020
-    .WORD 0x3B202020, 0x746F4E20, 0x69687420, 0x6C622073, 0x2C6B636F, 0x79727420, 0x78656E20, 0x20200A74
-    .WORD 0x44412020, 0x34522044, 0x20345220, 0x20200A31, 0x20422020, 0x65657266, 0x6F6F6C5F, 0x660A0A70
-    .WORD 0x5F656572, 0x6E756F66, 0x200A3A64, 0x3B202020, 0x65745320, 0x3A332070, 0x20655720, 0x6E756F66
-    .WORD 0x68742064, 0x6C622065, 0x206B636F, 0x63736564, 0x74706972, 0x6120726F, 0x32522074, 0x2020200A
-    .WORD 0x4D203B20, 0x206B7261, 0x61207469, 0x72662073, 0x73206565, 0x616D206F, 0x636F6C6C, 0x6E616320
-    .WORD 0x65737520, 0x20746920, 0x69616761, 0x20200A6E, 0x200A2020, 0x4C202020, 0x33522049, 0x20203020
-    .WORD 0x20202020, 0x20202020, 0x20202020, 0x52203B20, 0x203D2033, 0x66282030, 0x29656572, 0x2020200A
-    .WORD 0x57545320, 0x20335220, 0x2032525B, 0x4C42202B, 0x5F4B434F, 0x44455355, 0x3B20205D, 0x6C622620
-    .WORD 0x5B6B636F, 0x752E5D69, 0x20646573, 0x0A30203D, 0x20202020, 0x2020200A, 0x4E203B20, 0x3A45544F
-    .WORD 0x20655720, 0x4E206F64, 0x6320544F, 0x7261656C, 0x65687420, 0x64646120, 0x73736572, 0x20726F20
-    .WORD 0x657A6973, 0x2020200A, 0x54203B20, 0x20796568, 0x79617473, 0x206E6920, 0x20656874, 0x6C626174
-    .WORD 0x6E612065, 0x69772064, 0x62206C6C, 0x766F2065, 0x72777265, 0x65747469, 0x6877206E, 0x72206E65
-    .WORD 0x65737565, 0x20200A64, 0x660A2020, 0x5F656572, 0x656E6F64, 0x20200A3A, 0x203B2020, 0x61656C43
-    .WORD 0x7075206E, 0x646E6120, 0x74657220, 0x0A6E7275, 0x20202020, 0x20504F50, 0x200A524C, 0x52202020
-    .WORD 0x0A0A5445, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x616D203B, 0x636F6C6C, 0x696E695F
-    .WORD 0x202D2074, 0x74696E49, 0x696C6169, 0x7420657A, 0x6D206568, 0x726F6D65, 0x6C612079, 0x61636F6C
-    .WORD 0x0A726F74, 0x203B0A3B, 0x61656C43, 0x74207372, 0x65206568, 0x7269746E, 0x6C622065, 0x206B636F
-    .WORD 0x6C626174, 0x6F732065, 0x6C6C6120, 0x6F6C6220, 0x20736B63, 0x20657261, 0x6B72616D, 0x61206465
-    .WORD 0x72662073, 0x3B0A6565, 0x6F685320, 0x20646C75, 0x63206562, 0x656C6C61, 0x6E6F2064, 0x61206563
-    .WORD 0x79732074, 0x6D657473, 0x61747320, 0x70757472, 0x66656220, 0x2065726F, 0x6E697375, 0x616D2067
-    .WORD 0x636F6C6C, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6C616D0A, 0x5F636F6C, 0x74696E69
-    .WORD 0x20200A3A, 0x203B2020, 0x65766153, 0x67657220, 0x65747369, 0x200A7372, 0x50202020, 0x20485355
-    .WORD 0x2020524C, 0x20200A20, 0x203B2020, 0x70657453, 0x203A3120, 0x61656C43, 0x68742072, 0x6E652065
-    .WORD 0x65726974, 0x6F6C6220, 0x74206B63, 0x656C6261, 0x2020200A, 0x53203B20, 0x61207465, 0x62206C6C
-    .WORD 0x73657479, 0x206E6920, 0x636F6C62, 0x61745F6B, 0x20656C62, 0x30206F74, 0x2020200A, 0x20494C20
-    .WORD 0x62203152, 0x6B636F6C, 0x6261745F, 0x2020656C, 0x3B202020, 0x20315220, 0x7473203D, 0x20747261
-    .WORD 0x72646461, 0x20737365, 0x7420666F, 0x656C6261, 0x2020200A, 0x20494C20, 0x4D203352, 0x425F5841
-    .WORD 0x4B434F4C, 0x202A2053, 0x434F4C42, 0x45445F4B, 0x20204353, 0x3352203B, 0x74203D20, 0x6C61746F
-    .WORD 0x74796220, 0x74207365, 0x6C63206F, 0x0A726165, 0x20202020, 0x6C616D0A, 0x5F636F6C, 0x74696E69
-    .WORD 0x6F6F6C5F, 0x200A3A70, 0x43202020, 0x5220504D, 0x20302033, 0x20202020, 0x20202020, 0x20202020
-    .WORD 0x48203B20, 0x20657661, 0x63206577, 0x7261656C, 0x61206465, 0x62206C6C, 0x73657479, 0x20200A3F
-    .WORD 0x45422020, 0x616D2051, 0x636F6C6C, 0x696E695F, 0x6F645F74, 0x2020656E, 0x6559203B, 0x77202C73
-    .WORD 0x65722765, 0x6E6F6420, 0x20200A65, 0x200A2020, 0x4C202020, 0x32522049, 0x20203020, 0x20202020
-    .WORD 0x20202020, 0x20202020, 0x52203B20, 0x203D2032, 0x76282030, 0x65756C61, 0x206F7420, 0x74697277
-    .WORD 0x200A2965, 0x53202020, 0x52204254, 0x525B2032, 0x20205D31, 0x20202020, 0x20202020, 0x53203B20
-    .WORD 0x65726F74, 0x61203020, 0x75632074, 0x6E657272, 0x64612074, 0x73657264, 0x20200A73, 0x44412020
-    .WORD 0x31522044, 0x20315220, 0x20202031, 0x20202020, 0x20202020, 0x6F4D203B, 0x74206576, 0x656E206F
-    .WORD 0x62207478, 0x0A657479, 0x20202020, 0x20425553, 0x52203352, 0x20312033, 0x20202020, 0x20202020
-    .WORD 0x203B2020, 0x72636544, 0x6E656D65, 0x79622074, 0x63206574, 0x746E756F, 0x200A7265, 0x42202020
-    .WORD 0x6C616D20, 0x5F636F6C, 0x74696E69, 0x6F6F6C5F, 0x20202070, 0x43203B20, 0x69746E6F, 0x0A65756E
-    .WORD 0x20202020, 0x6C616D0A, 0x5F636F6C, 0x74696E69, 0x6E6F645F, 0x200A3A65, 0x3B202020, 0x656C4320
-    .WORD 0x75206E61, 0x6E612070, 0x65722064, 0x6E727574, 0x2020200A, 0x504F5020, 0x0A524C20, 0x20202020
-    .WORD 0x0A544552, 0x3D3B0A0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x203B0A3D, 0x45544E49, 0x4C414E52
-    .WORD 0x4C454820, 0x53524550, 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x2D3B0A0A, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x69203B0A, 0x5F616F74, 0x65726F63
-    .WORD 0x55202D20, 0x6576696E, 0x6C617372, 0x746E6920, 0x72656765, 0x206F7420, 0x69727473, 0x6320676E
-    .WORD 0x65766E6F, 0x72657472, 0x3B0A3B0A, 0x20315220, 0x6564203D, 0x6E697473, 0x6F697461, 0x7562206E
-    .WORD 0x72656666, 0x52203B0A, 0x203D2032, 0x65746E69, 0x20726567, 0x63206F74, 0x65766E6F, 0x3B0A7472
-    .WORD 0x20335220, 0x6162203D, 0x28206573, 0x31202C32, 0x6F202C30, 0x36312072, 0x203B0A29, 0x3D203452
-    .WORD 0x67697320, 0x6C66206E, 0x28206761, 0x203D2031, 0x6E676973, 0x202C6465, 0x203D2030, 0x69736E75
-    .WORD 0x64656E67, 0x203B0A29, 0x3D203552, 0x6D657420, 0x75622070, 0x72656666, 0x7A697320, 0x656E2065
-    .WORD 0x64656465, 0x3B0A3B0A, 0x74655220, 0x736E7275, 0x203B0A3A, 0x31522020, 0x6F203D20, 0x69676972
-    .WORD 0x206C616E, 0x74736564, 0x74616E69, 0x206E6F69, 0x6E696F70, 0x0A726574, 0x2D2D2D3B, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x690A2D2D, 0x5F616F74, 0x65726F63, 0x20200A3A
-    .WORD 0x55502020, 0x4C204853, 0x20200A52, 0x55502020, 0x52204853, 0x20200A38, 0x55502020, 0x52204853
-    .WORD 0x20200A39, 0x55502020, 0x52204853, 0x200A3031, 0x50202020, 0x20485355, 0x0A313152, 0x20202020
-    .WORD 0x48535550, 0x32315220, 0x20200A0A, 0x4F4D2020, 0x52202056, 0x52202038, 0x20202031, 0x20202020
-    .WORD 0x3B202020, 0x76615320, 0x65642065, 0x6E697473, 0x6F697461, 0x20200A6E, 0x200A2020, 0x4D202020
-    .WORD 0x2020564F, 0x20203952, 0x20203252, 0x20202020, 0x20202020, 0x6F57203B, 0x6E696B72, 0x61762067
-    .WORD 0x0A65756C, 0x20202020, 0x20564F4D, 0x31315220, 0x20335220, 0x20202020, 0x20202020, 0x42203B20
-    .WORD 0x0A657361, 0x20202020, 0x20564F4D, 0x32315220, 0x20345220, 0x20202020, 0x20202020, 0x53203B20
-    .WORD 0x206E6769, 0x67616C66, 0x2020200A, 0x4F4D3B20, 0x52202056, 0x52203031, 0x20202035, 0x20202020
-    .WORD 0x3B202020, 0x6D655420, 0x75622070, 0x72656666, 0x7A697320, 0x20200A65, 0x200A2020, 0x3B202020
-    .WORD 0x6C6C4120, 0x7461636F, 0x65742065, 0x6220706D, 0x65666675, 0x73282072, 0x20657A69, 0x73736170
-    .WORD 0x69206465, 0x3552206E, 0x20200A29, 0x55532020, 0x53202042, 0x50532050, 0x0A355220, 0x20202020
-    .WORD 0x20564F4D, 0x30315220, 0x20315220, 0x20202020, 0x20202020, 0x4B203B20, 0x20706565, 0x6769726F
-    .WORD 0x6C616E69, 0x696F7020, 0x7265746E, 0x2020200A, 0x564F4D20, 0x36522020, 0x50532020, 0x20202020
-    .WORD 0x20202020, 0x203B2020, 0x706D6554, 0x66756220, 0x20726566, 0x6E696F70, 0x0A726574, 0x20202020
-    .WORD 0x68737570, 0x20355220, 0x20202020, 0x20202020, 0x20202020, 0x73203B20, 0x20657661, 0x66203552
-    .WORD 0x6620726F, 0x656D6172, 0x61656C20, 0x200A6576, 0x4D202020, 0x2020564F, 0x20203752, 0x20203652
-    .WORD 0x20202020, 0x20202020, 0x6153203B, 0x73206576, 0x74726174, 0x20666F20, 0x706D6574, 0x66756220
-    .WORD 0x0A726566, 0x20202020, 0x2020200A, 0x43203B20, 0x6B636568, 0x726F6620, 0x67697320, 0x6928206E
-    .WORD 0x69732066, 0x64656E67, 0x646E6120, 0x67656E20, 0x76697461, 0x200A2965, 0x43202020, 0x2020504D
-    .WORD 0x20323152, 0x20200A31, 0x4E422020, 0x69202045, 0x5F616F74, 0x65726F63, 0x736E755F, 0x656E6769
-    .WORD 0x20200A64, 0x200A2020, 0x43202020, 0x2020504D, 0x30203952, 0x2020200A, 0x45474220, 0x74692020
-    .WORD 0x635F616F, 0x5F65726F, 0x69736E75, 0x64656E67, 0x2020200A, 0x20200A20, 0x203B2020, 0x6167654E
-    .WORD 0x65766974, 0x6D756E20, 0x20726562, 0x6461202D, 0x696D2064, 0x2073756E, 0x6E676973, 0x2020200A
-    .WORD 0x20494C20, 0x32522020, 0x20353420, 0x20202020, 0x272D273B, 0x2020200A, 0x42545320, 0x32522020
-    .WORD 0x38525B20, 0x20200A5D, 0x44412020, 0x52202044, 0x38522038, 0x200A3120, 0x4E202020, 0x2020544F
-    .WORD 0x52203952, 0x20200A39, 0x44412020, 0x52202044, 0x39522039, 0x200A3120, 0x3B202020, 0x2047454E
-    .WORD 0x20395220, 0x20202020, 0x20202020, 0x20202020, 0x4D203B20, 0x20656B61, 0x69736F70, 0x65766974
-    .WORD 0x2020200A, 0x74690A20, 0x635F616F, 0x5F65726F, 0x69736E75, 0x64656E67, 0x20200A3A, 0x203B2020
-    .WORD 0x63657053, 0x206C6169, 0x65736163, 0x657A203A, 0x200A6F72, 0x43202020, 0x2020504D, 0x30203952
-    .WORD 0x2020200A, 0x454E4220, 0x74692020, 0x635F616F, 0x5F65726F, 0x766E6F63, 0x0A747265, 0x20202020
-    .WORD 0x2020200A, 0x20494C20, 0x32522020, 0x20383420, 0x3B202020, 0x27302720, 0x2020200A, 0x42545320
-    .WORD 0x32522020, 0x38525B20, 0x20200A5D, 0x44412020, 0x52202044, 0x38522038, 0x200A3120, 0x4C202020
-    .WORD 0x20202049, 0x30203252, 0x2020200A, 0x42545320, 0x32522020, 0x38525B20, 0x20200A5D, 0x20422020
-    .WORD 0x69202020, 0x5F616F74, 0x65726F63, 0x6E69665F, 0x0A687369, 0x20202020, 0x6F74690A, 0x6F635F61
-    .WORD 0x635F6572, 0x65766E6F, 0x0A3A7472, 0x20202020, 0x2020494C, 0x20345220, 0x20202030, 0x20202020
-    .WORD 0x20202020, 0x44203B20, 0x74696769, 0x756F6320, 0x7265746E, 0x2020200A, 0x74690A20, 0x635F616F
-    .WORD 0x5F65726F, 0x6C766964, 0x3A706F6F, 0x2020200A, 0x564F4D20, 0x35522020, 0x0A395220, 0x20202020
-    .WORD 0x20564944, 0x20365220, 0x52203552, 0x20203131, 0x20202020, 0x52203B20, 0x203D2036, 0x746F7571
-    .WORD 0x746E6569, 0x3952202C, 0x72203D20, 0x69616D65, 0x7265646E, 0x2020200A, 0x444F4D20, 0x37522020
-    .WORD 0x20395220, 0x20313152, 0x20202020, 0x203B2020, 0x3D203752, 0x6D657220, 0x646E6961, 0x200A7265
-    .WORD 0x0A202020, 0x20202020, 0x6F43203B, 0x7265766E, 0x69642074, 0x20746967, 0x41206F74, 0x49494353
-    .WORD 0x73616220, 0x6F206465, 0x6162206E, 0x200A6573, 0x43202020, 0x2020504D, 0x20313152, 0x200A3631
-    .WORD 0x42202020, 0x20205145, 0x616F7469, 0x726F635F, 0x65685F65, 0x69645F78, 0x0A746967, 0x20202020
-    .WORD 0x2020200A, 0x42203B20, 0x20657361, 0x726F2032, 0x3A303120, 0x67696420, 0x30207469, 0x200A392D
-    .WORD 0x41202020, 0x20204444, 0x52203752, 0x38342037, 0x20202020, 0x20202020, 0x3027203B, 0x202B2027
-    .WORD 0x69676964, 0x20200A74, 0x20422020, 0x69202020, 0x5F616F74, 0x65726F63, 0x6F74735F, 0x200A6572
-    .WORD 0x0A202020, 0x616F7469, 0x726F635F, 0x65685F65, 0x69645F78, 0x3A746967, 0x2020200A, 0x42203B20
-    .WORD 0x20657361, 0x203A3631, 0x69676964, 0x2D302074, 0x200A3531, 0x43202020, 0x2020504D, 0x39203752
-    .WORD 0x2020200A, 0x54474220, 0x74692020, 0x635F616F, 0x5F65726F, 0x5F786568, 0x7474656C, 0x200A7265
-    .WORD 0x41202020, 0x20204444, 0x52203752, 0x38342037, 0x20202020, 0x20202020, 0x3027203B, 0x202B2027
-    .WORD 0x69676964, 0x20200A74, 0x20422020, 0x69202020, 0x5F616F74, 0x65726F63, 0x6F74735F, 0x200A6572
-    .WORD 0x0A202020, 0x616F7469, 0x726F635F, 0x65685F65, 0x656C5F78, 0x72657474, 0x20200A3A, 0x55532020
-    .WORD 0x52202042, 0x37522037, 0x0A303120, 0x20202020, 0x20444441, 0x20375220, 0x36203752, 0x20202035
-    .WORD 0x20202020, 0x27203B20, 0x2B202741, 0x69642820, 0x2D746967, 0x0A293031, 0x20202020, 0x6F74690A
-    .WORD 0x6F635F61, 0x735F6572, 0x65726F74, 0x20200A3A, 0x54532020, 0x52202042, 0x525B2037, 0x20205D36
-    .WORD 0x20202020, 0x3B202020, 0x6F745320, 0x69206572, 0x6574206E, 0x6220706D, 0x65666675, 0x20200A72
-    .WORD 0x44412020, 0x52202044, 0x36522036, 0x200A3120, 0x41202020, 0x20204444, 0x52203452, 0x20312034
-    .WORD 0x20202020, 0x20202020, 0x6E49203B, 0x6D657263, 0x20746E65, 0x69676964, 0x6F632074, 0x0A746E75
-    .WORD 0x20202020, 0x2020200A, 0x564F4D20, 0x39522020, 0x20355220, 0x20202020, 0x20202020, 0x203B2020
-    .WORD 0x746F7551, 0x746E6569, 0x63656220, 0x73656D6F, 0x77656E20, 0x6C617620, 0x200A6575, 0x43202020
-    .WORD 0x2020504D, 0x30203952, 0x2020200A, 0x454E4220, 0x74692020, 0x635F616F, 0x5F65726F, 0x6C766964
-    .WORD 0x0A706F6F, 0x20202020, 0x2020200A, 0x50203B20, 0x746E696F, 0x206F7420, 0x7473616C, 0x67696420
-    .WORD 0x200A7469, 0x53202020, 0x20204255, 0x52203652, 0x0A312036, 0x20202020, 0x6F74690A, 0x6F635F61
-    .WORD 0x635F6572, 0x3A79706F, 0x2020200A, 0x504D4320, 0x34522020, 0x200A3020, 0x42202020, 0x20205145
-    .WORD 0x616F7469, 0x726F635F, 0x6F645F65, 0x200A656E, 0x0A202020, 0x20202020, 0x2042444C, 0x20325220
-    .WORD 0x5D36525B, 0x20202020, 0x20202020, 0x47203B20, 0x64207465, 0x74696769, 0x6F726620, 0x6574206D
-    .WORD 0x2820706D, 0x65766572, 0x20657372, 0x6564726F, 0x200A2972, 0x53202020, 0x20204254, 0x5B203252
-    .WORD 0x205D3852, 0x20202020, 0x20202020, 0x7453203B, 0x2065726F, 0x64206E69, 0x69747365, 0x6974616E
-    .WORD 0x200A6E6F, 0x41202020, 0x20204444, 0x52203852, 0x0A312038, 0x20202020, 0x20425553, 0x20365220
-    .WORD 0x31203652, 0x2020200A, 0x42555320, 0x34522020, 0x20345220, 0x20200A31, 0x20422020, 0x69202020
-    .WORD 0x5F616F74, 0x65726F63, 0x706F635F, 0x20200A79, 0x690A2020, 0x5F616F74, 0x65726F63, 0x6E6F645F
-    .WORD 0x200A3A65, 0x4C202020, 0x20202049, 0x30203252, 0x2020200A, 0x42545320, 0x32522020, 0x38525B20
-    .WORD 0x2020205D, 0x20202020, 0x203B2020, 0x6C6C754E, 0x72657420, 0x616E696D, 0x200A6574, 0x0A202020
-    .WORD 0x616F7469, 0x726F635F, 0x69665F65, 0x6873696E, 0x20200A3A, 0x4F502020, 0x52202050, 0x20200A35
-    .WORD 0x203B2020, 0x61656C43, 0x7075206E, 0x6D657420, 0x75622070, 0x72656666, 0x2020200A, 0x44444120
-    .WORD 0x50532020, 0x20505320, 0x200A3552, 0x0A202020, 0x20202020, 0x6552203B, 0x6E727574, 0x69726F20
-    .WORD 0x616E6967, 0x6F70206C, 0x65746E69, 0x20200A72, 0x4F4D2020, 0x52202056, 0x31522031, 0x20200A30
-    .WORD 0x200A2020, 0x50202020, 0x2020504F, 0x0A323152, 0x20202020, 0x20504F50, 0x31315220, 0x2020200A
-    .WORD 0x504F5020, 0x31522020, 0x20200A30, 0x4F502020, 0x52202050, 0x20200A39, 0x4F502020, 0x52202050
-    .WORD 0x20200A38, 0x4F502020, 0x4C202050, 0x20200A52, 0x45522020, 0x3B0A0A54, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x616F7469, 0x6365645F, 0x44202D20
-    .WORD 0x6D696365, 0x63206C61, 0x65766E6F, 0x6F697372, 0x7277206E, 0x65707061, 0x0A3B0A72, 0x3152203B
-    .WORD 0x64203D20, 0x69747365, 0x6974616E, 0x62206E6F, 0x65666675, 0x203B0A72, 0x3D203252, 0x67697320
-    .WORD 0x2064656E, 0x65746E69, 0x0A726567, 0x6552203B, 0x6E727574, 0x52203A73, 0x203D2031, 0x6769726F
-    .WORD 0x6C616E69, 0x66756220, 0x20726566, 0x6E696F70, 0x0A726574, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x690A2D2D, 0x5F616F74, 0x3A636564, 0x2020200A, 0x53555020
-    .WORD 0x524C2048, 0x2020200A, 0x20200A20, 0x203B2020, 0x2078614D, 0x64203131, 0x74696769, 0x202B2073
-    .WORD 0x6E676973, 0x6E202B20, 0x206C6C75, 0x3331203D, 0x74796220, 0x200A7365, 0x4C202020, 0x20202049
-    .WORD 0x31203352, 0x20202030, 0x20202020, 0x20202020, 0x6142203B, 0x31206573, 0x20200A30, 0x494C2020
-    .WORD 0x52202020, 0x20312034, 0x20202020, 0x20202020, 0x3B202020, 0x67695320, 0x0A64656E, 0x20202020
-    .WORD 0x2020494C, 0x20355220, 0x20203331, 0x20202020, 0x20202020, 0x54203B20, 0x20706D65, 0x66667562
-    .WORD 0x73207265, 0x0A657A69, 0x20202020, 0x4C4C4143, 0x6F746920, 0x6F635F61, 0x200A6572, 0x0A202020
-    .WORD 0x20202020, 0x20504F50, 0x0A524C20, 0x20202020, 0x0A544552, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x7469203B, 0x685F616F, 0x2D207865, 0x78654820
-    .WORD 0x63656461, 0x6C616D69, 0x6E6F6320, 0x73726576, 0x206E6F69, 0x70617277, 0x0A726570, 0x203B0A3B
-    .WORD 0x3D203152, 0x73656420, 0x616E6974, 0x6E6F6974, 0x66756220, 0x0A726566, 0x3252203B, 0x75203D20
-    .WORD 0x6769736E, 0x2064656E, 0x65746E69, 0x0A726567, 0x6552203B, 0x6E727574, 0x52203A73, 0x203D2031
-    .WORD 0x6769726F, 0x6C616E69, 0x66756220, 0x20726566, 0x6E696F70, 0x0A726574, 0x2D2D2D3B, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x690A2D2D, 0x5F616F74, 0x3A786568, 0x2020200A
-    .WORD 0x53555020, 0x524C2048, 0x2020200A, 0x20200A20, 0x203B2020, 0x2078614D, 0x69642038, 0x73746967
-    .WORD 0x6E202B20, 0x206C6C75, 0x2039203D, 0x65747962, 0x20200A73, 0x494C2020, 0x52202020, 0x36312033
-    .WORD 0x20202020, 0x20202020, 0x3B202020, 0x73614220, 0x36312065, 0x2020200A, 0x20494C20, 0x34522020
-    .WORD 0x20203020, 0x20202020, 0x20202020, 0x203B2020, 0x69736E55, 0x64656E67, 0x68732820, 0x2073776F
-    .WORD 0x20776172, 0x73746962, 0x20200A29, 0x494C2020, 0x52202020, 0x20392035, 0x20202020, 0x20202020
-    .WORD 0x3B202020, 0x6D655420, 0x75622070, 0x72656666, 0x7A697320, 0x20200A65, 0x41432020, 0x69204C4C
-    .WORD 0x5F616F74, 0x65726F63, 0x2020200A, 0x20200A20, 0x4F502020, 0x4C202050, 0x20200A52, 0x45522020
-    .WORD 0x3B0A0A54, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D
-    .WORD 0x616F7469, 0x6E69625F, 0x42202D20, 0x72616E69, 0x6F632079, 0x7265766E, 0x6E6F6973, 0x61727720
-    .WORD 0x72657070, 0x3B0A3B0A, 0x20315220, 0x6564203D, 0x6E697473, 0x6F697461, 0x7562206E, 0x72656666
-    .WORD 0x52203B0A, 0x203D2032, 0x69736E75, 0x64656E67, 0x746E6920, 0x72656765, 0x52203B0A, 0x72757465
-    .WORD 0x203A736E, 0x3D203152, 0x69726F20, 0x616E6967, 0x7562206C, 0x72656666, 0x696F7020, 0x7265746E
-    .WORD 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x616F7469
-    .WORD 0x6E69625F, 0x20200A3A, 0x55502020, 0x4C204853, 0x20200A52, 0x200A2020, 0x3B202020, 0x78614D20
-    .WORD 0x20323320, 0x73746962, 0x6E202B20, 0x206C6C75, 0x3333203D, 0x74796220, 0x200A7365, 0x4C202020
-    .WORD 0x20202049, 0x32203352, 0x20202020, 0x20202020, 0x20202020, 0x6142203B, 0x32206573, 0x2020200A
-    .WORD 0x20494C20, 0x34522020, 0x20203020, 0x20202020, 0x20202020, 0x203B2020, 0x69736E55, 0x64656E67
-    .WORD 0x68732820, 0x2073776F, 0x20776172, 0x73746962, 0x20200A29, 0x494C2020, 0x52202020, 0x33332035
-    .WORD 0x20202020, 0x20202020, 0x3B202020, 0x6D655420, 0x75622070, 0x72656666, 0x7A697320, 0x20200A65
-    .WORD 0x41432020, 0x69204C4C, 0x5F616F74, 0x65726F63, 0x2020200A, 0x20200A20, 0x4F502020, 0x4C202050
-    .WORD 0x20200A52, 0x45522020, 0x3B0A0A54, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x6C6C616D, 0x7328636F, 0x29657A69, 0x3B0A3B0A, 0x6C6C4120, 0x7461636F, 0x6D207365, 0x726F6D65
+    .WORD 0x72662079, 0x74206D6F, 0x68206568, 0x2E706165, 0x3B0A3B0A, 0x776F4820, 0x20746920, 0x6B726F77
+    .WORD 0x3B0A3A73, 0x202E3120, 0x67696C41, 0x6874206E, 0x65722065, 0x73657571, 0x20646574, 0x657A6973
+    .WORD 0x206F7420, 0x79622038, 0x20736574, 0x6B616D28, 0x6D207365, 0x726F6D65, 0x616D2079, 0x6567616E
+    .WORD 0x746E656D, 0x73616520, 0x29726569, 0x32203B0A, 0x6553202E, 0x68637261, 0x65687420, 0x6F6C6220
+    .WORD 0x74206B63, 0x656C6261, 0x726F6620, 0x66206120, 0x20656572, 0x636F6C62, 0x6874206B, 0x73277461
+    .WORD 0x72616C20, 0x65206567, 0x67756F6E, 0x203B0A68, 0x49202E33, 0x6F662066, 0x2C646E75, 0x72616D20
+    .WORD 0x7469206B, 0x20736120, 0x64657375, 0x646E6120, 0x74657220, 0x206E7275, 0x20737469, 0x72646461
+    .WORD 0x0A737365, 0x2E34203B, 0x20664920, 0x20746F6E, 0x6E756F66, 0x61202C64, 0x74206B73, 0x6B206568
+    .WORD 0x656E7265, 0x6F66206C, 0x6F6D2072, 0x6D206572, 0x726F6D65, 0x69762079, 0x62732061, 0x73206B72
+    .WORD 0x61637379, 0x3B0A6C6C, 0x202E3520, 0x20646441, 0x20656874, 0x2077656E, 0x6F6D656D, 0x74207972
+    .WORD 0x6874206F, 0x6C622065, 0x206B636F, 0x6C626174, 0x6E612065, 0x65722064, 0x6E727574, 0x0A746920
+    .WORD 0x203B0A3B, 0x75706E49, 0x20203A74, 0x3D203152, 0x7A697320, 0x6E692065, 0x74796220, 0x28207365
+    .WORD 0x2E672E65, 0x3031202C, 0x3B0A2930, 0x74754F20, 0x3A747570, 0x20315220, 0x6F70203D, 0x65746E69
+    .WORD 0x6F742072, 0x6C6C6120, 0x7461636F, 0x6D206465, 0x726F6D65, 0x6F282079, 0x20302072, 0x66206669
+    .WORD 0x656C6961, 0x3B0A2964, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x203B0A2D, 0x616F7469, 0x6769735F, 0x5F64656E, 0x20786568, 0x6953202D, 0x64656E67
-    .WORD 0x78656820, 0x63656461, 0x6C616D69, 0x61727720, 0x72657070, 0x3B0A3B0A, 0x20315220, 0x6564203D
-    .WORD 0x6E697473, 0x6F697461, 0x7562206E, 0x72656666, 0x52203B0A, 0x203D2032, 0x6E676973, 0x69206465
-    .WORD 0x6765746E, 0x3B0A7265, 0x74655220, 0x736E7275, 0x3152203A, 0x6F203D20, 0x69676972, 0x206C616E
-    .WORD 0x66667562, 0x70207265, 0x746E696F, 0x3B0A7265, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6D0A2D2D, 0x6F6C6C61, 0x200A3A63
+    .WORD 0x3B202020, 0x76615320, 0x65722065, 0x74736967, 0x20737265, 0x6C276577, 0x7375206C, 0x73282065
+    .WORD 0x6577206F, 0x6E6F6420, 0x63207427, 0x7572726F, 0x63207470, 0x656C6C61, 0x20732772, 0x756C6176
+    .WORD 0x0A297365, 0x20202020, 0x48535550, 0x20524C20, 0x20202020, 0x20202020, 0x20202020, 0x203B2020
+    .WORD 0x65766153, 0x74657220, 0x206E7275, 0x72646461, 0x0A737365, 0x20202020, 0x2020200A, 0x53203B20
+    .WORD 0x20706574, 0x41203A31, 0x6E67696C, 0x7A697320, 0x6F742065, 0x6C756D20, 0x6C706974, 0x666F2065
+    .WORD 0x62203820, 0x73657479, 0x2020200A, 0x57203B20, 0x203F7968, 0x796E614D, 0x55504320, 0x6F772073
+    .WORD 0x66206B72, 0x65747361, 0x69772072, 0x61206874, 0x6E67696C, 0x6D206465, 0x726F6D65, 0x20200A79
+    .WORD 0x203B2020, 0x6D617845, 0x3A656C70, 0x7A697320, 0x30313D65, 0x20200A30, 0x203B2020, 0x44412020
+    .WORD 0x31522044, 0x20203720, 0x3E2D2020, 0x37303120, 0x2020200A, 0x20203B20, 0x444E4120, 0x46783020
+    .WORD 0x46464646, 0x20384646, 0x31203E2D, 0x28203430, 0x746C756D, 0x656C7069, 0x20666F20, 0x200A2938
+    .WORD 0x41202020, 0x52204444, 0x31522031, 0x20203720, 0x20202020, 0x20202020, 0x41203B20, 0x37206464
+    .WORD 0x206F7420, 0x6E756F72, 0x70752064, 0x2020200A, 0x20494C20, 0x20325220, 0x46467830, 0x46464646
+    .WORD 0x0A203846, 0x20202020, 0x20444E41, 0x52203152, 0x32522031, 0x20202020, 0x20202020, 0x203B2020
+    .WORD 0x61656C43, 0x6F6C2072, 0x20726577, 0x69622033, 0x28207374, 0x656B616D, 0x6C756D20, 0x6C706974
+    .WORD 0x666F2065, 0x0A293820, 0x20202020, 0x20564F4D, 0x52203552, 0x20202031, 0x20202020, 0x20202020
+    .WORD 0x203B2020, 0x3D203552, 0x696C6120, 0x64656E67, 0x7A697320, 0x65282065, 0x2C2E672E, 0x34303120
+    .WORD 0x20200A29, 0x200A2020, 0x3B202020, 0x65745320, 0x3A322070, 0x61655320, 0x20686372, 0x20726F66
+    .WORD 0x72662061, 0x62206565, 0x6B636F6C, 0x206E6920, 0x20656874, 0x6C626174, 0x20200A65, 0x203B2020
+    .WORD 0x6C276557, 0x7375206C, 0x34522065, 0x20736120, 0x65646E69, 0x6E692078, 0x62206F74, 0x6B636F6C
+    .WORD 0x6261745F, 0x2820656C, 0x6F742030, 0x58414D20, 0x4F4C425F, 0x2D534B43, 0x200A2931, 0x4C202020
+    .WORD 0x34522049, 0x20203020, 0x20202020, 0x20202020, 0x20202020, 0x53203B20, 0x74726174, 0x20746120
+    .WORD 0x73726966, 0x6C622074, 0x206B636F, 0x646E6928, 0x30207865, 0x20200A29, 0x6D0A2020, 0x6F6C6C61
+    .WORD 0x6F6C5F63, 0x0A3A706F, 0x20202020, 0x6843203B, 0x206B6365, 0x77206669, 0x65762765, 0x61657320
+    .WORD 0x65686372, 0x6C612064, 0x6C62206C, 0x736B636F, 0x2020200A, 0x504D4320, 0x20345220, 0x5F58414D
+    .WORD 0x434F4C42, 0x2020534B, 0x3B202020, 0x6D6F4320, 0x65726170, 0x646E6920, 0x77207865, 0x20687469
+    .WORD 0x6978616D, 0x0A6D756D, 0x20202020, 0x20454742, 0x6C6C616D, 0x735F636F, 0x206B7262, 0x20202020
+    .WORD 0x203B2020, 0x69206649, 0x7865646E, 0x203D3E20, 0x5F58414D, 0x434F4C42, 0x202C534B, 0x66206F6E
+    .WORD 0x20656572, 0x636F6C62, 0x6F66206B, 0x0A646E75, 0x20202020, 0x2020200A, 0x43203B20, 0x75636C61
+    .WORD 0x6574616C, 0x64646120, 0x73736572, 0x20666F20, 0x73696874, 0x6F6C6220, 0x73276B63, 0x73656420
+    .WORD 0x70697263, 0x0A726F74, 0x20202020, 0x6C62203B, 0x5F6B636F, 0x6C626174, 0x202B2065, 0x646E6928
+    .WORD 0x2A207865, 0x73656420, 0x70697263, 0x5F726F74, 0x657A6973, 0x20200A29, 0x494C2020, 0x20325220
+    .WORD 0x636F6C62, 0x61745F6B, 0x20656C62, 0x20202020, 0x3252203B, 0x62203D20, 0x20657361, 0x72646461
+    .WORD 0x20737365, 0x6220666F, 0x6B636F6C, 0x6261745F, 0x200A656C, 0x4C202020, 0x33522049, 0x4F4C4220
+    .WORD 0x445F4B43, 0x20435345, 0x20202020, 0x52203B20, 0x203D2033, 0x657A6973, 0x20666F20, 0x20656E6F
+    .WORD 0x63736564, 0x74706972, 0x2820726F, 0x62203231, 0x73657479, 0x20200A29, 0x554D2020, 0x3352204C
+    .WORD 0x20345220, 0x20203352, 0x20202020, 0x20202020, 0x3352203B, 0x69203D20, 0x7865646E, 0x31202A20
+    .WORD 0x6F282032, 0x65736666, 0x6E692074, 0x74206F74, 0x656C6261, 0x20200A29, 0x44412020, 0x32522044
+    .WORD 0x20325220, 0x20203352, 0x20202020, 0x20202020, 0x3252203B, 0x26203D20, 0x636F6C62, 0x6E695B6B
+    .WORD 0x5D786564, 0x2020200A, 0x20200A20, 0x203B2020, 0x63656843, 0x6669206B, 0x69687420, 0x6C622073
+    .WORD 0x206B636F, 0x66207369, 0x20656572, 0x45535528, 0x6C662044, 0x3D206761, 0x0A293020, 0x20202020
+    .WORD 0x2057444C, 0x5B203352, 0x2B203252, 0x4F4C4220, 0x555F4B43, 0x5D444553, 0x203B2020, 0x64616F4C
+    .WORD 0x65687420, 0x6C622620, 0x5B6B636F, 0x65646E69, 0x622E5D78, 0x6B636F6C, 0x6573755F, 0x6C662064
+    .WORD 0x200A6761, 0x43202020, 0x5220504D, 0x20302033, 0x20202020, 0x20202020, 0x20202020, 0x49203B20
+    .WORD 0x74692073, 0x28203020, 0x65657266, 0x200A3F29, 0x42202020, 0x6D20454E, 0x6F6C6C61, 0x656E5F63
+    .WORD 0x20207478, 0x20202020, 0x49203B20, 0x6F6E2066, 0x72662074, 0x28206565, 0x64657375, 0x73202C29
+    .WORD 0x2070696B, 0x6E206F74, 0x20747865, 0x636F6C62, 0x20200A6B, 0x200A2020, 0x3B202020, 0x65726620
+    .WORD 0x43202E65, 0x6B636568, 0x20666920, 0x73696874, 0x6F6C6220, 0x69206B63, 0x616C2073, 0x20656772
+    .WORD 0x756F6E65, 0x66206867, 0x6F20726F, 0x72207275, 0x65757165, 0x200A7473, 0x4C202020, 0x52205744
+    .WORD 0x525B2033, 0x202B2032, 0x434F4C42, 0x49535F4B, 0x205D455A, 0x4C203B20, 0x2064616F, 0x20656874
+    .WORD 0x636F6C62, 0x6973206B, 0x200A657A, 0x43202020, 0x5220504D, 0x35522033, 0x20202020, 0x20202020
+    .WORD 0x20202020, 0x49203B20, 0x6C622073, 0x206B636F, 0x657A6973, 0x203D3E20, 0x75716572, 0x65747365
+    .WORD 0x69732064, 0x0A3F657A, 0x20202020, 0x20454742, 0x6C6C616D, 0x665F636F, 0x646E756F, 0x20202020
+    .WORD 0x203B2020, 0x21736559, 0x20655720, 0x6E756F66, 0x20612064, 0x74697573, 0x656C6261, 0x6F6C6220
+    .WORD 0x200A6B63, 0x0A202020, 0x6C6C616D, 0x6E5F636F, 0x3A747865, 0x2020200A, 0x54203B20, 0x20736968
+    .WORD 0x636F6C62, 0x7369206B, 0x74696520, 0x20726568, 0x64657375, 0x20726F20, 0x206F6F74, 0x6C616D73
+    .WORD 0x74202C6C, 0x6E207972, 0x20747865, 0x0A656E6F, 0x20202020, 0x20444441, 0x52203452, 0x20312034
+    .WORD 0x20202020, 0x20202020, 0x203B2020, 0x72636E49, 0x6E656D65, 0x6E692074, 0x20786564, 0x63206F74
+    .WORD 0x6B636568, 0x78656E20, 0x6C622074, 0x0A6B636F, 0x20202020, 0x616D2042, 0x636F6C6C, 0x6F6F6C5F
+    .WORD 0x20202070, 0x20202020, 0x203B2020, 0x62206F47, 0x206B6361, 0x73206F74, 0x74726174, 0x20666F20
+    .WORD 0x706F6F6C, 0x616D0A0A, 0x636F6C6C, 0x756F665F, 0x0A3A646E, 0x20202020, 0x7453203B, 0x33207065
+    .WORD 0x6557203A, 0x756F6620, 0x6120646E, 0x65726620, 0x6C622065, 0x206B636F, 0x6772616C, 0x6E652065
+    .WORD 0x6867756F, 0x20200A21, 0x203B2020, 0x3D203252, 0x696F7020, 0x7265746E, 0x206F7420, 0x20656874
+    .WORD 0x636F6C62, 0x6564206B, 0x69726373, 0x726F7470, 0x2020200A, 0x52203B20, 0x203D2033, 0x636F6C62
+    .WORD 0x6973206B, 0x2820657A, 0x64206577, 0x74276E6F, 0x65737520, 0x20746920, 0x20726F66, 0x696C7073
+    .WORD 0x6E697474, 0x6E692067, 0x69687420, 0x69732073, 0x656C706D, 0x72657620, 0x6E6F6973, 0x20200A29
+    .WORD 0x200A2020, 0x3B202020, 0x72614D20, 0x6874206B, 0x6C622065, 0x206B636F, 0x75207361, 0x20646573
+    .WORD 0x45535528, 0x6C662044, 0x3D206761, 0x0A293120, 0x20202020, 0x5220494C, 0x20312033, 0x20202020
+    .WORD 0x20202020, 0x20202020, 0x203B2020, 0x3D203352, 0x28203120, 0x64657375, 0x20200A29, 0x54532020
+    .WORD 0x33522057, 0x32525B20, 0x42202B20, 0x4B434F4C, 0x4553555F, 0x20205D44, 0x7453203B, 0x2065726F
+    .WORD 0x6E692031, 0x65687420, 0x45535520, 0x69662044, 0x0A646C65, 0x20202020, 0x2020200A, 0x47203B20
+    .WORD 0x74207465, 0x62206568, 0x6B636F6C, 0x73207327, 0x74726174, 0x20676E69, 0x72646461, 0x20737365
+    .WORD 0x20646E61, 0x75746572, 0x69206E72, 0x20200A74, 0x444C2020, 0x31522057, 0x32525B20, 0x42202B20
+    .WORD 0x4B434F4C, 0x4444415F, 0x20205D52, 0x3152203B, 0x61203D20, 0x65726464, 0x6F207373, 0x68742066
+    .WORD 0x62207369, 0x6B636F6C, 0x2020200A, 0x6D204220, 0x6F6C6C61, 0x6F645F63, 0x2020656E, 0x20202020
+    .WORD 0x3B202020, 0x6D754A20, 0x6F742070, 0x656C6320, 0x70756E61, 0x646E6120, 0x74657220, 0x0A6E7275
+    .WORD 0x6C616D0A, 0x5F636F6C, 0x6B726273, 0x20200A3A, 0x203B2020, 0x70657453, 0x203A3420, 0x66206F4E
+    .WORD 0x20656572, 0x636F6C62, 0x6F66206B, 0x20646E75, 0x74206E69, 0x656C6261, 0x2020200A, 0x41203B20
+    .WORD 0x74206B73, 0x6B206568, 0x656E7265, 0x6F66206C, 0x6F6D2072, 0x6D206572, 0x726F6D65, 0x73752079
+    .WORD 0x20676E69, 0x6B726273, 0x73797320, 0x6C6C6163, 0x2020200A, 0x20200A20, 0x203B2020, 0x61203552
+    .WORD 0x6165726C, 0x68207964, 0x74207361, 0x61206568, 0x6E67696C, 0x73206465, 0x20657A69, 0x6E206577
+    .WORD 0x0A646565, 0x20202020, 0x20564F4D, 0x52203152, 0x20202035, 0x20202020, 0x20202020, 0x203B2020
+    .WORD 0x3D203152, 0x7A697320, 0x6F742065, 0x6C6C6120, 0x7461636F, 0x20200A65, 0x56532020, 0x59532043
+    .WORD 0x42535F53, 0x20204B52, 0x20202020, 0x20202020, 0x6143203B, 0x6B206C6C, 0x656E7265, 0x73203A6C
+    .WORD 0x286B7262, 0x657A6973, 0x20200A29, 0x200A2020, 0x3B202020, 0x65684320, 0x69206B63, 0x62732066
+    .WORD 0x66206B72, 0x656C6961, 0x72282064, 0x72757465, 0x2D20736E, 0x726F2031, 0x6F203020, 0x7265206E
+    .WORD 0x29726F72, 0x2020200A, 0x504D4320, 0x20315220, 0x20202030, 0x20202020, 0x20202020, 0x3B202020
+    .WORD 0x64694420, 0x72627320, 0x6572206B, 0x6E727574, 0x6F203020, 0x656E2072, 0x69746167, 0x0A3F6576
+    .WORD 0x20202020, 0x20544C42, 0x6C6C616D, 0x655F636F, 0x726F7272, 0x20202020, 0x203B2020, 0x65206649
+    .WORD 0x726F7272, 0x6572202C, 0x6E727574, 0x4C554E20, 0x20200A4C, 0x200A2020, 0x3B202020, 0x65745320
+    .WORD 0x3A352070, 0x72627320, 0x7573206B, 0x65656363, 0x2C646564, 0x20657720, 0x65766168, 0x77656E20
+    .WORD 0x6D656D20, 0x2079726F, 0x61207461, 0x65726464, 0x69207373, 0x3152206E, 0x2020200A, 0x4E203B20
+    .WORD 0x7720776F, 0x656E2065, 0x74206465, 0x6461206F, 0x68742064, 0x6E207369, 0x62207765, 0x6B636F6C
+    .WORD 0x206F7420, 0x2072756F, 0x6C626174, 0x20200A65, 0x200A2020, 0x3B202020, 0x6E694620, 0x6E612064
+    .WORD 0x706D6520, 0x73207974, 0x20746F6C, 0x74206E69, 0x62206568, 0x6B636F6C, 0x62617420, 0x200A656C
+    .WORD 0x4C202020, 0x34522049, 0x20203020, 0x20202020, 0x20202020, 0x20202020, 0x53203B20, 0x74726174
+    .WORD 0x20746120, 0x73726966, 0x6C622074, 0x0A6B636F, 0x20202020, 0x6C616D0A, 0x5F636F6C, 0x3A646461
+    .WORD 0x2020200A, 0x43203B20, 0x6B636568, 0x20666920, 0x76276577, 0x65732065, 0x68637261, 0x61206465
+    .WORD 0x62206C6C, 0x6B636F6C, 0x20200A73, 0x4D432020, 0x34522050, 0x58414D20, 0x4F4C425F, 0x20534B43
+    .WORD 0x20202020, 0x2020200A, 0x45474220, 0x6C616D20, 0x5F636F6C, 0x6F727265, 0x20202072, 0x3B202020
+    .WORD 0x206F4E20, 0x74706D65, 0x6C732079, 0x2021746F, 0x6F687328, 0x6E646C75, 0x68207427, 0x65707061
+    .WORD 0x200A296E, 0x0A202020, 0x20202020, 0x6547203B, 0x65642074, 0x69726373, 0x726F7470, 0x64646120
+    .WORD 0x73736572, 0x2020200A, 0x20494C20, 0x62203252, 0x6B636F6C, 0x6261745F, 0x200A656C, 0x4C202020
+    .WORD 0x33522049, 0x4F4C4220, 0x445F4B43, 0x0A435345, 0x20202020, 0x204C554D, 0x52203352, 0x33522034
+    .WORD 0x2020200A, 0x44444120, 0x20325220, 0x52203252, 0x20202033, 0x20202020, 0x26203B20, 0x636F6C62
+    .WORD 0x6E695B6B, 0x52786564, 0x200A5D34, 0x0A202020, 0x20202020, 0x6843203B, 0x206B6365, 0x74206669
+    .WORD 0x20736968, 0x746F6C73, 0x20736920, 0x65657266, 0x53552820, 0x66204445, 0x2067616C, 0x2930203D
+    .WORD 0x2020200A, 0x57444C20, 0x20335220, 0x2032525B, 0x4C42202B, 0x5F4B434F, 0x44455355, 0x20200A5D
+    .WORD 0x4D432020, 0x33522050, 0x200A3020, 0x42202020, 0x6D205145, 0x6F6C6C61, 0x64615F63, 0x6F665F64
+    .WORD 0x20646E75, 0x46203B20, 0x646E756F, 0x206E6120, 0x74706D65, 0x6C732079, 0x0A21746F, 0x20202020
+    .WORD 0x2020200A, 0x53203B20, 0x20746F6C, 0x75207369, 0x2C646573, 0x79727420, 0x78656E20, 0x6E6F2074
+    .WORD 0x20200A65, 0x44412020, 0x34522044, 0x20345220, 0x20200A31, 0x20422020, 0x6C6C616D, 0x615F636F
+    .WORD 0x0A0A6464, 0x6C6C616D, 0x615F636F, 0x665F6464, 0x646E756F, 0x20200A3A, 0x203B2020, 0x66206557
+    .WORD 0x646E756F, 0x206E6120, 0x74706D65, 0x6C732079, 0x6120746F, 0x32522074, 0x2020200A, 0x53203B20
+    .WORD 0x65726F74, 0x65687420, 0x77656E20, 0x6F6C6220, 0x73276B63, 0x666E6920, 0x616D726F, 0x6E6F6974
+    .WORD 0x2020200A, 0x20200A20, 0x203B2020, 0x726F7453, 0x68742065, 0x64612065, 0x73657264, 0x52282073
+    .WORD 0x72662031, 0x73206D6F, 0x296B7262, 0x2020200A, 0x57545320, 0x20315220, 0x2032525B, 0x4C42202B
+    .WORD 0x5F4B434F, 0x52444441, 0x2020205D, 0x6C62203B, 0x2E6B636F, 0x72646461, 0x20737365, 0x6461203D
+    .WORD 0x73657264, 0x72662073, 0x73206D6F, 0x0A6B7262, 0x20202020, 0x2020200A, 0x53203B20, 0x65726F74
+    .WORD 0x65687420, 0x7A697320, 0x52282065, 0x203D2035, 0x67696C61, 0x2064656E, 0x657A6973, 0x20200A29
+    .WORD 0x54532020, 0x35522057, 0x32525B20, 0x42202B20, 0x4B434F4C, 0x5A49535F, 0x20205D45, 0x62203B20
+    .WORD 0x6B636F6C, 0x7A69732E, 0x203D2065, 0x657A6973, 0x2020200A, 0x20200A20, 0x203B2020, 0x6B72614D
+    .WORD 0x20736120, 0x64657375, 0x53552820, 0x3D204445, 0x0A293120, 0x20202020, 0x5220494C, 0x0A312033
+    .WORD 0x20202020, 0x20575453, 0x5B203352, 0x2B203252, 0x4F4C4220, 0x555F4B43, 0x5D444553, 0x3B202020
+    .WORD 0x6F6C6220, 0x752E6B63, 0x20646573, 0x0A31203D, 0x20202020, 0x2020200A, 0x52203B20, 0x6C612031
+    .WORD 0x64616572, 0x61682079, 0x68742073, 0x64612065, 0x73657264, 0x72662073, 0x73206D6F, 0x2C6B7262
+    .WORD 0x206F7320, 0x7473756A, 0x74657220, 0x206E7275, 0x200A7469, 0x42202020, 0x6C616D20, 0x5F636F6C
+    .WORD 0x656E6F64, 0x616D0A0A, 0x636F6C6C, 0x7272655F, 0x0A3A726F, 0x20202020, 0x6F53203B, 0x6874656D
+    .WORD 0x20676E69, 0x746E6577, 0x6F727720, 0x2D20676E, 0x74657220, 0x206E7275, 0x4C4C554E, 0x29302820
+    .WORD 0x2020200A, 0x20494C20, 0x30203152, 0x616D0A0A, 0x636F6C6C, 0x6E6F645F, 0x200A3A65, 0x50202020
+    .WORD 0x4C20504F, 0x20202052, 0x20202020, 0x20202020, 0x20202020, 0x52203B20, 0x6F747365, 0x72206572
+    .WORD 0x72757465, 0x6461206E, 0x73657264, 0x20200A73, 0x45522020, 0x20202054, 0x20202020, 0x20202020
+    .WORD 0x20202020, 0x20202020, 0x6552203B, 0x6E727574, 0x206F7420, 0x6C6C6163, 0x77207265, 0x20687469
+    .WORD 0x3D203152, 0x696F7020, 0x7265746E, 0x20726F20, 0x4C4C554E, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x74690A2D, 0x735F616F, 0x656E6769, 0x65685F64, 0x200A3A78, 0x50202020
-    .WORD 0x20485355, 0x200A524C, 0x0A202020, 0x20202020, 0x614D203B, 0x20382078, 0x69676964, 0x2B207374
-    .WORD 0x67697320, 0x202B206E, 0x6C6C756E, 0x31203D20, 0x79622030, 0x0A736574, 0x20202020, 0x2020494C
-    .WORD 0x20335220, 0x20203631, 0x20202020, 0x20202020, 0x42203B20, 0x20657361, 0x200A3631, 0x4C202020
-    .WORD 0x20202049, 0x31203452, 0x20202020, 0x20202020, 0x20202020, 0x6953203B, 0x64656E67, 0x68732820
-    .WORD 0x2073776F, 0x6E676973, 0x20200A29, 0x494C2020, 0x52202020, 0x30312035, 0x20202020, 0x20202020
-    .WORD 0x3B202020, 0x6D655420, 0x75622070, 0x72656666, 0x7A697320, 0x20200A65, 0x41432020, 0x69204C4C
-    .WORD 0x5F616F74, 0x65726F63, 0x2020200A, 0x20200A20, 0x4F502020, 0x4C202050, 0x20200A52, 0x45522020
-    .WORD 0x3B0A0A54, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D
-    .WORD 0x616F7469, 0x6769735F, 0x5F64656E, 0x206E6962, 0x6953202D, 0x64656E67, 0x6E696220, 0x20797261
-    .WORD 0x70617277, 0x0A726570, 0x203B0A3B, 0x3D203152, 0x73656420, 0x616E6974, 0x6E6F6974, 0x66756220
-    .WORD 0x0A726566, 0x3252203B, 0x73203D20, 0x656E6769, 0x6E692064, 0x65676574, 0x203B0A72, 0x75746552
-    .WORD 0x3A736E72, 0x20315220, 0x726F203D, 0x6E696769, 0x62206C61, 0x65666675, 0x6F702072, 0x65746E69
-    .WORD 0x2D3B0A72, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6F74690A
-    .WORD 0x69735F61, 0x64656E67, 0x6E69625F, 0x20200A3A, 0x55502020, 0x4C204853, 0x20200A52, 0x200A2020
-    .WORD 0x3B202020, 0x78614D20, 0x20323320, 0x73746962, 0x73202B20, 0x206E6769, 0x756E202B, 0x3D206C6C
-    .WORD 0x20343320, 0x65747962, 0x20200A73, 0x494C2020, 0x52202020, 0x20322033, 0x20202020, 0x20202020
-    .WORD 0x3B202020, 0x73614220, 0x0A322065, 0x20202020, 0x2020494C, 0x20345220, 0x20202031, 0x20202020
-    .WORD 0x20202020, 0x53203B20, 0x656E6769, 0x73282064, 0x73776F68, 0x67697320, 0x200A296E, 0x4C202020
-    .WORD 0x20202049, 0x33203552, 0x20202034, 0x20202020, 0x20202020, 0x6554203B, 0x6220706D, 0x65666675
-    .WORD 0x69732072, 0x200A657A, 0x43202020, 0x204C4C41, 0x616F7469, 0x726F635F, 0x20200A65, 0x200A2020
-    .WORD 0x50202020, 0x2020504F, 0x200A524C, 0x52202020, 0x0A0A5445, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x203B0A2D, 0x65657266, 0x72747028, 0x0A3B0A29, 0x7246203B, 0x20736565, 0x76657270
+    .WORD 0x73756F69, 0x6120796C, 0x636F6C6C, 0x64657461, 0x6D656D20, 0x2E79726F, 0x3B0A3B0A, 0x776F4820
+    .WORD 0x20746920, 0x6B726F77, 0x3B0A3A73, 0x202E3120, 0x646E6946, 0x65687420, 0x6F6C6220, 0x64206B63
+    .WORD 0x72637365, 0x6F747069, 0x6F662072, 0x68742072, 0x61207369, 0x65726464, 0x3B0A7373, 0x202E3220
+    .WORD 0x6B72614D, 0x20746920, 0x66207361, 0x20656572, 0x45535528, 0x203D2044, 0x3B0A2930, 0x202E3320
+    .WORD 0x6F6D654D, 0x69207972, 0x6F6E2073, 0x76612077, 0x616C6961, 0x20656C62, 0x20726F66, 0x75747566
+    .WORD 0x6D206572, 0x6F6C6C61, 0x61632063, 0x0A736C6C, 0x203B0A3B, 0x65746F4E, 0x6854203A, 0x73207369
+    .WORD 0x6C706D69, 0x65762065, 0x6F697372, 0x6F64206E, 0x4E207365, 0x6320544F, 0x656C616F, 0x20656373
+    .WORD 0x616A6461, 0x746E6563, 0x65726620, 0x6C622065, 0x736B636F, 0x203B0A21, 0x20202020, 0x6F532020
+    .WORD 0x61726620, 0x6E656D67, 0x69746174, 0x63206E6F, 0x6F206E61, 0x72756363, 0x65766F20, 0x69742072
+    .WORD 0x0A2E656D, 0x203B0A3B, 0x75706E49, 0x20203A74, 0x3D203152, 0x696F7020, 0x7265746E, 0x206F7420
+    .WORD 0x6F6D656D, 0x74207972, 0x7266206F, 0x28206565, 0x6D6F7266, 0x6C616D20, 0x29636F6C, 0x4F203B0A
+    .WORD 0x75707475, 0x4E203A74, 0x6968746F, 0x3B0A676E, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x0A2D2D2D, 0x7473203B, 0x79706372, 0x73656428, 0x73202C74, 0x0A296372, 0x203B0A3B, 0x69706F43
-    .WORD 0x73207365, 0x6E697274, 0x72662067, 0x73206D6F, 0x74206372, 0x6564206F, 0x69207473, 0x756C636E
-    .WORD 0x676E6964, 0x72657420, 0x616E696D, 0x676E6974, 0x6C756E20, 0x6863206C, 0x63617261, 0x0A726574
-    .WORD 0x203B0A3B, 0x75706E49, 0x3B0A3A74, 0x52202020, 0x203D2031, 0x74736564, 0x74616E69, 0x206E6F69
-    .WORD 0x6E696F70, 0x0A726574, 0x2020203B, 0x3D203252, 0x756F7320, 0x20656372, 0x6E696F70, 0x0A726574
-    .WORD 0x203B0A3B, 0x7074754F, 0x0A3A7475, 0x2020203B, 0x3D203152, 0x73656420, 0x616E6974, 0x6E6F6974
-    .WORD 0x696F7020, 0x7265746E, 0x726F2820, 0x6E696769, 0x0A296C61, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x660A2D2D
+    .WORD 0x3A656572, 0x2020200A, 0x53203B20, 0x20657661, 0x69676572, 0x72657473, 0x20200A73, 0x55502020
+    .WORD 0x4C204853, 0x20200A52, 0x200A2020, 0x3B202020, 0x65745320, 0x3A312070, 0x65684320, 0x69206B63
+    .WORD 0x6F702066, 0x65746E69, 0x73692072, 0x4C554E20, 0x20200A4C, 0x4D432020, 0x31522050, 0x20203020
+    .WORD 0x20202020, 0x20202020, 0x20202020, 0x7349203B, 0x20315220, 0x30203D3D, 0x20200A3F, 0x45422020
+    .WORD 0x72662051, 0x645F6565, 0x20656E6F, 0x20202020, 0x20202020, 0x6649203B, 0x4C554E20, 0x6E202C4C
+    .WORD 0x6968746F, 0x7420676E, 0x7266206F, 0x202C6565, 0x7473756A, 0x74657220, 0x0A6E7275, 0x20202020
+    .WORD 0x2020200A, 0x53203B20, 0x20706574, 0x53203A32, 0x63726165, 0x68742068, 0x6C622065, 0x206B636F
+    .WORD 0x6C626174, 0x6F662065, 0x68742072, 0x61207369, 0x65726464, 0x200A7373, 0x4C202020, 0x34522049
+    .WORD 0x20203020, 0x20202020, 0x20202020, 0x20202020, 0x53203B20, 0x74726174, 0x20746120, 0x73726966
+    .WORD 0x6C622074, 0x0A6B636F, 0x20202020, 0x6572660A, 0x6F6C5F65, 0x0A3A706F, 0x20202020, 0x6843203B
+    .WORD 0x206B6365, 0x77206669, 0x65762765, 0x61657320, 0x65686372, 0x6C612064, 0x6C62206C, 0x736B636F
+    .WORD 0x2020200A, 0x504D4320, 0x20345220, 0x5F58414D, 0x434F4C42, 0x200A534B, 0x42202020, 0x66204547
+    .WORD 0x5F656572, 0x656E6F64, 0x20202020, 0x20202020, 0x4E203B20, 0x6620746F, 0x646E756F, 0x69202D20
+    .WORD 0x726F6E67, 0x63282065, 0x646C756F, 0x20656220, 0x61766E69, 0x2064696C, 0x6E696F70, 0x29726574
+    .WORD 0x2020200A, 0x20200A20, 0x203B2020, 0x20746547, 0x63736564, 0x74706972, 0x6120726F, 0x65726464
+    .WORD 0x200A7373, 0x4C202020, 0x32522049, 0x6F6C6220, 0x745F6B63, 0x656C6261, 0x2020200A, 0x20494C20
+    .WORD 0x42203352, 0x4B434F4C, 0x5345445F, 0x20202043, 0x3B202020, 0x6E656C20, 0x20687467, 0x6F20666F
+    .WORD 0x6220656E, 0x6B636F6C, 0x73656420, 0x70697263, 0x0A726F74, 0x20202020, 0x204C554D, 0x52203352
+    .WORD 0x33522034, 0x20202020, 0x20202020, 0x203B2020, 0x62203472, 0x6B636F6C, 0x78646920, 0x2020200A
+    .WORD 0x44444120, 0x20325220, 0x52203252, 0x20202033, 0x20202020, 0x3B202020, 0x20325220, 0x6226203D
+    .WORD 0x6B636F6C, 0x0A5D695B, 0x20202020, 0x2020200A, 0x43203B20, 0x6B636568, 0x20666920, 0x73696874
+    .WORD 0x6F6C6220, 0x73276B63, 0x64646120, 0x73736572, 0x74616D20, 0x73656863, 0x65687420, 0x696F7020
+    .WORD 0x7265746E, 0x2020200A, 0x57444C20, 0x20335220, 0x2032525B, 0x4C42202B, 0x5F4B434F, 0x52444441
+    .WORD 0x3B20205D, 0x20335220, 0x2620203D, 0x636F6C62, 0x5D695B6B, 0x6F6C622E, 0x61206B63, 0x65726464
+    .WORD 0x200A7373, 0x43202020, 0x5220504D, 0x31522033, 0x20202020, 0x20202020, 0x20202020, 0x49203B20
+    .WORD 0x68742073, 0x6F207369, 0x62207275, 0x6B636F6C, 0x20200A3F, 0x45422020, 0x72662051, 0x665F6565
+    .WORD 0x646E756F, 0x20202020, 0x20202020, 0x6559203B, 0x77202C73, 0x6F662065, 0x20646E75, 0x0A217469
+    .WORD 0x20202020, 0x2020200A, 0x4E203B20, 0x7420746F, 0x20736968, 0x636F6C62, 0x74202C6B, 0x6E207972
+    .WORD 0x0A747865, 0x20202020, 0x20444441, 0x52203452, 0x0A312034, 0x20202020, 0x72662042, 0x6C5F6565
+    .WORD 0x0A706F6F, 0x6572660A, 0x6F665F65, 0x3A646E75, 0x2020200A, 0x53203B20, 0x20706574, 0x57203A33
+    .WORD 0x6F662065, 0x20646E75, 0x20656874, 0x636F6C62, 0x6564206B, 0x69726373, 0x726F7470, 0x20746120
+    .WORD 0x200A3252, 0x3B202020, 0x72614D20, 0x7469206B, 0x20736120, 0x65657266, 0x206F7320, 0x6C6C616D
+    .WORD 0x6320636F, 0x75206E61, 0x69206573, 0x67612074, 0x0A6E6961, 0x20202020, 0x2020200A, 0x20494C20
+    .WORD 0x30203352, 0x20202020, 0x20202020, 0x20202020, 0x3B202020, 0x20335220, 0x2030203D, 0x65726628
+    .WORD 0x200A2965, 0x53202020, 0x52205754, 0x525B2033, 0x202B2032, 0x434F4C42, 0x53555F4B, 0x205D4445
+    .WORD 0x26203B20, 0x636F6C62, 0x5D695B6B, 0x6573752E, 0x203D2064, 0x20200A30, 0x200A2020, 0x3B202020
+    .WORD 0x544F4E20, 0x57203A45, 0x6F642065, 0x544F4E20, 0x656C6320, 0x74207261, 0x61206568, 0x65726464
+    .WORD 0x6F207373, 0x69732072, 0x200A657A, 0x3B202020, 0x65685420, 0x74732079, 0x69207961, 0x6874206E
+    .WORD 0x61742065, 0x20656C62, 0x20646E61, 0x6C6C6977, 0x20656220, 0x7265766F, 0x74697277, 0x206E6574
+    .WORD 0x6E656877, 0x75657220, 0x0A646573, 0x20202020, 0x6572660A, 0x6F645F65, 0x0A3A656E, 0x20202020
+    .WORD 0x6C43203B, 0x206E6165, 0x61207075, 0x7220646E, 0x72757465, 0x20200A6E, 0x4F502020, 0x524C2050
+    .WORD 0x2020200A, 0x54455220, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x6C6C616D
+    .WORD 0x695F636F, 0x2074696E, 0x6E49202D, 0x61697469, 0x657A696C, 0x65687420, 0x6D656D20, 0x2079726F
+    .WORD 0x6F6C6C61, 0x6F746163, 0x0A3B0A72, 0x6C43203B, 0x73726165, 0x65687420, 0x746E6520, 0x20657269
+    .WORD 0x636F6C62, 0x6174206B, 0x20656C62, 0x61206F73, 0x62206C6C, 0x6B636F6C, 0x72612073, 0x616D2065
+    .WORD 0x64656B72, 0x20736120, 0x65657266, 0x53203B0A, 0x6C756F68, 0x65622064, 0x6C616320, 0x2064656C
+    .WORD 0x65636E6F, 0x20746120, 0x74737973, 0x73206D65, 0x74726174, 0x62207075, 0x726F6665, 0x73752065
+    .WORD 0x20676E69, 0x6C6C616D, 0x3B0A636F, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x0A2D2D2D, 0x63727473, 0x0A3A7970, 0x20202020, 0x48535550, 0x0A524C20, 0x20202020, 0x20564F4D
-    .WORD 0x52203352, 0x20202031, 0x20202020, 0x20202020, 0x3B202020, 0x76615320, 0x726F2065, 0x6E696769
-    .WORD 0x64206C61, 0x69747365, 0x6974616E, 0x70206E6F, 0x746E696F, 0x200A7265, 0x4D202020, 0x5220564F
-    .WORD 0x32522034, 0x20202020, 0x20202020, 0x20202020, 0x203B2020, 0x65766153, 0x756F7320, 0x20656372
-    .WORD 0x6E696F70, 0x0A726574, 0x20202020, 0x7274730A, 0x5F797063, 0x706F6F6C, 0x20200A3A, 0x444C2020
-    .WORD 0x32522042, 0x34525B20, 0x2020205D, 0x20202020, 0x20202020, 0x4C203B20, 0x2064616F, 0x65747962
-    .WORD 0x6F726620, 0x6F73206D, 0x65637275, 0x2020200A, 0x42545320, 0x20325220, 0x5D31525B, 0x20202020
-    .WORD 0x20202020, 0x20202020, 0x7453203B, 0x2065726F, 0x65747962, 0x206F7420, 0x74736564, 0x74616E69
-    .WORD 0x0A6E6F69, 0x20202020, 0x2020200A, 0x504D4320, 0x20325220, 0x20202030, 0x20202020, 0x20202020
-    .WORD 0x20202020, 0x6843203B, 0x206B6365, 0x69206669, 0x20732774, 0x6C6C756E, 0x72657420, 0x616E696D
-    .WORD 0x0A726F74, 0x20202020, 0x20514542, 0x63727473, 0x645F7970, 0x20656E6F, 0x20202020, 0x3B202020
-    .WORD 0x20664920, 0x6F72657A, 0x6577202C, 0x20657227, 0x656E6F64, 0x2020200A, 0x20200A20, 0x44412020
-    .WORD 0x31522044, 0x20315220, 0x20202031, 0x20202020, 0x20202020, 0x41203B20, 0x6E617664, 0x64206563
-    .WORD 0x69747365, 0x6974616E, 0x70206E6F, 0x746E696F, 0x200A7265, 0x41202020, 0x52204444, 0x34522034
-    .WORD 0x20203120, 0x20202020, 0x20202020, 0x203B2020, 0x61766441, 0x2065636E, 0x72756F73, 0x70206563
-    .WORD 0x746E696F, 0x200A7265, 0x42202020, 0x72747320, 0x5F797063, 0x706F6F6C, 0x2020200A, 0x74730A20
-    .WORD 0x79706372, 0x6E6F645F, 0x200A3A65, 0x4D202020, 0x5220564F, 0x33522031, 0x20202020, 0x20202020
-    .WORD 0x20202020, 0x203B2020, 0x75746552, 0x6F206E72, 0x69676972, 0x206C616E, 0x74736564, 0x74616E69
-    .WORD 0x206E6F69, 0x6E696F70, 0x0A726574, 0x20202020, 0x20504F50, 0x200A524C, 0x52202020, 0x0A0A5445
-    .WORD 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6D0A2D2D, 0x6F6C6C61
+    .WORD 0x6E695F63, 0x0A3A7469, 0x20202020, 0x6153203B, 0x72206576, 0x73696765, 0x73726574, 0x2020200A
+    .WORD 0x53555020, 0x524C2048, 0x0A202020, 0x20202020, 0x7453203B, 0x31207065, 0x6C43203A, 0x20726165
+    .WORD 0x20656874, 0x69746E65, 0x62206572, 0x6B636F6C, 0x62617420, 0x200A656C, 0x3B202020, 0x74655320
+    .WORD 0x6C6C6120, 0x74796220, 0x69207365, 0x6C62206E, 0x5F6B636F, 0x6C626174, 0x6F742065, 0x200A3020
+    .WORD 0x4C202020, 0x31522049, 0x6F6C6220, 0x745F6B63, 0x656C6261, 0x20202020, 0x52203B20, 0x203D2031
+    .WORD 0x72617473, 0x64612074, 0x73657264, 0x666F2073, 0x62617420, 0x200A656C, 0x4C202020, 0x33522049
+    .WORD 0x58414D20, 0x4F4C425F, 0x20534B43, 0x4C42202A, 0x5F4B434F, 0x43534544, 0x203B2020, 0x3D203352
+    .WORD 0x746F7420, 0x62206C61, 0x73657479, 0x206F7420, 0x61656C63, 0x20200A72, 0x6D0A2020, 0x6F6C6C61
+    .WORD 0x6E695F63, 0x6C5F7469, 0x3A706F6F, 0x2020200A, 0x504D4320, 0x20335220, 0x20202030, 0x20202020
+    .WORD 0x20202020, 0x3B202020, 0x76614820, 0x65772065, 0x656C6320, 0x64657261, 0x6C6C6120, 0x74796220
+    .WORD 0x0A3F7365, 0x20202020, 0x20514542, 0x6C6C616D, 0x695F636F, 0x5F74696E, 0x656E6F64, 0x203B2020
+    .WORD 0x2C736559, 0x27657720, 0x64206572, 0x0A656E6F, 0x20202020, 0x2020200A, 0x20494C20, 0x30203252
+    .WORD 0x20202020, 0x20202020, 0x20202020, 0x3B202020, 0x20325220, 0x2030203D, 0x6C617628, 0x74206575
+    .WORD 0x7277206F, 0x29657469, 0x2020200A, 0x42545320, 0x20325220, 0x5D31525B, 0x20202020, 0x20202020
+    .WORD 0x3B202020, 0x6F745320, 0x30206572, 0x20746120, 0x72727563, 0x20746E65, 0x72646461, 0x0A737365
+    .WORD 0x20202020, 0x20444441, 0x52203152, 0x20312031, 0x20202020, 0x20202020, 0x203B2020, 0x65766F4D
+    .WORD 0x206F7420, 0x7478656E, 0x74796220, 0x20200A65, 0x55532020, 0x33522042, 0x20335220, 0x20202031
+    .WORD 0x20202020, 0x20202020, 0x6544203B, 0x6D657263, 0x20746E65, 0x65747962, 0x756F6320, 0x7265746E
+    .WORD 0x2020200A, 0x6D204220, 0x6F6C6C61, 0x6E695F63, 0x6C5F7469, 0x20706F6F, 0x3B202020, 0x6E6F4320
+    .WORD 0x756E6974, 0x20200A65, 0x6D0A2020, 0x6F6C6C61, 0x6E695F63, 0x645F7469, 0x3A656E6F, 0x2020200A
+    .WORD 0x43203B20, 0x6E61656C, 0x20707520, 0x20646E61, 0x75746572, 0x200A6E72, 0x50202020, 0x4C20504F
+    .WORD 0x20200A52, 0x45522020, 0x0A0A0A54, 0x3D3D3D3B, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x44203B0A, 0x43455249, 0x59524F54, 0x45504F20
-    .WORD 0x49544152, 0x20534E4F, 0x614D202D, 0x69686374, 0x7920676E, 0x2072756F, 0x6E72656B, 0x73276C65
-    .WORD 0x72617420, 0x725F7366, 0x64646165, 0x3B0A7269, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x0A3D3D3D, 0x4E49203B
+    .WORD 0x4E524554, 0x48204C41, 0x45504C45, 0x3B0A5352, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x0A0A3D3D
     .WORD 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D, 0x6F746920
+    .WORD 0x6F635F61, 0x2D206572, 0x696E5520, 0x73726576, 0x69206C61, 0x6765746E, 0x74207265, 0x7473206F
+    .WORD 0x676E6972, 0x6E6F6320, 0x74726576, 0x3B0A7265, 0x52203B0A, 0x203D2031, 0x74736564, 0x74616E69
+    .WORD 0x206E6F69, 0x66667562, 0x3B0A7265, 0x20325220, 0x6E69203D, 0x65676574, 0x6F742072, 0x6E6F6320
+    .WORD 0x74726576, 0x52203B0A, 0x203D2033, 0x65736162, 0x2C322820, 0x2C303120, 0x20726F20, 0x0A293631
+    .WORD 0x3452203B, 0x73203D20, 0x206E6769, 0x67616C66, 0x20312820, 0x6973203D, 0x64656E67, 0x2030202C
+    .WORD 0x6E75203D, 0x6E676973, 0x0A296465, 0x3552203B, 0x74203D20, 0x20706D65, 0x66667562, 0x73207265
+    .WORD 0x20657A69, 0x6465656E, 0x3B0A6465, 0x52203B0A, 0x72757465, 0x0A3A736E, 0x2020203B, 0x3D203152
+    .WORD 0x69726F20, 0x616E6967, 0x6564206C, 0x6E697473, 0x6F697461, 0x6F70206E, 0x65746E69, 0x2D3B0A72
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x6944203B, 0x74636572, 0x2079726F, 0x75727473
-    .WORD 0x72757463, 0x6F282065, 0x75716170, 0x6F742065, 0x65737520, 0x3B0A2972, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6F74690A, 0x6F635F61
+    .WORD 0x0A3A6572, 0x20202020, 0x48535550, 0x0A524C20, 0x20202020, 0x48535550, 0x0A385220, 0x20202020
+    .WORD 0x48535550, 0x0A395220, 0x20202020, 0x48535550, 0x30315220, 0x2020200A, 0x53555020, 0x31522048
+    .WORD 0x20200A31, 0x55502020, 0x52204853, 0x0A0A3231, 0x20202020, 0x20564F4D, 0x20385220, 0x20315220
+    .WORD 0x20202020, 0x20202020, 0x53203B20, 0x20657661, 0x74736564, 0x74616E69, 0x0A6E6F69, 0x20202020
+    .WORD 0x2020200A, 0x564F4D20, 0x39522020, 0x32522020, 0x20202020, 0x20202020, 0x203B2020, 0x6B726F57
+    .WORD 0x20676E69, 0x756C6176, 0x20200A65, 0x4F4D2020, 0x52202056, 0x52203131, 0x20202033, 0x20202020
+    .WORD 0x3B202020, 0x73614220, 0x20200A65, 0x4F4D2020, 0x52202056, 0x52203231, 0x20202034, 0x20202020
+    .WORD 0x3B202020, 0x67695320, 0x6C66206E, 0x200A6761, 0x3B202020, 0x20564F4D, 0x30315220, 0x20355220
+    .WORD 0x20202020, 0x20202020, 0x54203B20, 0x20706D65, 0x66667562, 0x73207265, 0x0A657A69, 0x20202020
+    .WORD 0x2020200A, 0x41203B20, 0x636F6C6C, 0x20657461, 0x706D6574, 0x66756220, 0x20726566, 0x7A697328
+    .WORD 0x61702065, 0x64657373, 0x206E6920, 0x0A293552, 0x20202020, 0x20425553, 0x20505320, 0x52205053
+    .WORD 0x20200A35, 0x4F4D2020, 0x52202056, 0x52203031, 0x20202031, 0x20202020, 0x3B202020, 0x65654B20
+    .WORD 0x726F2070, 0x6E696769, 0x70206C61, 0x746E696F, 0x200A7265, 0x4D202020, 0x2020564F, 0x20203652
+    .WORD 0x20205053, 0x20202020, 0x20202020, 0x6554203B, 0x6220706D, 0x65666675, 0x6F702072, 0x65746E69
+    .WORD 0x20200A72, 0x75702020, 0x52206873, 0x20202035, 0x20202020, 0x20202020, 0x3B202020, 0x76617320
+    .WORD 0x35522065, 0x726F6620, 0x61726620, 0x6C20656D, 0x65766165, 0x2020200A, 0x564F4D20, 0x37522020
+    .WORD 0x36522020, 0x20202020, 0x20202020, 0x203B2020, 0x65766153, 0x61747320, 0x6F207472, 0x65742066
+    .WORD 0x6220706D, 0x65666675, 0x20200A72, 0x200A2020, 0x3B202020, 0x65684320, 0x66206B63, 0x7320726F
+    .WORD 0x206E6769, 0x20666928, 0x6E676973, 0x61206465, 0x6E20646E, 0x74616765, 0x29657669, 0x2020200A
+    .WORD 0x504D4320, 0x31522020, 0x0A312032, 0x20202020, 0x20454E42, 0x6F746920, 0x6F635F61, 0x755F6572
+    .WORD 0x6769736E, 0x0A64656E, 0x20202020, 0x2020200A, 0x504D4320, 0x39522020, 0x200A3020, 0x42202020
+    .WORD 0x20204547, 0x616F7469, 0x726F635F, 0x6E755F65, 0x6E676973, 0x200A6465, 0x0A202020, 0x20202020
+    .WORD 0x654E203B, 0x69746167, 0x6E206576, 0x65626D75, 0x202D2072, 0x20646461, 0x756E696D, 0x69732073
+    .WORD 0x200A6E67, 0x4C202020, 0x20202049, 0x34203252, 0x20202035, 0x273B2020, 0x200A272D, 0x53202020
+    .WORD 0x20204254, 0x5B203252, 0x0A5D3852, 0x20202020, 0x20444441, 0x20385220, 0x31203852, 0x2020200A
+    .WORD 0x544F4E20, 0x39522020, 0x0A395220, 0x20202020, 0x20444441, 0x20395220, 0x31203952, 0x2020200A
+    .WORD 0x454E3B20, 0x52202047, 0x20202039, 0x20202020, 0x20202020, 0x3B202020, 0x6B614D20, 0x6F702065
+    .WORD 0x69746973, 0x200A6576, 0x0A202020, 0x616F7469, 0x726F635F, 0x6E755F65, 0x6E676973, 0x0A3A6465
+    .WORD 0x20202020, 0x7053203B, 0x61696365, 0x6163206C, 0x203A6573, 0x6F72657A, 0x2020200A, 0x504D4320
+    .WORD 0x39522020, 0x200A3020, 0x42202020, 0x2020454E, 0x616F7469, 0x726F635F, 0x6F635F65, 0x7265766E
+    .WORD 0x20200A74, 0x200A2020, 0x4C202020, 0x20202049, 0x34203252, 0x20202038, 0x27203B20, 0x200A2730
+    .WORD 0x53202020, 0x20204254, 0x5B203252, 0x0A5D3852, 0x20202020, 0x20444441, 0x20385220, 0x31203852
+    .WORD 0x2020200A, 0x20494C20, 0x32522020, 0x200A3020, 0x53202020, 0x20204254, 0x5B203252, 0x0A5D3852
+    .WORD 0x20202020, 0x20202042, 0x6F746920, 0x6F635F61, 0x665F6572, 0x73696E69, 0x20200A68, 0x690A2020
+    .WORD 0x5F616F74, 0x65726F63, 0x6E6F635F, 0x74726576, 0x20200A3A, 0x494C2020, 0x52202020, 0x20302034
+    .WORD 0x20202020, 0x20202020, 0x3B202020, 0x67694420, 0x63207469, 0x746E756F, 0x200A7265, 0x0A202020
+    .WORD 0x616F7469, 0x726F635F, 0x69645F65, 0x6F6F6C76, 0x200A3A70, 0x4D202020, 0x2020564F, 0x52203552
+    .WORD 0x20200A39, 0x49442020, 0x52202056, 0x35522036, 0x31315220, 0x20202020, 0x3B202020, 0x20365220
+    .WORD 0x7571203D, 0x6569746F, 0x202C746E, 0x3D203952, 0x6D657220, 0x646E6961, 0x200A7265, 0x4D202020
+    .WORD 0x2020444F, 0x52203752, 0x31522039, 0x20202031, 0x20202020, 0x3752203B, 0x72203D20, 0x69616D65
+    .WORD 0x7265646E, 0x2020200A, 0x20200A20, 0x203B2020, 0x766E6F43, 0x20747265, 0x69676964, 0x6F742074
+    .WORD 0x43534120, 0x62204949, 0x64657361, 0x206E6F20, 0x65736162, 0x2020200A, 0x504D4320, 0x31522020
+    .WORD 0x36312031, 0x2020200A, 0x51454220, 0x74692020, 0x635F616F, 0x5F65726F, 0x5F786568, 0x69676964
+    .WORD 0x20200A74, 0x200A2020, 0x3B202020, 0x73614220, 0x20322065, 0x3120726F, 0x64203A30, 0x74696769
+    .WORD 0x392D3020, 0x2020200A, 0x44444120, 0x37522020, 0x20375220, 0x20203834, 0x20202020, 0x203B2020
+    .WORD 0x20273027, 0x6964202B, 0x0A746967, 0x20202020, 0x20202042, 0x6F746920, 0x6F635F61, 0x735F6572
+    .WORD 0x65726F74, 0x2020200A, 0x74690A20, 0x635F616F, 0x5F65726F, 0x5F786568, 0x69676964, 0x200A3A74
+    .WORD 0x3B202020, 0x73614220, 0x36312065, 0x6964203A, 0x20746967, 0x35312D30, 0x2020200A, 0x504D4320
+    .WORD 0x37522020, 0x200A3920, 0x42202020, 0x20205447, 0x616F7469, 0x726F635F, 0x65685F65, 0x656C5F78
+    .WORD 0x72657474, 0x2020200A, 0x44444120, 0x37522020, 0x20375220, 0x20203834, 0x20202020, 0x203B2020
+    .WORD 0x20273027, 0x6964202B, 0x0A746967, 0x20202020, 0x20202042, 0x6F746920, 0x6F635F61, 0x735F6572
+    .WORD 0x65726F74, 0x2020200A, 0x74690A20, 0x635F616F, 0x5F65726F, 0x5F786568, 0x7474656C, 0x0A3A7265
+    .WORD 0x20202020, 0x20425553, 0x20375220, 0x31203752, 0x20200A30, 0x44412020, 0x52202044, 0x37522037
+    .WORD 0x20353620, 0x20202020, 0x3B202020, 0x27412720, 0x28202B20, 0x69676964, 0x30312D74, 0x20200A29
+    .WORD 0x690A2020, 0x5F616F74, 0x65726F63, 0x6F74735F, 0x0A3A6572, 0x20202020, 0x20425453, 0x20375220
+    .WORD 0x5D36525B, 0x20202020, 0x20202020, 0x53203B20, 0x65726F74, 0x206E6920, 0x706D6574, 0x66756220
+    .WORD 0x0A726566, 0x20202020, 0x20444441, 0x20365220, 0x31203652, 0x2020200A, 0x44444120, 0x34522020
+    .WORD 0x20345220, 0x20202031, 0x20202020, 0x203B2020, 0x72636E49, 0x6E656D65, 0x69642074, 0x20746967
+    .WORD 0x6E756F63, 0x20200A74, 0x200A2020, 0x4D202020, 0x2020564F, 0x52203952, 0x20202035, 0x20202020
+    .WORD 0x20202020, 0x7551203B, 0x6569746F, 0x6220746E, 0x6D6F6365, 0x6E207365, 0x76207765, 0x65756C61
+    .WORD 0x2020200A, 0x504D4320, 0x39522020, 0x200A3020, 0x42202020, 0x2020454E, 0x616F7469, 0x726F635F
+    .WORD 0x69645F65, 0x6F6F6C76, 0x20200A70, 0x200A2020, 0x3B202020, 0x696F5020, 0x7420746E, 0x616C206F
+    .WORD 0x64207473, 0x74696769, 0x2020200A, 0x42555320, 0x36522020, 0x20365220, 0x20200A31, 0x690A2020
+    .WORD 0x5F616F74, 0x65726F63, 0x706F635F, 0x200A3A79, 0x43202020, 0x2020504D, 0x30203452, 0x2020200A
+    .WORD 0x51454220, 0x74692020, 0x635F616F, 0x5F65726F, 0x656E6F64, 0x2020200A, 0x20200A20, 0x444C2020
+    .WORD 0x52202042, 0x525B2032, 0x20205D36, 0x20202020, 0x3B202020, 0x74654720, 0x67696420, 0x66207469
+    .WORD 0x206D6F72, 0x706D6574, 0x65722820, 0x73726576, 0x726F2065, 0x29726564, 0x2020200A, 0x42545320
+    .WORD 0x32522020, 0x38525B20, 0x2020205D, 0x20202020, 0x203B2020, 0x726F7453, 0x6E692065, 0x73656420
+    .WORD 0x616E6974, 0x6E6F6974, 0x2020200A, 0x44444120, 0x38522020, 0x20385220, 0x20200A31, 0x55532020
+    .WORD 0x52202042, 0x36522036, 0x200A3120, 0x53202020, 0x20204255, 0x52203452, 0x0A312034, 0x20202020
+    .WORD 0x20202042, 0x6F746920, 0x6F635F61, 0x635F6572, 0x0A79706F, 0x20202020, 0x6F74690A, 0x6F635F61
+    .WORD 0x645F6572, 0x3A656E6F, 0x2020200A, 0x20494C20, 0x32522020, 0x200A3020, 0x53202020, 0x20204254
+    .WORD 0x5B203252, 0x205D3852, 0x20202020, 0x20202020, 0x754E203B, 0x74206C6C, 0x696D7265, 0x6574616E
+    .WORD 0x2020200A, 0x74690A20, 0x635F616F, 0x5F65726F, 0x696E6966, 0x0A3A6873, 0x20202020, 0x20504F50
+    .WORD 0x0A355220, 0x20202020, 0x6C43203B, 0x206E6165, 0x74207075, 0x20706D65, 0x66667562, 0x200A7265
+    .WORD 0x41202020, 0x20204444, 0x53205053, 0x35522050, 0x2020200A, 0x20200A20, 0x203B2020, 0x75746552
+    .WORD 0x6F206E72, 0x69676972, 0x206C616E, 0x6E696F70, 0x0A726574, 0x20202020, 0x20564F4D, 0x20315220
+    .WORD 0x0A303152, 0x20202020, 0x2020200A, 0x504F5020, 0x31522020, 0x20200A32, 0x4F502020, 0x52202050
+    .WORD 0x200A3131, 0x50202020, 0x2020504F, 0x0A303152, 0x20202020, 0x20504F50, 0x0A395220, 0x20202020
+    .WORD 0x20504F50, 0x0A385220, 0x20202020, 0x20504F50, 0x0A524C20, 0x20202020, 0x0A544552, 0x2D2D3B0A
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x7469203B, 0x645F616F
+    .WORD 0x2D206365, 0x63654420, 0x6C616D69, 0x6E6F6320, 0x73726576, 0x206E6F69, 0x70617277, 0x0A726570
+    .WORD 0x203B0A3B, 0x3D203152, 0x73656420, 0x616E6974, 0x6E6F6974, 0x66756220, 0x0A726566, 0x3252203B
+    .WORD 0x73203D20, 0x656E6769, 0x6E692064, 0x65676574, 0x203B0A72, 0x75746552, 0x3A736E72, 0x20315220
+    .WORD 0x726F203D, 0x6E696769, 0x62206C61, 0x65666675, 0x6F702072, 0x65746E69, 0x2D3B0A72, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6F74690A, 0x65645F61, 0x200A3A63
+    .WORD 0x50202020, 0x20485355, 0x200A524C, 0x0A202020, 0x20202020, 0x614D203B, 0x31312078, 0x67696420
+    .WORD 0x20737469, 0x6973202B, 0x2B206E67, 0x6C756E20, 0x203D206C, 0x62203331, 0x73657479, 0x2020200A
+    .WORD 0x20494C20, 0x33522020, 0x20303120, 0x20202020, 0x20202020, 0x203B2020, 0x65736142, 0x0A303120
+    .WORD 0x20202020, 0x2020494C, 0x20345220, 0x20202031, 0x20202020, 0x20202020, 0x53203B20, 0x656E6769
+    .WORD 0x20200A64, 0x494C2020, 0x52202020, 0x33312035, 0x20202020, 0x20202020, 0x3B202020, 0x6D655420
+    .WORD 0x75622070, 0x72656666, 0x7A697320, 0x20200A65, 0x41432020, 0x69204C4C, 0x5F616F74, 0x65726F63
+    .WORD 0x2020200A, 0x20200A20, 0x4F502020, 0x4C202050, 0x20200A52, 0x45522020, 0x3B0A0A54, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x616F7469, 0x7865685F
+    .WORD 0x48202D20, 0x64617865, 0x6D696365, 0x63206C61, 0x65766E6F, 0x6F697372, 0x7277206E, 0x65707061
+    .WORD 0x0A3B0A72, 0x3152203B, 0x64203D20, 0x69747365, 0x6974616E, 0x62206E6F, 0x65666675, 0x203B0A72
+    .WORD 0x3D203252, 0x736E7520, 0x656E6769, 0x6E692064, 0x65676574, 0x203B0A72, 0x75746552, 0x3A736E72
+    .WORD 0x20315220, 0x726F203D, 0x6E696769, 0x62206C61, 0x65666675, 0x6F702072, 0x65746E69, 0x2D3B0A72
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6F74690A, 0x65685F61
+    .WORD 0x200A3A78, 0x50202020, 0x20485355, 0x200A524C, 0x0A202020, 0x20202020, 0x614D203B, 0x20382078
+    .WORD 0x69676964, 0x2B207374, 0x6C756E20, 0x203D206C, 0x79622039, 0x0A736574, 0x20202020, 0x2020494C
+    .WORD 0x20335220, 0x20203631, 0x20202020, 0x20202020, 0x42203B20, 0x20657361, 0x200A3631, 0x4C202020
+    .WORD 0x20202049, 0x30203452, 0x20202020, 0x20202020, 0x20202020, 0x6E55203B, 0x6E676973, 0x28206465
+    .WORD 0x776F6873, 0x61722073, 0x69622077, 0x0A297374, 0x20202020, 0x2020494C, 0x20355220, 0x20202039
+    .WORD 0x20202020, 0x20202020, 0x54203B20, 0x20706D65, 0x66667562, 0x73207265, 0x0A657A69, 0x20202020
+    .WORD 0x4C4C4143, 0x6F746920, 0x6F635F61, 0x200A6572, 0x0A202020, 0x20202020, 0x20504F50, 0x0A524C20
+    .WORD 0x20202020, 0x0A544552, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x0A2D2D2D, 0x7469203B, 0x625F616F, 0x2D206E69, 0x6E694220, 0x20797261, 0x766E6F63, 0x69737265
+    .WORD 0x77206E6F, 0x70706172, 0x3B0A7265, 0x52203B0A, 0x203D2031, 0x74736564, 0x74616E69, 0x206E6F69
+    .WORD 0x66667562, 0x3B0A7265, 0x20325220, 0x6E75203D, 0x6E676973, 0x69206465, 0x6765746E, 0x3B0A7265
+    .WORD 0x74655220, 0x736E7275, 0x3152203A, 0x6F203D20, 0x69676972, 0x206C616E, 0x66667562, 0x70207265
+    .WORD 0x746E696F, 0x3B0A7265, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x74690A2D, 0x625F616F, 0x0A3A6E69, 0x20202020, 0x48535550, 0x0A524C20, 0x20202020, 0x2020200A
+    .WORD 0x4D203B20, 0x33207861, 0x69622032, 0x2B207374, 0x6C756E20, 0x203D206C, 0x62203333, 0x73657479
+    .WORD 0x2020200A, 0x20494C20, 0x33522020, 0x20203220, 0x20202020, 0x20202020, 0x203B2020, 0x65736142
+    .WORD 0x200A3220, 0x4C202020, 0x20202049, 0x30203452, 0x20202020, 0x20202020, 0x20202020, 0x6E55203B
+    .WORD 0x6E676973, 0x28206465, 0x776F6873, 0x61722073, 0x69622077, 0x0A297374, 0x20202020, 0x2020494C
+    .WORD 0x20355220, 0x20203333, 0x20202020, 0x20202020, 0x54203B20, 0x20706D65, 0x66667562, 0x73207265
+    .WORD 0x0A657A69, 0x20202020, 0x4C4C4143, 0x6F746920, 0x6F635F61, 0x200A6572, 0x0A202020, 0x20202020
+    .WORD 0x20504F50, 0x0A524C20, 0x20202020, 0x0A544552, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x7469203B, 0x735F616F, 0x656E6769, 0x65685F64, 0x202D2078
+    .WORD 0x6E676953, 0x68206465, 0x64617865, 0x6D696365, 0x77206C61, 0x70706172, 0x3B0A7265, 0x52203B0A
+    .WORD 0x203D2031, 0x74736564, 0x74616E69, 0x206E6F69, 0x66667562, 0x3B0A7265, 0x20325220, 0x6973203D
+    .WORD 0x64656E67, 0x746E6920, 0x72656765, 0x52203B0A, 0x72757465, 0x203A736E, 0x3D203152, 0x69726F20
+    .WORD 0x616E6967, 0x7562206C, 0x72656666, 0x696F7020, 0x7265746E, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x616F7469, 0x6769735F, 0x5F64656E, 0x3A786568
+    .WORD 0x2020200A, 0x53555020, 0x524C2048, 0x2020200A, 0x20200A20, 0x203B2020, 0x2078614D, 0x69642038
+    .WORD 0x73746967, 0x73202B20, 0x206E6769, 0x756E202B, 0x3D206C6C, 0x20303120, 0x65747962, 0x20200A73
+    .WORD 0x494C2020, 0x52202020, 0x36312033, 0x20202020, 0x20202020, 0x3B202020, 0x73614220, 0x36312065
+    .WORD 0x2020200A, 0x20494C20, 0x34522020, 0x20203120, 0x20202020, 0x20202020, 0x203B2020, 0x6E676953
+    .WORD 0x28206465, 0x776F6873, 0x69732073, 0x0A296E67, 0x20202020, 0x2020494C, 0x20355220, 0x20203031
+    .WORD 0x20202020, 0x20202020, 0x54203B20, 0x20706D65, 0x66667562, 0x73207265, 0x0A657A69, 0x20202020
+    .WORD 0x4C4C4143, 0x6F746920, 0x6F635F61, 0x200A6572, 0x0A202020, 0x20202020, 0x20504F50, 0x0A524C20
+    .WORD 0x20202020, 0x0A544552, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x0A2D2D2D, 0x7469203B, 0x735F616F, 0x656E6769, 0x69625F64, 0x202D206E, 0x6E676953, 0x62206465
+    .WORD 0x72616E69, 0x72772079, 0x65707061, 0x0A3B0A72, 0x3152203B, 0x64203D20, 0x69747365, 0x6974616E
+    .WORD 0x62206E6F, 0x65666675, 0x203B0A72, 0x3D203252, 0x67697320, 0x2064656E, 0x65746E69, 0x0A726567
+    .WORD 0x6552203B, 0x6E727574, 0x52203A73, 0x203D2031, 0x6769726F, 0x6C616E69, 0x66756220, 0x20726566
+    .WORD 0x6E696F70, 0x0A726574, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x690A2D2D, 0x5F616F74, 0x6E676973, 0x625F6465, 0x0A3A6E69, 0x20202020, 0x48535550, 0x0A524C20
+    .WORD 0x20202020, 0x2020200A, 0x4D203B20, 0x33207861, 0x69622032, 0x2B207374, 0x67697320, 0x202B206E
+    .WORD 0x6C6C756E, 0x33203D20, 0x79622034, 0x0A736574, 0x20202020, 0x2020494C, 0x20335220, 0x20202032
+    .WORD 0x20202020, 0x20202020, 0x42203B20, 0x20657361, 0x20200A32, 0x494C2020, 0x52202020, 0x20312034
+    .WORD 0x20202020, 0x20202020, 0x3B202020, 0x67695320, 0x2064656E, 0x6F687328, 0x73207377, 0x296E6769
+    .WORD 0x2020200A, 0x20494C20, 0x35522020, 0x20343320, 0x20202020, 0x20202020, 0x203B2020, 0x706D6554
+    .WORD 0x66756220, 0x20726566, 0x657A6973, 0x2020200A, 0x4C414320, 0x7469204C, 0x635F616F, 0x0A65726F
+    .WORD 0x20202020, 0x2020200A, 0x504F5020, 0x524C2020, 0x2020200A, 0x54455220, 0x2D3B0A0A, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2E0A2D2D, 0x20555145, 0x5F524944, 0x202C4446, 0x20202020, 0x20302020, 0x20202020
-    .WORD 0x203B2020, 0x656C6946, 0x73656420, 0x70697263, 0x20726F74, 0x62203428, 0x73657479, 0x452E0A29
-    .WORD 0x44205551, 0x4F5F5249, 0x45534646, 0x20202C54, 0x20203420, 0x20202020, 0x43203B20, 0x65727275
-    .WORD 0x7020746E, 0x7469736F, 0x206E6F69, 0x64206E69, 0x63657269, 0x79726F74, 0x72747320, 0x206D6165
-    .WORD 0x62203428, 0x73657479, 0x0A202029, 0x5551452E, 0x52494420, 0x5A49535F, 0x2C464F45, 0x38202020
-    .WORD 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x63727473, 0x64287970, 0x2C747365, 0x63727320, 0x0A3B0A29
+    .WORD 0x6F43203B, 0x73656970, 0x72747320, 0x20676E69, 0x6D6F7266, 0x63727320, 0x206F7420, 0x74736564
+    .WORD 0x636E6920, 0x6964756C, 0x7420676E, 0x696D7265, 0x6974616E, 0x6E20676E, 0x206C6C75, 0x72616863
+    .WORD 0x65746361, 0x0A3B0A72, 0x6E49203B, 0x3A747570, 0x20203B0A, 0x20315220, 0x6564203D, 0x6E697473
+    .WORD 0x6F697461, 0x6F70206E, 0x65746E69, 0x203B0A72, 0x32522020, 0x73203D20, 0x6372756F, 0x6F702065
+    .WORD 0x65746E69, 0x0A3B0A72, 0x754F203B, 0x74757074, 0x203B0A3A, 0x31522020, 0x64203D20, 0x69747365
+    .WORD 0x6974616E, 0x70206E6F, 0x746E696F, 0x28207265, 0x6769726F, 0x6C616E69, 0x2D3B0A29, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x6E65706F, 0x20726964, 0x704F202D
-    .WORD 0x61206E65, 0x72696420, 0x6F746365, 0x66207972, 0x7220726F, 0x69646165, 0x3B0A676E, 0x49203B0A
-    .WORD 0x20203A4E, 0x3D203152, 0x74617020, 0x6E282068, 0x2D6C6C75, 0x6D726574, 0x74616E69, 0x73206465
-    .WORD 0x6E697274, 0x3B0A2967, 0x54554F20, 0x3152203A, 0x44203D20, 0x202A5249, 0x6E616828, 0x29656C64
-    .WORD 0x20726F20, 0x6E6F2030, 0x72726520, 0x3B0A726F, 0x4F203B0A, 0x736E6570, 0x64206120, 0x63657269
-    .WORD 0x79726F74, 0x6C696620, 0x6E612065, 0x65722064, 0x6E727574, 0x20612073, 0x646E6168, 0x6620656C
-    .WORD 0x7220726F, 0x64646165, 0x3B0A7269, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6F0A2D2D, 0x646E6570
-    .WORD 0x0A3A7269, 0x20202020, 0x48535550, 0x0A524C20, 0x20202020, 0x48535550, 0x0A385220, 0x20202020
-    .WORD 0x48535550, 0x0A395220, 0x20202020, 0x2020200A, 0x564F4D20, 0x20385220, 0x20203152, 0x20202020
-    .WORD 0x20202020, 0x203B2020, 0x65766153, 0x74617020, 0x20200A68, 0x203B2020, 0x6E65704F, 0x72696420
-    .WORD 0x6F746365, 0x77207972, 0x20687469, 0x64616572, 0x6C6E6F2D, 0x6C662079, 0x20736761, 0x6D617328
-    .WORD 0x73612065, 0x756F7920, 0x736C2072, 0x6D73612E, 0x20200A29, 0x4F4D2020, 0x31522056, 0x0A385220
-    .WORD 0x20202020, 0x2020494C, 0x4F203252, 0x4F44525F, 0x0A594C4E, 0x20202020, 0x20435653, 0x5F535953
-    .WORD 0x4E45504F, 0x2020200A, 0x564F4D20, 0x20395220, 0x20203152, 0x20202020, 0x20202020, 0x64663B20
-    .WORD 0x2020200A, 0x504D4320, 0x20315220, 0x20200A30, 0x4C422020, 0x706F2054, 0x69646E65, 0x72655F72
-    .WORD 0x0A726F72, 0x20202020, 0x2020200A, 0x41203B20, 0x636F6C6C, 0x20657461, 0x20524944, 0x75727473
-    .WORD 0x72757463, 0x73282065, 0x6C6C616D, 0x756A202C, 0x66207473, 0x6E612064, 0x666F2064, 0x74657366
-    .WORD 0x20200A29, 0x55502020, 0x52204853, 0x20202039, 0x20202020, 0x20202020, 0x20202020, 0x733B2020
-    .WORD 0x20657661, 0x6A203952, 0x200A6369, 0x4C202020, 0x31522049, 0x52494420, 0x5A49535F, 0x0A464F45
-    .WORD 0x20202020, 0x4C4C4143, 0x6C616D20, 0x0A636F6C, 0x20202020, 0x20504F50, 0x0A395220, 0x2020200A
-    .WORD 0x504D4320, 0x20315220, 0x20200A30, 0x45422020, 0x706F2051, 0x69646E65, 0x72655F72, 0x5F726F72
-    .WORD 0x736F6C63, 0x20200A65, 0x200A2020, 0x4D202020, 0x5220564F, 0x31522038, 0x20202020, 0x20202020
-    .WORD 0x20202020, 0x6153203B, 0x44206576, 0x0A2A5249, 0x20202020, 0x2020200A, 0x49203B20, 0x6974696E
-    .WORD 0x7A696C61, 0x49442065, 0x74732052, 0x74637572, 0x0A657275, 0x20202020, 0x3252203B, 0x69747320
-    .WORD 0x68206C6C, 0x66207361, 0x72662064, 0x6F206D6F, 0x0A6E6570, 0x20202020, 0x20575453, 0x5B203952
-    .WORD 0x2B203852, 0x52494420, 0x5D44465F, 0x2020200A, 0x20494C20, 0x20325220, 0x20200A30, 0x54532020
-    .WORD 0x32522057, 0x38525B20, 0x44202B20, 0x4F5F5249, 0x45534646, 0x200A5D54, 0x0A202020, 0x20202020
-    .WORD 0x20564F4D, 0x52203152, 0x20202038, 0x20202020, 0x20202020, 0x52203B20, 0x72757465, 0x4944206E
-    .WORD 0x200A2A52, 0x42202020, 0x65706F20, 0x7269646E, 0x6E6F645F, 0x20200A65, 0x6F0A2020, 0x646E6570
-    .WORD 0x655F7269, 0x726F7272, 0x6F6C635F, 0x0A3A6573, 0x20202020, 0x20564F4D, 0x52203152, 0x20202039
-    .WORD 0x20202020, 0x20202020, 0x66203B20, 0x73692064, 0x206E6920, 0x200A3952, 0x53202020, 0x53204356
-    .WORD 0x435F5359, 0x45534F4C, 0x2020200A, 0x20494C20, 0x30203152, 0x2020200A, 0x6F204220, 0x646E6570
-    .WORD 0x645F7269, 0x0A656E6F, 0x20202020, 0x65706F0A, 0x7269646E, 0x7272655F, 0x0A3A726F, 0x20202020
-    .WORD 0x5220494C, 0x0A302031, 0x20202020, 0x65706F0A, 0x7269646E, 0x6E6F645F, 0x200A3A65, 0x50202020
-    .WORD 0x5220504F, 0x20200A39, 0x4F502020, 0x38522050, 0x2020200A, 0x504F5020, 0x0A524C20, 0x20202020
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x74730A2D, 0x79706372, 0x20200A3A, 0x55502020, 0x4C204853, 0x20200A52
+    .WORD 0x4F4D2020, 0x33522056, 0x20315220, 0x20202020, 0x20202020, 0x20202020, 0x53203B20, 0x20657661
+    .WORD 0x6769726F, 0x6C616E69, 0x73656420, 0x616E6974, 0x6E6F6974, 0x696F7020, 0x7265746E, 0x2020200A
+    .WORD 0x564F4D20, 0x20345220, 0x20203252, 0x20202020, 0x20202020, 0x20202020, 0x6153203B, 0x73206576
+    .WORD 0x6372756F, 0x6F702065, 0x65746E69, 0x20200A72, 0x730A2020, 0x70637274, 0x6F6C5F79, 0x0A3A706F
+    .WORD 0x20202020, 0x2042444C, 0x5B203252, 0x205D3452, 0x20202020, 0x20202020, 0x3B202020, 0x616F4C20
+    .WORD 0x79622064, 0x66206574, 0x206D6F72, 0x72756F73, 0x200A6563, 0x53202020, 0x52204254, 0x525B2032
+    .WORD 0x20205D31, 0x20202020, 0x20202020, 0x203B2020, 0x726F7453, 0x79622065, 0x74206574, 0x6564206F
+    .WORD 0x6E697473, 0x6F697461, 0x20200A6E, 0x200A2020, 0x43202020, 0x5220504D, 0x20302032, 0x20202020
+    .WORD 0x20202020, 0x20202020, 0x203B2020, 0x63656843, 0x6669206B, 0x27746920, 0x756E2073, 0x74206C6C
+    .WORD 0x696D7265, 0x6F74616E, 0x20200A72, 0x45422020, 0x74732051, 0x79706372, 0x6E6F645F, 0x20202065
+    .WORD 0x20202020, 0x49203B20, 0x657A2066, 0x202C6F72, 0x72276577, 0x6F642065, 0x200A656E, 0x0A202020
+    .WORD 0x20202020, 0x20444441, 0x52203152, 0x20312031, 0x20202020, 0x20202020, 0x3B202020, 0x76644120
+    .WORD 0x65636E61, 0x73656420, 0x616E6974, 0x6E6F6974, 0x696F7020, 0x7265746E, 0x2020200A, 0x44444120
+    .WORD 0x20345220, 0x31203452, 0x20202020, 0x20202020, 0x20202020, 0x6441203B, 0x636E6176, 0x6F732065
+    .WORD 0x65637275, 0x696F7020, 0x7265746E, 0x2020200A, 0x73204220, 0x70637274, 0x6F6C5F79, 0x200A706F
+    .WORD 0x0A202020, 0x63727473, 0x645F7970, 0x3A656E6F, 0x2020200A, 0x564F4D20, 0x20315220, 0x20203352
+    .WORD 0x20202020, 0x20202020, 0x20202020, 0x6552203B, 0x6E727574, 0x69726F20, 0x616E6967, 0x6564206C
+    .WORD 0x6E697473, 0x6F697461, 0x6F70206E, 0x65746E69, 0x20200A72, 0x4F502020, 0x524C2050, 0x2020200A
+    .WORD 0x54455220, 0x3B0A0A0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3B0A3D3D, 0x52494420, 0x4F544345
+    .WORD 0x4F205952, 0x41524550, 0x4E4F4954, 0x202D2053, 0x6374614D, 0x676E6968, 0x756F7920, 0x656B2072
+    .WORD 0x6C656E72, 0x74207327, 0x73667261, 0x6165725F, 0x72696464, 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x65726944, 0x726F7463
+    .WORD 0x74732079, 0x74637572, 0x20657275, 0x61706F28, 0x20657571, 0x75206F74, 0x29726573, 0x2D2D3B0A
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x51452E0A, 0x49442055, 0x44465F52, 0x2020202C, 0x20202020
+    .WORD 0x20202030, 0x20202020, 0x6946203B, 0x6420656C, 0x72637365, 0x6F747069, 0x34282072, 0x74796220
+    .WORD 0x0A297365, 0x5551452E, 0x52494420, 0x46464F5F, 0x2C544553, 0x34202020, 0x20202020, 0x3B202020
+    .WORD 0x72754320, 0x746E6572, 0x736F7020, 0x6F697469, 0x6E69206E, 0x72696420, 0x6F746365, 0x73207972
+    .WORD 0x61657274, 0x3428206D, 0x74796220, 0x20297365, 0x452E0A20, 0x44205551, 0x535F5249, 0x4F455A49
+    .WORD 0x20202C46, 0x0A0A3820, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x706F203B, 0x69646E65
+    .WORD 0x202D2072, 0x6E65704F, 0x64206120, 0x63657269, 0x79726F74, 0x726F6620, 0x61657220, 0x676E6964
+    .WORD 0x3B0A3B0A, 0x3A4E4920, 0x31522020, 0x70203D20, 0x20687461, 0x6C756E28, 0x65742D6C, 0x6E696D72
+    .WORD 0x64657461, 0x72747320, 0x29676E69, 0x4F203B0A, 0x203A5455, 0x3D203152, 0x52494420, 0x6828202A
+    .WORD 0x6C646E61, 0x6F202965, 0x20302072, 0x65206E6F, 0x726F7272, 0x3B0A3B0A, 0x65704F20, 0x6120736E
+    .WORD 0x72696420, 0x6F746365, 0x66207972, 0x20656C69, 0x20646E61, 0x75746572, 0x20736E72, 0x61682061
+    .WORD 0x656C646E, 0x726F6620, 0x61657220, 0x72696464, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x65706F0A, 0x7269646E, 0x20200A3A, 0x55502020, 0x4C204853, 0x20200A52, 0x55502020, 0x52204853
+    .WORD 0x20200A38, 0x55502020, 0x52204853, 0x20200A39, 0x200A2020, 0x4D202020, 0x5220564F, 0x31522038
+    .WORD 0x20202020, 0x20202020, 0x20202020, 0x6153203B, 0x70206576, 0x0A687461, 0x20202020, 0x704F203B
+    .WORD 0x64206E65, 0x63657269, 0x79726F74, 0x74697720, 0x65722068, 0x6F2D6461, 0x20796C6E, 0x67616C66
+    .WORD 0x73282073, 0x20656D61, 0x79207361, 0x2072756F, 0x612E736C, 0x0A296D73, 0x20202020, 0x20564F4D
+    .WORD 0x52203152, 0x20200A38, 0x494C2020, 0x32522020, 0x525F4F20, 0x4C4E4F44, 0x20200A59, 0x56532020
+    .WORD 0x59532043, 0x504F5F53, 0x200A4E45, 0x4D202020, 0x5220564F, 0x31522039, 0x20202020, 0x20202020
+    .WORD 0x3B202020, 0x200A6466, 0x43202020, 0x5220504D, 0x0A302031, 0x20202020, 0x20544C42, 0x6E65706F
+    .WORD 0x5F726964, 0x6F727265, 0x20200A72, 0x200A2020, 0x3B202020, 0x6C6C4120, 0x7461636F, 0x49442065
+    .WORD 0x74732052, 0x74637572, 0x20657275, 0x616D7328, 0x202C6C6C, 0x7473756A, 0x20646620, 0x20646E61
+    .WORD 0x7366666F, 0x0A297465, 0x20202020, 0x48535550, 0x20395220, 0x20202020, 0x20202020, 0x20202020
+    .WORD 0x20202020, 0x7661733B, 0x39522065, 0x63696A20, 0x2020200A, 0x20494C20, 0x44203152, 0x535F5249
+    .WORD 0x4F455A49, 0x20200A46, 0x41432020, 0x6D204C4C, 0x6F6C6C61, 0x20200A63, 0x4F502020, 0x52202050
+    .WORD 0x200A0A39, 0x43202020, 0x5220504D, 0x0A302031, 0x20202020, 0x20514542, 0x6E65706F, 0x5F726964
+    .WORD 0x6F727265, 0x6C635F72, 0x0A65736F, 0x20202020, 0x2020200A, 0x564F4D20, 0x20385220, 0x20203152
+    .WORD 0x20202020, 0x20202020, 0x203B2020, 0x65766153, 0x52494420, 0x20200A2A, 0x200A2020, 0x3B202020
+    .WORD 0x696E4920, 0x6C616974, 0x20657A69, 0x20524944, 0x75727473, 0x72757463, 0x20200A65, 0x203B2020
+    .WORD 0x73203252, 0x6C6C6974, 0x73616820, 0x20646620, 0x6D6F7266, 0x65706F20, 0x20200A6E, 0x54532020
+    .WORD 0x39522057, 0x38525B20, 0x44202B20, 0x465F5249, 0x200A5D44, 0x4C202020, 0x52202049, 0x0A302032
+    .WORD 0x20202020, 0x20575453, 0x5B203252, 0x2B203852, 0x52494420, 0x46464F5F, 0x5D544553, 0x2020200A
+    .WORD 0x20200A20, 0x4F4D2020, 0x31522056, 0x20385220, 0x20202020, 0x20202020, 0x3B202020, 0x74655220
+    .WORD 0x206E7275, 0x2A524944, 0x2020200A, 0x6F204220, 0x646E6570, 0x645F7269, 0x0A656E6F, 0x20202020
+    .WORD 0x65706F0A, 0x7269646E, 0x7272655F, 0x635F726F, 0x65736F6C, 0x20200A3A, 0x4F4D2020, 0x31522056
+    .WORD 0x20395220, 0x20202020, 0x20202020, 0x3B202020, 0x20646620, 0x69207369, 0x3952206E, 0x2020200A
+    .WORD 0x43565320, 0x53595320, 0x4F4C435F, 0x200A4553, 0x4C202020, 0x31522049, 0x200A3020, 0x42202020
+    .WORD 0x65706F20, 0x7269646E, 0x6E6F645F, 0x20200A65, 0x6F0A2020, 0x646E6570, 0x655F7269, 0x726F7272
+    .WORD 0x20200A3A, 0x494C2020, 0x20315220, 0x20200A30, 0x6F0A2020, 0x646E6570, 0x645F7269, 0x3A656E6F
+    .WORD 0x2020200A, 0x504F5020, 0x0A395220, 0x20202020, 0x20504F50, 0x200A3852, 0x50202020, 0x4C20504F
+    .WORD 0x20200A52, 0x45522020, 0x3B0A0A54, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D, 0x61657220
+    .WORD 0x72696464, 0x52202D20, 0x20646165, 0x7478656E, 0x72696420, 0x6F746365, 0x65207972, 0x7972746E
+    .WORD 0x3B0A3B0A, 0x3A4E4920, 0x31522020, 0x44203D20, 0x202A5249, 0x6F726628, 0x706F206D, 0x69646E65
+    .WORD 0x3B0A2972, 0x20202020, 0x32522020, 0x70203D20, 0x746E696F, 0x74207265, 0x7473206F, 0x74637572
+    .WORD 0x72696420, 0x20746E65, 0x66206F74, 0x0A6C6C69, 0x554F203B, 0x52203A54, 0x203D2031, 0x66692031
+    .WORD 0x746E6520, 0x72207972, 0x2C646165, 0x69203020, 0x6F6E2066, 0x726F6D20, 0x6E652065, 0x65697274
+    .WORD 0x2D202C73, 0x6E6F2031, 0x72726520, 0x3B0A726F, 0x52203B0A, 0x73646165, 0x65687420, 0x78656E20
+    .WORD 0x69642074, 0x74636572, 0x2079726F, 0x72746E65, 0x73752079, 0x20676E69, 0x20656874, 0x6E72656B
+    .WORD 0x73276C65, 0x61657220, 0x72696464, 0x61697620, 0x53595320, 0x4145525F, 0x2D3B0A44, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x65720A2D, 0x69646461, 0x200A3A72, 0x50202020, 0x20485355, 0x200A524C
+    .WORD 0x50202020, 0x20485355, 0x200A3852, 0x50202020, 0x20485355, 0x200A3952, 0x0A202020, 0x20202020
+    .WORD 0x20564F4D, 0x52203852, 0x20202031, 0x20202020, 0x20202020, 0x44203B20, 0x0A2A5249, 0x20202020
+    .WORD 0x20564F4D, 0x52203952, 0x20202032, 0x20202020, 0x20202020, 0x55203B20, 0x27726573, 0x69642073
+    .WORD 0x746E6572, 0x66756220, 0x0A726566, 0x20202020, 0x2020200A, 0x43203B20, 0x6B636568, 0x20666920
+    .WORD 0x20524944, 0x6E696F70, 0x20726574, 0x76207369, 0x64696C61, 0x2020200A, 0x504D4320, 0x20385220
+    .WORD 0x20200A30, 0x45422020, 0x65722051, 0x69646461, 0x72655F72, 0x0A726F72, 0x20202020, 0x2020200A
+    .WORD 0x52203B20, 0x20646165, 0x20656E6F, 0x65726964, 0x6620746E, 0x206D6F72, 0x65726964, 0x726F7463
+    .WORD 0x64662079, 0x69737520, 0x6320676E, 0x65727275, 0x6F20746E, 0x65736666, 0x20200A74, 0x444C2020
+    .WORD 0x31522057, 0x38525B20, 0x44202B20, 0x465F5249, 0x3B205D44, 0x0A646620, 0x20202020, 0x2020200A
+    .WORD 0x55203B20, 0x74206573, 0x64206568, 0x63657269, 0x79726F74, 0x6F207327, 0x65736666, 0x202D2074
+    .WORD 0x6E206577, 0x20646565, 0x69206F74, 0x656C706D, 0x746E656D, 0x65736C20, 0x6F206B65, 0x73752072
+    .WORD 0x20200A65, 0x203B2020, 0x20656874, 0x74636166, 0x61687420, 0x61652074, 0x72206863, 0x20646165
+    .WORD 0x73746567, 0x656E6F20, 0x72696420, 0x20746E65, 0x61207461, 0x6D697420, 0x72662065, 0x74206D6F
+    .WORD 0x73667261, 0x2020200A, 0x564F4D20, 0x20325220, 0x20203952, 0x20202020, 0x20202020, 0x203B2020
+    .WORD 0x72657375, 0x66756220, 0x0A726566, 0x20202020, 0x2020494C, 0x44203352, 0x4E455249, 0x49535F54
+    .WORD 0x464F455A, 0x73203B20, 0x20657A69, 0x6F20666F, 0x6420656E, 0x6E657269, 0x20200A74, 0x56532020
+    .WORD 0x59532043, 0x45525F53, 0x200A4441, 0x43202020, 0x5220504D, 0x0A302031, 0x20202020, 0x20514542
+    .WORD 0x64616572, 0x5F726964, 0x20646E65, 0x20202020, 0x45203B20, 0x200A464F, 0x43202020, 0x5220504D
+    .WORD 0x49442031, 0x544E4552, 0x5A49535F, 0x0A464F45, 0x20202020, 0x20454E42, 0x64616572, 0x5F726964
+    .WORD 0x6F727265, 0x20202072, 0x53203B20, 0x74726F68, 0x61657220, 0x726F2064, 0x72726520, 0x200A726F
+    .WORD 0x0A202020, 0x20202020, 0x6E45203B, 0x20797274, 0x64616572, 0x63757320, 0x73736563, 0x6C6C7566
+    .WORD 0x20200A79, 0x203B2020, 0x61647055, 0x74206574, 0x6F206568, 0x65736666, 0x6E692074, 0x52494420
+    .WORD 0x72747320, 0x75746375, 0x200A6572, 0x4C202020, 0x52205744, 0x525B2032, 0x202B2038, 0x5F524944
+    .WORD 0x5346464F, 0x0A5D5445, 0x20202020, 0x20444441, 0x52203252, 0x0A312032, 0x20202020, 0x20575453
+    .WORD 0x5B203252, 0x2B203852, 0x52494420, 0x46464F5F, 0x5D544553, 0x2020200A, 0x20200A20, 0x494C2020
+    .WORD 0x20315220, 0x20202031, 0x20202020, 0x20202020, 0x3B202020, 0x74655220, 0x206E7275, 0x63637573
+    .WORD 0x0A737365, 0x20202020, 0x65722042, 0x69646461, 0x6F645F72, 0x200A656E, 0x0A202020, 0x64616572
+    .WORD 0x5F726964, 0x6F727265, 0x200A3A72, 0x4C202020, 0x31522049, 0x0A312D20, 0x20202020, 0x65722042
+    .WORD 0x69646461, 0x6F645F72, 0x200A656E, 0x0A202020, 0x64616572, 0x5F726964, 0x3A646E65, 0x2020200A
+    .WORD 0x20494C20, 0x30203152, 0x2020200A, 0x65720A20, 0x69646461, 0x6F645F72, 0x0A3A656E, 0x20202020
+    .WORD 0x20504F50, 0x200A3952, 0x50202020, 0x5220504F, 0x20200A38, 0x4F502020, 0x524C2050, 0x2020200A
+    .WORD 0x54455220, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x736F6C63, 0x72696465
+    .WORD 0x43202D20, 0x65736F6C, 0x72696420, 0x6F746365, 0x73207972, 0x61657274, 0x0A3B0A6D, 0x4E49203B
+    .WORD 0x5220203A, 0x203D2031, 0x2A524944, 0x4F203B0A, 0x203A5455, 0x3D203152, 0x6F203020, 0x7573206E
+    .WORD 0x73656363, 0x2D202C73, 0x6E6F2031, 0x72726520, 0x3B0A726F, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x630A2D2D, 0x65736F6C, 0x3A726964, 0x2020200A, 0x53555020, 0x524C2048, 0x2020200A, 0x53555020
+    .WORD 0x38522048, 0x2020200A, 0x20200A20, 0x4F4D2020, 0x38522056, 0x0A315220, 0x20202020, 0x20504D43
+    .WORD 0x30203852, 0x2020200A, 0x51454220, 0x6F6C6320, 0x69646573, 0x72655F72, 0x0A726F72, 0x20202020
+    .WORD 0x2020200A, 0x43203B20, 0x65736F6C, 0x65687420, 0x72696420, 0x6F746365, 0x66207972, 0x20200A64
+    .WORD 0x444C2020, 0x31522057, 0x38525B20, 0x44202B20, 0x465F5249, 0x200A5D44, 0x53202020, 0x53204356
+    .WORD 0x435F5359, 0x45534F4C, 0x2020200A, 0x20200A20, 0x203B2020, 0x65657246, 0x65687420, 0x52494420
+    .WORD 0x72747320, 0x75746375, 0x200A6572, 0x4D202020, 0x5220564F, 0x38522031, 0x2020200A, 0x4C414320
+    .WORD 0x7266204C, 0x200A6565, 0x0A202020, 0x20202020, 0x5220494C, 0x0A302031, 0x20202020, 0x6C632042
+    .WORD 0x6465736F, 0x645F7269, 0x0A656E6F, 0x20202020, 0x6F6C630A, 0x69646573, 0x72655F72, 0x3A726F72
+    .WORD 0x2020200A, 0x20494C20, 0x2D203152, 0x20200A31, 0x630A2020, 0x65736F6C, 0x5F726964, 0x656E6F64
+    .WORD 0x20200A3A, 0x4F502020, 0x38522050, 0x2020200A, 0x504F5020, 0x0A524C20, 0x20202020, 0x0A544552
+    .WORD 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x72203B0A, 0x6E697765, 0x72696464, 0x52202D20
+    .WORD 0x74657365, 0x72696420, 0x6F746365, 0x73207972, 0x61657274, 0x6F74206D, 0x67656220, 0x696E6E69
+    .WORD 0x3B0A676E, 0x49203B0A, 0x20203A4E, 0x3D203152, 0x52494420, 0x2D3B0A2A, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x65720A2D, 0x646E6977, 0x3A726964, 0x2020200A, 0x504D4320, 0x20315220, 0x20200A30
+    .WORD 0x45422020, 0x65722051, 0x646E6977, 0x5F726964, 0x656E6F64, 0x2020200A, 0x20200A20, 0x494C2020
+    .WORD 0x20325220, 0x20200A30, 0x54532020, 0x32522057, 0x31525B20, 0x44202B20, 0x4F5F5249, 0x45534646
+    .WORD 0x200A5D54, 0x0A202020, 0x20202020, 0x654E203B, 0x74206465, 0x6573206F, 0x74206B65, 0x6562206F
+    .WORD 0x6E6E6967, 0x20676E69, 0x6420666F, 0x63657269, 0x79726F74, 0x2020200A, 0x46203B20, 0x7420726F
+    .WORD 0x73667261, 0x6874202C, 0x6D207369, 0x736E6165, 0x6F6C6320, 0x676E6973, 0x646E6120, 0x6F657220
+    .WORD 0x696E6570, 0x202C676E, 0x7520726F, 0x676E6973, 0x65736C20, 0x200A6B65, 0x3B202020, 0x6D695320
+    .WORD 0x20656C70, 0x72707061, 0x6863616F, 0x6C63203A, 0x2065736F, 0x20646E61, 0x706F6572, 0x200A6E65
+    .WORD 0x50202020, 0x20485355, 0x200A524C, 0x50202020, 0x20485355, 0x200A3852, 0x0A202020, 0x20202020
+    .WORD 0x20564F4D, 0x52203852, 0x20200A31, 0x203B2020, 0x65766153, 0x65687420, 0x74617020, 0x202D2068
+    .WORD 0x64206577, 0x74276E6F, 0x76616820, 0x74692065, 0x6F747320, 0x2C646572, 0x206F7320, 0x73696874
+    .WORD 0x20736920, 0x63697274, 0x200A796B, 0x3B202020, 0x206E4920, 0x65722061, 0x69206C61, 0x656C706D
+    .WORD 0x746E656D, 0x6F697461, 0x73202C6E, 0x65726F74, 0x74617020, 0x6E692068, 0x52494420, 0x72747320
+    .WORD 0x75746375, 0x200A6572, 0x0A202020, 0x20202020, 0x6F46203B, 0x6F6E2072, 0x6A202C77, 0x20747375
+    .WORD 0x65736572, 0x666F2074, 0x74657366, 0x646E6120, 0x6C657220, 0x6E6F2079, 0x61657220, 0x72696464
+    .WORD 0x62207327, 0x76616865, 0x0A726F69, 0x20202020, 0x2020200A, 0x504F5020, 0x0A385220, 0x20202020
+    .WORD 0x20504F50, 0x200A524C, 0x0A202020, 0x69776572, 0x6964646E, 0x6F645F72, 0x0A3A656E, 0x20202020
     .WORD 0x0A544552, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x72203B0A, 0x64646165, 0x2D207269
-    .WORD 0x61655220, 0x656E2064, 0x64207478, 0x63657269, 0x79726F74, 0x746E6520, 0x3B0A7972, 0x49203B0A
-    .WORD 0x20203A4E, 0x3D203152, 0x52494420, 0x6628202A, 0x206D6F72, 0x6E65706F, 0x29726964, 0x20203B0A
-    .WORD 0x20202020, 0x3D203252, 0x696F7020, 0x7265746E, 0x206F7420, 0x75727473, 0x64207463, 0x6E657269
-    .WORD 0x6F742074, 0x6C696620, 0x203B0A6C, 0x3A54554F, 0x20315220, 0x2031203D, 0x65206669, 0x7972746E
-    .WORD 0x61657220, 0x30202C64, 0x20666920, 0x6D206F6E, 0x2065726F, 0x72746E65, 0x2C736569, 0x20312D20
-    .WORD 0x65206E6F, 0x726F7272, 0x3B0A3B0A, 0x61655220, 0x74207364, 0x6E206568, 0x20747865, 0x65726964
-    .WORD 0x726F7463, 0x6E652079, 0x20797274, 0x6E697375, 0x68742067, 0x656B2065, 0x6C656E72, 0x72207327
-    .WORD 0x64646165, 0x76207269, 0x53206169, 0x525F5359, 0x0A444145, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x64203B0A, 0x64667269, 0x47202D20
+    .WORD 0x66207465, 0x20656C69, 0x63736564, 0x74706972, 0x6620726F, 0x206D6F72, 0x2A524944, 0x3B0A3B0A
+    .WORD 0x3A4E4920, 0x31522020, 0x44203D20, 0x0A2A5249, 0x554F203B, 0x52203A54, 0x203D2031, 0x656C6966
+    .WORD 0x73656420, 0x70697263, 0x2C726F74, 0x20726F20, 0x6F20312D, 0x7265206E, 0x0A726F72, 0x2D2D2D3B
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x0A2D2D2D, 0x64616572, 0x3A726964, 0x2020200A, 0x53555020, 0x524C2048, 0x2020200A, 0x53555020
-    .WORD 0x38522048, 0x2020200A, 0x53555020, 0x39522048, 0x2020200A, 0x20200A20, 0x4F4D2020, 0x38522056
-    .WORD 0x20315220, 0x20202020, 0x20202020, 0x3B202020, 0x52494420, 0x20200A2A, 0x4F4D2020, 0x39522056
-    .WORD 0x20325220, 0x20202020, 0x20202020, 0x3B202020, 0x65735520, 0x20732772, 0x65726964, 0x6220746E
-    .WORD 0x65666675, 0x20200A72, 0x200A2020, 0x3B202020, 0x65684320, 0x69206B63, 0x49442066, 0x6F702052
-    .WORD 0x65746E69, 0x73692072, 0x6C617620, 0x200A6469, 0x43202020, 0x5220504D, 0x0A302038, 0x20202020
-    .WORD 0x20514542, 0x64616572, 0x5F726964, 0x6F727265, 0x20200A72, 0x200A2020, 0x3B202020, 0x61655220
-    .WORD 0x6E6F2064, 0x69642065, 0x746E6572, 0x6F726620, 0x6964206D, 0x74636572, 0x2079726F, 0x75206466
-    .WORD 0x676E6973, 0x72756320, 0x746E6572, 0x66666F20, 0x0A746573, 0x20202020, 0x2057444C, 0x5B203152
-    .WORD 0x2B203852, 0x52494420, 0x5D44465F, 0x66203B20, 0x20200A64, 0x200A2020, 0x3B202020, 0x65735520
-    .WORD 0x65687420, 0x72696420, 0x6F746365, 0x73277972, 0x66666F20, 0x20746573, 0x6577202D, 0x65656E20
-    .WORD 0x6F742064, 0x706D6920, 0x656D656C, 0x6C20746E, 0x6B656573, 0x20726F20, 0x0A657375, 0x20202020
-    .WORD 0x6874203B, 0x61662065, 0x74207463, 0x20746168, 0x68636165, 0x61657220, 0x65672064, 0x6F207374
-    .WORD 0x6420656E, 0x6E657269, 0x74612074, 0x74206120, 0x20656D69, 0x6D6F7266, 0x72617420, 0x200A7366
-    .WORD 0x4D202020, 0x5220564F, 0x39522032, 0x20202020, 0x20202020, 0x20202020, 0x7375203B, 0x62207265
-    .WORD 0x65666675, 0x20200A72, 0x494C2020, 0x33522020, 0x52494420, 0x5F544E45, 0x455A4953, 0x3B20464F
-    .WORD 0x7A697320, 0x666F2065, 0x656E6F20, 0x72696420, 0x0A746E65, 0x20202020, 0x20435653, 0x5F535953
-    .WORD 0x44414552, 0x2020200A, 0x504D4320, 0x20315220, 0x20200A30, 0x45422020, 0x65722051, 0x69646461
-    .WORD 0x6E655F72, 0x20202064, 0x3B202020, 0x464F4520, 0x2020200A, 0x504D4320, 0x20315220, 0x45524944
-    .WORD 0x535F544E, 0x4F455A49, 0x20200A46, 0x4E422020, 0x65722045, 0x69646461, 0x72655F72, 0x20726F72
-    .WORD 0x3B202020, 0x6F685320, 0x72207472, 0x20646165, 0x6520726F, 0x726F7272, 0x2020200A, 0x20200A20
-    .WORD 0x203B2020, 0x72746E45, 0x65722079, 0x73206461, 0x65636375, 0x75667373, 0x0A796C6C, 0x20202020
-    .WORD 0x7055203B, 0x65746164, 0x65687420, 0x66666F20, 0x20746573, 0x44206E69, 0x73205249, 0x63757274
-    .WORD 0x65727574, 0x2020200A, 0x57444C20, 0x20325220, 0x2038525B, 0x4944202B, 0x464F5F52, 0x54455346
-    .WORD 0x20200A5D, 0x44412020, 0x32522044, 0x20325220, 0x20200A31, 0x54532020, 0x32522057, 0x38525B20
-    .WORD 0x44202B20, 0x4F5F5249, 0x45534646, 0x200A5D54, 0x0A202020, 0x20202020, 0x5220494C, 0x20312031
-    .WORD 0x20202020, 0x20202020, 0x20202020, 0x52203B20, 0x72757465, 0x7573206E, 0x73656363, 0x20200A73
-    .WORD 0x20422020, 0x64616572, 0x5F726964, 0x656E6F64, 0x2020200A, 0x65720A20, 0x69646461, 0x72655F72
-    .WORD 0x3A726F72, 0x2020200A, 0x20494C20, 0x2D203152, 0x20200A31, 0x20422020, 0x64616572, 0x5F726964
-    .WORD 0x656E6F64, 0x2020200A, 0x65720A20, 0x69646461, 0x6E655F72, 0x200A3A64, 0x4C202020, 0x31522049
-    .WORD 0x200A3020, 0x0A202020, 0x64616572, 0x5F726964, 0x656E6F64, 0x20200A3A, 0x4F502020, 0x39522050
-    .WORD 0x2020200A, 0x504F5020, 0x0A385220, 0x20202020, 0x20504F50, 0x200A524C, 0x52202020, 0x0A0A5445
-    .WORD 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x66726964, 0x200A3A64, 0x43202020, 0x5220504D, 0x0A302031
+    .WORD 0x20202020, 0x20514542, 0x66726964, 0x72655F64, 0x0A726F72, 0x20202020, 0x2020200A, 0x57444C20
+    .WORD 0x20315220, 0x2031525B, 0x4944202B, 0x44465F52, 0x20200A5D, 0x45522020, 0x20200A54, 0x640A2020
+    .WORD 0x64667269, 0x7272655F, 0x0A3A726F, 0x20202020, 0x5220494C, 0x312D2031, 0x2020200A, 0x54455220
+    .WORD 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x6C63203B, 0x6465736F, 0x2D207269, 0x6F6C4320
-    .WORD 0x64206573, 0x63657269, 0x79726F74, 0x72747320, 0x0A6D6165, 0x203B0A3B, 0x203A4E49, 0x20315220
-    .WORD 0x4944203D, 0x3B0A2A52, 0x54554F20, 0x3152203A, 0x30203D20, 0x206E6F20, 0x63637573, 0x2C737365
-    .WORD 0x20312D20, 0x65206E6F, 0x726F7272, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x203B0A2D, 0x706C6548, 0x203A7265, 0x645F7369
+    .WORD 0x2D207269, 0x65684320, 0x69206B63, 0x20612066, 0x68746170, 0x20736920, 0x69642061, 0x74636572
+    .WORD 0x0A79726F, 0x203B0A3B, 0x203A4E49, 0x20315220, 0x6170203D, 0x3B0A6874, 0x54554F20, 0x3152203A
+    .WORD 0x31203D20, 0x20666920, 0x65726964, 0x726F7463, 0x30202C79, 0x20666920, 0x2C746F6E, 0x20312D20
+    .WORD 0x65206E6F, 0x726F7272, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x6F6C630A
-    .WORD 0x69646573, 0x200A3A72, 0x50202020, 0x20485355, 0x200A524C, 0x50202020, 0x20485355, 0x200A3852
-    .WORD 0x0A202020, 0x20202020, 0x20564F4D, 0x52203852, 0x20200A31, 0x4D432020, 0x38522050, 0x200A3020
-    .WORD 0x42202020, 0x63205145, 0x65736F6C, 0x5F726964, 0x6F727265, 0x20200A72, 0x200A2020, 0x3B202020
-    .WORD 0x6F6C4320, 0x74206573, 0x64206568, 0x63657269, 0x79726F74, 0x0A646620, 0x20202020, 0x2057444C
-    .WORD 0x5B203152, 0x2B203852, 0x52494420, 0x5D44465F, 0x2020200A, 0x43565320, 0x53595320, 0x4F4C435F
-    .WORD 0x200A4553, 0x0A202020, 0x20202020, 0x7246203B, 0x74206565, 0x44206568, 0x73205249, 0x63757274
-    .WORD 0x65727574, 0x2020200A, 0x564F4D20, 0x20315220, 0x200A3852, 0x43202020, 0x204C4C41, 0x65657266
-    .WORD 0x2020200A, 0x20200A20, 0x494C2020, 0x20315220, 0x20200A30, 0x20422020, 0x736F6C63, 0x72696465
-    .WORD 0x6E6F645F, 0x20200A65, 0x630A2020, 0x65736F6C, 0x5F726964, 0x6F727265, 0x200A3A72, 0x4C202020
-    .WORD 0x31522049, 0x0A312D20, 0x20202020, 0x6F6C630A, 0x69646573, 0x6F645F72, 0x0A3A656E, 0x20202020
-    .WORD 0x20504F50, 0x200A3852, 0x50202020, 0x4C20504F, 0x20200A52, 0x45522020, 0x3B0A0A54, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x5F73690A, 0x3A726964
+    .WORD 0x2020200A, 0x53555020, 0x524C2048, 0x2020200A, 0x20200A20, 0x203B2020, 0x20797254, 0x6F206F74
+    .WORD 0x206E6570, 0x64207361, 0x63657269, 0x79726F74, 0x2020200A, 0x4C414320, 0x706F204C, 0x69646E65
+    .WORD 0x20200A72, 0x4D432020, 0x31522050, 0x200A3020, 0x42202020, 0x69205145, 0x69645F73, 0x6F6E5F72
+    .WORD 0x69645F74, 0x20200A72, 0x200A2020, 0x3B202020, 0x20744920, 0x6E65706F, 0x61206465, 0x20612073
+    .WORD 0x65726964, 0x726F7463, 0x20200A79, 0x4F4D2020, 0x32522056, 0x20315220, 0x20202020, 0x20202020
+    .WORD 0x3B202020, 0x76615320, 0x49442065, 0x200A2A52, 0x4C202020, 0x31522049, 0x20203120, 0x20202020
+    .WORD 0x20202020, 0x20202020, 0x6552203B, 0x6E727574, 0x75727420, 0x20200A65, 0x41432020, 0x63204C4C
+    .WORD 0x65736F6C, 0x20726964, 0x20202020, 0x3B202020, 0x6F6C4320, 0x69206573, 0x20200A74, 0x20422020
+    .WORD 0x645F7369, 0x645F7269, 0x0A656E6F, 0x20202020, 0x5F73690A, 0x5F726964, 0x5F746F6E, 0x3A726964
+    .WORD 0x2020200A, 0x20494C20, 0x30203152, 0x2020200A, 0x73690A20, 0x7269645F, 0x6E6F645F, 0x200A3A65
+    .WORD 0x50202020, 0x4C20504F, 0x20200A52, 0x45522020, 0x3B0A0A54, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D, 0x77657220, 0x64646E69, 0x2D207269, 0x73655220, 0x64207465
-    .WORD 0x63657269, 0x79726F74, 0x72747320, 0x206D6165, 0x62206F74, 0x6E696765, 0x676E696E, 0x3B0A3B0A
-    .WORD 0x3A4E4920, 0x31522020, 0x44203D20, 0x0A2A5249, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x3B0A2D2D, 0x61784520, 0x656C706D, 0x61737520, 0x66206567, 0x74636E75, 0x206E6F69, 0x696C202D
+    .WORD 0x64207473, 0x63657269, 0x79726F74, 0x6E6F6320, 0x746E6574, 0x6C282073, 0x20656B69, 0x0A29736C
+    .WORD 0x6854203B, 0x64207369, 0x6E6F6D65, 0x61727473, 0x20736574, 0x20776F68, 0x75206F74, 0x6F206573
+    .WORD 0x646E6570, 0x722F7269, 0x64646165, 0x632F7269, 0x65736F6C, 0x0A726964, 0x2D2D2D3B, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x0A2D2D2D, 0x7473696C, 0x7269645F, 0x6F746365, 0x0A3A7972, 0x20202020, 0x48535550
+    .WORD 0x0A524C20, 0x20202020, 0x48535550, 0x0A385220, 0x20202020, 0x48535550, 0x0A395220, 0x20202020
+    .WORD 0x2020200A, 0x564F4D20, 0x20385220, 0x20203152, 0x20202020, 0x20202020, 0x203B2020, 0x68746170
+    .WORD 0x2020200A, 0x20200A20, 0x203B2020, 0x6F6C6C41, 0x65746163, 0x72696420, 0x20746E65, 0x73206E6F
+    .WORD 0x6B636174, 0x2020200A, 0x42555320, 0x20505320, 0x44205053, 0x4E455249, 0x49535F54, 0x464F455A
+    .WORD 0x2020200A, 0x564F4D20, 0x20395220, 0x200A5053, 0x0A202020, 0x20202020, 0x704F203B, 0x64206E65
+    .WORD 0x63657269, 0x79726F74, 0x2020200A, 0x564F4D20, 0x20315220, 0x200A3852, 0x43202020, 0x204C4C41
+    .WORD 0x6E65706F, 0x0A726964, 0x20202020, 0x20504D43, 0x30203152, 0x2020200A, 0x51454220, 0x73696C20
+    .WORD 0x69645F74, 0x72655F72, 0x0A726F72, 0x20202020, 0x2020200A, 0x564F4D20, 0x20385220, 0x20203152
+    .WORD 0x20202020, 0x20202020, 0x203B2020, 0x2A524944, 0x2020200A, 0x696C0A20, 0x645F7473, 0x6C5F7269
+    .WORD 0x3A706F6F, 0x2020200A, 0x564F4D20, 0x20315220, 0x200A3852, 0x4D202020, 0x5220564F, 0x39522032
+    .WORD 0x2020200A, 0x4C414320, 0x6572204C, 0x69646461, 0x20200A72, 0x4D432020, 0x31522050, 0x200A3020
+    .WORD 0x42202020, 0x6C205145, 0x5F747369, 0x5F726964, 0x736F6C63, 0x20200A65, 0x494C2020, 0x32522020
+    .WORD 0x0A312D20, 0x20202020, 0x20504D43, 0x52203152, 0x20200A32, 0x45422020, 0x696C2051, 0x645F7473
+    .WORD 0x655F7269, 0x726F7272, 0x2020200A, 0x20200A20, 0x203B2020, 0x6E697250, 0x68742074, 0x616E2065
+    .WORD 0x200A656D, 0x41202020, 0x52204444, 0x39522031, 0x52494420, 0x5F544E45, 0x454D414E, 0x2020200A
+    .WORD 0x4C414320, 0x7570204C, 0x200A7374, 0x0A202020, 0x20202020, 0x6649203B, 0x27746920, 0x20612073
+    .WORD 0x65726964, 0x726F7463, 0x70202C79, 0x746E6972, 0x272F2720, 0x2020200A, 0x57444C20, 0x20325220
+    .WORD 0x2039525B, 0x4944202B, 0x544E4552, 0x5059545F, 0x200A5D45, 0x43202020, 0x5220504D, 0x54442032
+    .WORD 0x5249445F, 0x2020200A, 0x454E4220, 0x73696C20, 0x69645F74, 0x6F6E5F72, 0x69645F74, 0x20200A72
+    .WORD 0x200A2020, 0x4C202020, 0x31522049, 0x616C7320, 0x635F6873, 0x0A726168, 0x20202020, 0x4C4C4143
+    .WORD 0x74757020, 0x72616863, 0x2020200A, 0x696C0A20, 0x645F7473, 0x6E5F7269, 0x645F746F, 0x0A3A7269
+    .WORD 0x20202020, 0x5220494C, 0x656E2031, 0x6E696C77, 0x68635F65, 0x200A7261, 0x43202020, 0x204C4C41
+    .WORD 0x63747570, 0x0A726168, 0x20202020, 0x2020200A, 0x6C204220, 0x5F747369, 0x5F726964, 0x706F6F6C
+    .WORD 0x2020200A, 0x696C0A20, 0x645F7473, 0x635F7269, 0x65736F6C, 0x20200A3A, 0x4F4D2020, 0x31522056
+    .WORD 0x0A385220, 0x20202020, 0x4C4C4143, 0x6F6C6320, 0x69646573, 0x20200A72, 0x494C2020, 0x20315220
+    .WORD 0x20200A30, 0x20422020, 0x7473696C, 0x7269645F, 0x6E6F645F, 0x20200A65, 0x6C0A2020, 0x5F747369
+    .WORD 0x5F726964, 0x6F727265, 0x200A3A72, 0x4C202020, 0x31522049, 0x0A312D20, 0x20202020, 0x73696C0A
+    .WORD 0x69645F74, 0x6F645F72, 0x0A3A656E, 0x20202020, 0x20444441, 0x53205053, 0x49442050, 0x544E4552
+    .WORD 0x5A49535F, 0x0A464F45, 0x20202020, 0x20504F50, 0x200A3952, 0x50202020, 0x5220504F, 0x20200A38
+    .WORD 0x4F502020, 0x524C2050, 0x2020200A, 0x54455220, 0x2D3B0A0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x203B0A2D, 0x61746144, 0x63655320, 0x6E6F6974, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x616C730A, 0x635F6873, 0x3A726168, 0x2020200A, 0x4F572E20, 0x34204452, 0x20202037, 0x3B202020
+    .WORD 0x0A272F27, 0x6C77656E, 0x5F656E69, 0x72616863, 0x20200A3A, 0x572E2020, 0x2044524F, 0x0A0A3031
+    .WORD 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
+    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x70203B0A, 0x746E6972, 0x20292866, 0x6F6E202D
+    .WORD 0x28206574, 0x6F686365, 0x6163202C, 0x73202C74, 0x70202C68, 0x6F642073, 0x6E20746E, 0x20646565
+    .WORD 0x79207469, 0x63207465, 0x62206E61, 0x616D2065, 0x77206564, 0x20687469, 0x63747570, 0x29726168
+    .WORD 0x3B0A3B0A, 0x6E695420, 0x6D692079, 0x6D656C70, 0x61746E65, 0x6E6F6974, 0x6C6E6F20, 0x3B0A2E79
+    .WORD 0x53203B0A, 0x6F707075, 0x64657472, 0x0A3B0A3A, 0x2020203B, 0x20202525, 0x20202020, 0x63726570
+    .WORD 0x0A746E65, 0x2020203B, 0x3B0A7325, 0x25202020, 0x203B0A64, 0x78252020, 0x20203B0A, 0x0A632520
+    .WORD 0x203B0A3B, 0x77206F4E, 0x68746469, 0x203B0A2E, 0x70206F4E, 0x69636572, 0x6E6F6973, 0x203B0A2E
+    .WORD 0x66206F4E, 0x74616F6C, 0x20676E69, 0x6E696F70, 0x3B0A2E74, 0x4C203B0A, 0x72657461, 0x6C707320
+    .WORD 0x69207469, 0x3A6F746E, 0x3B0A3B0A, 0x69727020, 0x2866746E, 0x203B0A29, 0x69727076, 0x2866746E
+    .WORD 0x203B0A29, 0x706E7376, 0x746E6972, 0x0A292866, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
     .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D
-    .WORD 0x69776572, 0x6964646E, 0x200A3A72, 0x43202020, 0x5220504D, 0x0A302031, 0x20202020, 0x20514542
-    .WORD 0x69776572, 0x6964646E, 0x6F645F72, 0x200A656E, 0x0A202020, 0x20202020, 0x5220494C, 0x0A302032
-    .WORD 0x20202020, 0x20575453, 0x5B203252, 0x2B203152, 0x52494420, 0x46464F5F, 0x5D544553, 0x2020200A
-    .WORD 0x20200A20, 0x203B2020, 0x6465654E, 0x206F7420, 0x6B656573, 0x206F7420, 0x69676562, 0x6E696E6E
-    .WORD 0x666F2067, 0x72696420, 0x6F746365, 0x200A7972, 0x3B202020, 0x726F4620, 0x72617420, 0x202C7366
-    .WORD 0x73696874, 0x61656D20, 0x6320736E, 0x69736F6C, 0x6120676E, 0x7220646E, 0x65706F65, 0x676E696E
-    .WORD 0x726F202C, 0x69737520, 0x6C20676E, 0x6B656573, 0x2020200A, 0x53203B20, 0x6C706D69, 0x70612065
-    .WORD 0x616F7270, 0x203A6863, 0x736F6C63, 0x6E612065, 0x65722064, 0x6E65706F, 0x2020200A, 0x53555020
-    .WORD 0x524C2048, 0x2020200A, 0x53555020, 0x38522048, 0x2020200A, 0x20200A20, 0x4F4D2020, 0x38522056
-    .WORD 0x0A315220, 0x20202020, 0x6153203B, 0x74206576, 0x70206568, 0x20687461, 0x6577202D, 0x6E6F6420
-    .WORD 0x68207427, 0x20657661, 0x73207469, 0x65726F74, 0x73202C64, 0x6874206F, 0x69207369, 0x72742073
-    .WORD 0x796B6369, 0x2020200A, 0x49203B20, 0x2061206E, 0x6C616572, 0x706D6920, 0x656D656C, 0x7461746E
-    .WORD 0x2C6E6F69, 0x6F747320, 0x70206572, 0x20687461, 0x44206E69, 0x73205249, 0x63757274, 0x65727574
-    .WORD 0x2020200A, 0x20200A20, 0x203B2020, 0x20726F46, 0x2C776F6E, 0x73756A20, 0x65722074, 0x20746573
-    .WORD 0x7366666F, 0x61207465, 0x7220646E, 0x20796C65, 0x72206E6F, 0x64646165, 0x73277269, 0x68656220
-    .WORD 0x6F697661, 0x20200A72, 0x200A2020, 0x50202020, 0x5220504F, 0x20200A38, 0x4F502020, 0x524C2050
-    .WORD 0x2020200A, 0x65720A20, 0x646E6977, 0x5F726964, 0x656E6F64, 0x20200A3A, 0x45522020, 0x3B0A0A54
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D, 0x72696420, 0x2D206466, 0x74654720, 0x6C696620
-    .WORD 0x65642065, 0x69726373, 0x726F7470, 0x6F726620, 0x4944206D, 0x3B0A2A52, 0x49203B0A, 0x20203A4E
-    .WORD 0x3D203152, 0x52494420, 0x203B0A2A, 0x3A54554F, 0x20315220, 0x6966203D, 0x6420656C, 0x72637365
-    .WORD 0x6F747069, 0x6F202C72, 0x312D2072, 0x206E6F20, 0x6F727265, 0x2D3B0A72, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x69640A2D, 0x3A646672, 0x2020200A, 0x504D4320, 0x20315220, 0x20200A30, 0x45422020
-    .WORD 0x69642051, 0x5F646672, 0x6F727265, 0x20200A72, 0x200A2020, 0x4C202020, 0x52205744, 0x525B2031
-    .WORD 0x202B2031, 0x5F524944, 0x0A5D4446, 0x20202020, 0x0A544552, 0x20202020, 0x7269640A, 0x655F6466
-    .WORD 0x726F7272, 0x20200A3A, 0x494C2020, 0x20315220, 0x200A312D, 0x52202020, 0x0A0A5445, 0x2D2D2D3B
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x6548203B, 0x7265706C, 0x7369203A, 0x7269645F, 0x43202D20
-    .WORD 0x6B636568, 0x20666920, 0x61702061, 0x69206874, 0x20612073, 0x65726964, 0x726F7463, 0x0A3B0A79
-    .WORD 0x4E49203B, 0x5220203A, 0x203D2031, 0x68746170, 0x4F203B0A, 0x203A5455, 0x3D203152, 0x69203120
-    .WORD 0x69642066, 0x74636572, 0x2C79726F, 0x69203020, 0x6F6E2066, 0x2D202C74, 0x6E6F2031, 0x72726520
-    .WORD 0x3B0A726F, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x690A2D2D, 0x69645F73, 0x200A3A72, 0x50202020
-    .WORD 0x20485355, 0x200A524C, 0x0A202020, 0x20202020, 0x7254203B, 0x6F742079, 0x65706F20, 0x7361206E
-    .WORD 0x72696420, 0x6F746365, 0x200A7972, 0x43202020, 0x204C4C41, 0x6E65706F, 0x0A726964, 0x20202020
-    .WORD 0x20504D43, 0x30203152, 0x2020200A, 0x51454220, 0x5F736920, 0x5F726964, 0x5F746F6E, 0x0A726964
-    .WORD 0x20202020, 0x2020200A, 0x49203B20, 0x706F2074, 0x64656E65, 0x20736120, 0x69642061, 0x74636572
-    .WORD 0x0A79726F, 0x20202020, 0x20564F4D, 0x52203252, 0x20202031, 0x20202020, 0x20202020, 0x53203B20
-    .WORD 0x20657661, 0x2A524944, 0x2020200A, 0x20494C20, 0x31203152, 0x20202020, 0x20202020, 0x20202020
-    .WORD 0x203B2020, 0x75746552, 0x74206E72, 0x0A657572, 0x20202020, 0x4C4C4143, 0x6F6C6320, 0x69646573
-    .WORD 0x20202072, 0x20202020, 0x43203B20, 0x65736F6C, 0x0A746920, 0x20202020, 0x73692042, 0x7269645F
-    .WORD 0x6E6F645F, 0x20200A65, 0x690A2020, 0x69645F73, 0x6F6E5F72, 0x69645F74, 0x200A3A72, 0x4C202020
-    .WORD 0x31522049, 0x200A3020, 0x0A202020, 0x645F7369, 0x645F7269, 0x3A656E6F, 0x2020200A, 0x504F5020
-    .WORD 0x0A524C20, 0x20202020, 0x0A544552, 0x2D2D3B0A, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x45203B0A
-    .WORD 0x706D6178, 0x7520656C, 0x65676173, 0x6E756620, 0x6F697463, 0x202D206E, 0x7473696C, 0x72696420
-    .WORD 0x6F746365, 0x63207972, 0x65746E6F, 0x2073746E, 0x6B696C28, 0x736C2065, 0x203B0A29, 0x73696854
-    .WORD 0x6D656420, 0x74736E6F, 0x65746172, 0x6F682073, 0x6F742077, 0x65737520, 0x65706F20, 0x7269646E
-    .WORD 0x6165722F, 0x72696464, 0x6F6C632F, 0x69646573, 0x2D3B0A72, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x696C0A2D, 0x645F7473, 0x63657269, 0x79726F74, 0x20200A3A, 0x55502020, 0x4C204853, 0x20200A52
-    .WORD 0x55502020, 0x52204853, 0x20200A38, 0x55502020, 0x52204853, 0x20200A39, 0x200A2020, 0x4D202020
-    .WORD 0x5220564F, 0x31522038, 0x20202020, 0x20202020, 0x20202020, 0x6170203B, 0x200A6874, 0x0A202020
-    .WORD 0x20202020, 0x6C41203B, 0x61636F6C, 0x64206574, 0x6E657269, 0x6E6F2074, 0x61747320, 0x200A6B63
-    .WORD 0x53202020, 0x53204255, 0x50532050, 0x52494420, 0x5F544E45, 0x455A4953, 0x200A464F, 0x4D202020
-    .WORD 0x5220564F, 0x50532039, 0x2020200A, 0x20200A20, 0x203B2020, 0x6E65704F, 0x72696420, 0x6F746365
-    .WORD 0x200A7972, 0x4D202020, 0x5220564F, 0x38522031, 0x2020200A, 0x4C414320, 0x706F204C, 0x69646E65
-    .WORD 0x20200A72, 0x4D432020, 0x31522050, 0x200A3020, 0x42202020, 0x6C205145, 0x5F747369, 0x5F726964
-    .WORD 0x6F727265, 0x20200A72, 0x200A2020, 0x4D202020, 0x5220564F, 0x31522038, 0x20202020, 0x20202020
-    .WORD 0x20202020, 0x4944203B, 0x200A2A52, 0x0A202020, 0x7473696C, 0x7269645F, 0x6F6F6C5F, 0x200A3A70
-    .WORD 0x4D202020, 0x5220564F, 0x38522031, 0x2020200A, 0x564F4D20, 0x20325220, 0x200A3952, 0x43202020
-    .WORD 0x204C4C41, 0x64616572, 0x0A726964, 0x20202020, 0x20504D43, 0x30203152, 0x2020200A, 0x51454220
-    .WORD 0x73696C20, 0x69645F74, 0x6C635F72, 0x0A65736F, 0x20202020, 0x2020494C, 0x2D203252, 0x20200A31
-    .WORD 0x4D432020, 0x31522050, 0x0A325220, 0x20202020, 0x20514542, 0x7473696C, 0x7269645F, 0x7272655F
-    .WORD 0x200A726F, 0x0A202020, 0x20202020, 0x7250203B, 0x20746E69, 0x20656874, 0x656D616E, 0x2020200A
-    .WORD 0x44444120, 0x20315220, 0x44203952, 0x4E455249, 0x414E5F54, 0x200A454D, 0x43202020, 0x204C4C41
-    .WORD 0x73747570, 0x2020200A, 0x20200A20, 0x203B2020, 0x69206649, 0x20732774, 0x69642061, 0x74636572
-    .WORD 0x2C79726F, 0x69727020, 0x2720746E, 0x200A272F, 0x4C202020, 0x52205744, 0x525B2032, 0x202B2039
-    .WORD 0x45524944, 0x545F544E, 0x5D455059, 0x2020200A, 0x504D4320, 0x20325220, 0x445F5444, 0x200A5249
-    .WORD 0x42202020, 0x6C20454E, 0x5F747369, 0x5F726964, 0x5F746F6E, 0x0A726964, 0x20202020, 0x2020200A
-    .WORD 0x20494C20, 0x73203152, 0x6873616C, 0x6168635F, 0x20200A72, 0x41432020, 0x70204C4C, 0x68637475
-    .WORD 0x200A7261, 0x0A202020, 0x7473696C, 0x7269645F, 0x746F6E5F, 0x7269645F, 0x20200A3A, 0x494C2020
-    .WORD 0x20315220, 0x6C77656E, 0x5F656E69, 0x72616863, 0x2020200A, 0x4C414320, 0x7570204C, 0x61686374
-    .WORD 0x20200A72, 0x200A2020, 0x42202020, 0x73696C20, 0x69645F74, 0x6F6C5F72, 0x200A706F, 0x0A202020
-    .WORD 0x7473696C, 0x7269645F, 0x6F6C635F, 0x0A3A6573, 0x20202020, 0x20564F4D, 0x52203152, 0x20200A38
-    .WORD 0x41432020, 0x63204C4C, 0x65736F6C, 0x0A726964, 0x20202020, 0x5220494C, 0x0A302031, 0x20202020
-    .WORD 0x696C2042, 0x645F7473, 0x645F7269, 0x0A656E6F, 0x20202020, 0x73696C0A, 0x69645F74, 0x72655F72
-    .WORD 0x3A726F72, 0x2020200A, 0x20494C20, 0x2D203152, 0x20200A31, 0x6C0A2020, 0x5F747369, 0x5F726964
-    .WORD 0x656E6F64, 0x20200A3A, 0x44412020, 0x50532044, 0x20505320, 0x45524944, 0x535F544E, 0x4F455A49
-    .WORD 0x20200A46, 0x4F502020, 0x39522050, 0x2020200A, 0x504F5020, 0x0A385220, 0x20202020, 0x20504F50
-    .WORD 0x200A524C, 0x52202020, 0x0A0A5445, 0x2D2D2D3B, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x0A2D2D2D, 0x6144203B
-    .WORD 0x53206174, 0x69746365, 0x3B0A6E6F, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x730A2D2D, 0x6873616C
-    .WORD 0x6168635F, 0x200A3A72, 0x2E202020, 0x44524F57, 0x20373420, 0x20202020, 0x2F273B20, 0x656E0A27
-    .WORD 0x6E696C77, 0x68635F65, 0x0A3A7261, 0x20202020, 0x524F572E, 0x30312044, 0x3B0A0A0A, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x3B0A2D2D, 0x69727020, 0x2866746E, 0x202D2029, 0x65746F6E, 0x63652820
-    .WORD 0x202C6F68, 0x2C746163, 0x2C687320, 0x20737020, 0x746E6F64, 0x65656E20, 0x74692064, 0x74657920
-    .WORD 0x6E616320, 0x20656220, 0x6564616D, 0x74697720, 0x75702068, 0x61686374, 0x3B0A2972, 0x54203B0A
-    .WORD 0x20796E69, 0x6C706D69, 0x6E656D65, 0x69746174, 0x6F206E6F, 0x2E796C6E, 0x3B0A3B0A, 0x70755320
-    .WORD 0x74726F70, 0x0A3A6465, 0x203B0A3B, 0x25252020, 0x20202020, 0x65702020, 0x6E656372, 0x203B0A74
-    .WORD 0x73252020, 0x20203B0A, 0x0A642520, 0x2020203B, 0x3B0A7825, 0x25202020, 0x0A3B0A63, 0x6F4E203B
-    .WORD 0x64697720, 0x0A2E6874, 0x6F4E203B, 0x65727020, 0x69736963, 0x0A2E6E6F, 0x6F4E203B, 0x6F6C6620
-    .WORD 0x6E697461, 0x6F702067, 0x2E746E69, 0x3B0A3B0A, 0x74614C20, 0x73207265, 0x74696C70, 0x746E6920
-    .WORD 0x3B0A3A6F, 0x70203B0A, 0x746E6972, 0x0A292866, 0x7076203B, 0x746E6972, 0x0A292866, 0x7376203B
-    .WORD 0x6972706E, 0x2866746E, 0x2D3B0A29, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D
-    .WORD 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x2D2D2D2D, 0x72700A2D, 0x66746E69
-    .WORD 0x200A0A3A, 0x3B202020, 0x444F5420, 0x20200A4F, 0x0A3B2020, 0x20202020, 0x6373203B, 0x66206E61
-    .WORD 0x616D726F, 0x74732074, 0x676E6972, 0x2020200A, 0x63203B20, 0x2079706F, 0x6D726F6E, 0x63206C61
-    .WORD 0x73726168, 0x2020200A, 0x64203B20, 0x646F6365, 0x0A252065, 0x20202020, 0x6964203B, 0x74617073
-    .WORD 0x66206863, 0x616D726F, 0x72657474, 0x2020200A, 0x200A3B20, 0x3B202020, 0x0A732520, 0x20202020
-    .WORD 0x6425203B, 0x2020200A, 0x25203B20, 0x20200A78, 0x203B2020, 0x0A0A6325, 0x20202020, 0x0A544552
-    .WORD 0x3B0A0A0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x6E697270, 0x0A3A6674, 0x2020200A, 0x54203B20, 0x0A4F444F, 0x20202020, 0x20200A3B, 0x203B2020
+    .WORD 0x6E616373, 0x726F6620, 0x2074616D, 0x69727473, 0x200A676E, 0x3B202020, 0x706F6320, 0x6F6E2079
+    .WORD 0x6C616D72, 0x61686320, 0x200A7372, 0x3B202020, 0x63656420, 0x2065646F, 0x20200A25, 0x203B2020
+    .WORD 0x70736964, 0x68637461, 0x726F6620, 0x7474616D, 0x200A7265, 0x3B202020, 0x2020200A, 0x25203B20
+    .WORD 0x20200A73, 0x203B2020, 0x200A6425, 0x3B202020, 0x0A782520, 0x20202020, 0x6325203B, 0x20200A0A
+    .WORD 0x45522020, 0x0A0A0A54, 0x3D3D3B0A, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3B0A3D3D, 0x74614420, 0x65532061, 0x6F697463
-    .WORD 0x3D3B0A6E, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x44203B0A, 0x20617461
+    .WORD 0x74636553, 0x0A6E6F69, 0x3D3D3D3B, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
     .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D
-    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x70730A3D, 0x5F656361, 0x3A727473, 0x2020200A
-    .WORD 0x53412E20, 0x5A494943, 0x22202220, 0x656E0A0A, 0x6E696C77, 0x74735F65, 0x200A3A72, 0x2E202020
-    .WORD 0x49435341, 0x22205A49, 0x0A226E5C, 0x5F68630A, 0x3A667562, 0x2020200A, 0x53412E20, 0x5A494943
-    .WORD 0x305C2220, 0x00000022, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
+    .WORD 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x3D3D3D3D, 0x0A3D3D3D, 0x63617073, 0x74735F65
+    .WORD 0x200A3A72, 0x2E202020, 0x49435341, 0x22205A49, 0x0A0A2220, 0x6C77656E, 0x5F656E69, 0x3A727473
+    .WORD 0x2020200A, 0x53412E20, 0x5A494943, 0x6E5C2220, 0x630A0A22, 0x75625F68, 0x200A3A66, 0x2E202020
+    .WORD 0x49435341, 0x22205A49, 0x0022305C, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
     .WORD 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
 
     .SPACE 1024

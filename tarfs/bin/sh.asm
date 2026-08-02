@@ -72,7 +72,9 @@ shell_loop:
     BEQ child_process
     BLT fork_error
 
-    ;Debug 2
+    Debug 2
+    POP LR
+    RET
 
     ; ---- Parent: wait for child ----
     LI R1 -1
@@ -87,15 +89,16 @@ shell_loop:
 child_process:
     ; pathname = input_buf (copied early by kernel, before data page zeroed)
     ; argv = R14 (on stack, safe from data page zeroing)
-    LI R1 ls1_path
-    Li R2 ls1_argv
+    LI R1 ls_path
+    Li R2 ls_argv
     LI R3 0
     CALL execve
-    Debug 2
+    ;Debug 2
     LI R1 exec_failed_msg
     CALL puts
-    LI R1 1
-    CALL exit
+
+    POP LR
+    RET
 
 fork_error:
     LI R1 fork_error_msg
@@ -110,9 +113,6 @@ wait_error:
     B shell_loop
 
 exit_shell:
-    LI R1 0
-    CALL exit
-
     POP LR
     RET
 
@@ -143,22 +143,22 @@ ex_argv:
     .WORD ex_path
     .WORD 0
 
-ls1_path:
-    .ASCIIZ "bin/ls1"
+ls_path:
+    .ASCIIZ "bin/ls"
 
-ls1_arg0:
-    .ASCIIZ "ls1"
+ls_arg0:
+    .ASCIIZ "ls"
 
-ls1_arg1:
+ls_arg1:
     .ASCIIZ "etc/"
 
-ls1_arg2:
+ls_arg2:
     .ASCIIZ "lib/"
 
-ls1_argv:
-    .WORD ls1_path
-    .WORD ls1_arg1
-    .WORD ls1_arg2
+ls_argv:
+    .WORD ls_path
+    .WORD ls_arg1
+    .WORD ls_arg2
     .WORD 0
 ; ================================================================
 ; End

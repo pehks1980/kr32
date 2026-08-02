@@ -139,8 +139,8 @@ dir_done:
     ; free buffer
     LI  R2 256
     ADD SP SP R2
-
     MOV R1 R6               ; return code
+    Debug 2
     POP R12
     POP R11
     POP R10
