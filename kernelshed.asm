@@ -32,7 +32,7 @@ B KERNEL_START
 .EQU USER_RX,      0x001D       ; P|R|X|U
 .EQU USER_RW,      0x001B       ; P|R|W|U
 .EQU KERN_USER_RX, 0x003D       ; P|R|X|U|G, shared executable (kernel can fetch user code)
-.EQU KERNEL_USER_ALL, 0x003F       ; G|P|U|X|W|R, shared executable writable full access
+.EQU KERNEL_USER_ALL, 0x001F   ; P|R|W|X|U, per-task user executable mapping
 
 .EQU PAGE_SIZE,    0x1000
 .EQU PAGE_MASK,    0x0FFF
@@ -3409,14 +3409,17 @@ read_wait_uart_rx:
     GET_TASK_PTR R4, R5
     TASK_GET_KBUF_RD R4, R4
 
-    ; Remember whether this chunk ended with newline before copy_to_user
+    ; Remember whether this chunk ended with CR/LF before copy_to_user
     ; clobbers temporary registers.
     LI R11 0
     SUB R5 R10 1
     ADD R5 R4 R5
     LDB R5 [R5]
     CMP R5 10
+    BEQ read_chunk_line_done
+    CMP R5 13
     BNE read_chunk_not_newline
+read_chunk_line_done:
     LI R11 1
 
 read_chunk_not_newline:
@@ -3703,7 +3706,7 @@ uart_read_kernel:
     ; R1 = kernel buffer, R2 = len, R3 = device object pointer
     ; Reads up to R2 bytes from the UART into kernel buffer at R1.
     ; Returns when the UART RX FIFO is empty, without spinning.
-    ; Stops early when a newline '\n' (ASCII 10) is received.
+    ; Stops early when CR or LF is received.
     LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
     LI R5 0                     ; index = 0 (bytes read so far)
 
@@ -3721,8 +3724,10 @@ dr_poll_ready:
     STB R7 [R1 + R5]            ; store it into the kernel buffer
     ADD R5 R5 1
 
-    ; If we received a newline, stop reading early
+    ; If we received a line terminator, stop reading early.
     CMP R7 10
+    BEQ dr_done
+    CMP R7 13
     BEQ dr_done
 
     B dr_loop

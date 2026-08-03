@@ -1516,9 +1516,8 @@ class CPU:
             elif op == 0x50:
                 self.require_supervisor("SETPTBR")
                 new_ptbr = self.r(a)
-                if self.mmu.ptbr_pa != new_ptbr:
-                    self.mmu.ptbr_pa = new_ptbr
-                    self.mmu.flush_tlb(preserve_global=True)
+                self.mmu.ptbr_pa = new_ptbr
+                self.mmu.flush_tlb(preserve_global=True)
 
             elif op == 0x51:
                 self.require_supervisor("SETIDTR")

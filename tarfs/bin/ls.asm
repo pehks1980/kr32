@@ -27,6 +27,7 @@ main:
     PUSH R12
 
     ; allocate 256-byte buffer on stack for reading directory entries
+    ;DEBUG 2
     LI  R3 256
     SUB SP SP R3
     MOV R12 SP              ; R12 = buffer pointer
@@ -140,7 +141,6 @@ dir_done:
     LI  R2 256
     ADD SP SP R2
     MOV R1 R6               ; return code
-    Debug 2
     POP R12
     POP R11
     POP R10

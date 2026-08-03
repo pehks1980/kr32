@@ -17,7 +17,6 @@
 ;==============================================================================
 main:
     NOP
-    DEBUG 2     ;testing INVLPG and tlb cache
 
     PUSH LR
     PUSH R8              ; 
