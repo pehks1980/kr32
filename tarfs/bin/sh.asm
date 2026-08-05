@@ -24,34 +24,51 @@ shell_loop:
     LI R2 input_buf
     LI R3 127
     CALL read
+    debug 2
     CMP R1 0
     BLE exit_shell
     MOV R4 R1           ; R4 = bytes read
-   ; ; ---- Strip CR/LF and null-terminate ----
-   LI R5 input_buf
-   ADD R5 R5 R4
-   LI R8 input_buf  ; R8 start R5 - end
 
-strip_loop:
-   CMP R5 R8
-   BLE strip_done
-   SUB R5 R5 1      ; move end r5 to r8
-   LDB R6 [R5]
-   CMP R6 10        ; if x0a
-   BEQ strip_char
-   CMP R6 13        ; x0d
-   BEQ strip_char
-   ADD R5 R5 1
-   LI  R2 0
-   STB R2 [R5]
-   B strip_done
+    ; ---- Normalize line editing characters before parsing ----
+    ; Treat BS/DEL as a backspace in the current command buffer.
+    LI R8 input_buf
+    LI R9 input_buf
+    LI R10 0            ; source index
 
-strip_char:
-   LI  R2 0
-   STB R2 [R5]
-   B strip_loop
+normalize_input_loop:
+    CMP R10 R4
+    BGE normalize_input_done
 
-strip_done:
+    ADD R5 R8 R10
+    LDB R6 [R5]
+
+    CMP R6 10            ; LF
+    BEQ normalize_input_next
+    CMP R6 13            ; CR
+    BEQ normalize_input_next
+    CMP R6 8             ; BS
+    BEQ normalize_input_backspace
+    CMP R6 127           ; DEL
+    BEQ normalize_input_backspace
+
+    STB R6 [R9]
+    ADD R9 R9 1
+    B normalize_input_next
+
+normalize_input_backspace:
+    CMP R9 R8
+    BLE normalize_input_next
+    SUB R9 R9 1
+    B normalize_input_next
+
+normalize_input_next:
+    ADD R10 R10 1
+    B normalize_input_loop
+
+normalize_input_done:
+    LI R6 0
+    STB R6 [R9]
+
     ; Skip empty lines
     LI R7 input_buf
     LDB R6 [R7]

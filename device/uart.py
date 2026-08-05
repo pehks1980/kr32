@@ -1,5 +1,7 @@
+import os
 import sys
 import select
+import termios
 
 class UARTDevice:
     """Memory Mapped I/O (MMIO) UART Device for KR32.
@@ -16,11 +18,15 @@ class UARTDevice:
         self.tx_fifo = []
         self.tx_output = []
         self.tx_capacity = 1024 #16
-        self.tx_drain_period = 256
+        self.tx_drain_period = 1 #256
         self.tx_drain_counter = 0
+        self.last_rx_char = None
         # Control register: Bit 0 = RX Interrupt Enable, Bit 1 = TX Interrupt Enable
         self.rx_tx_int_enable = 0
         self.tx_was_full = False
+        self._stdin_fd = None
+        self._stdin_termios = None
+        self._stdin_cbreak = False
 
     def reset(self):
         """Reset the UART device state."""
@@ -30,6 +36,35 @@ class UARTDevice:
         self.tx_drain_counter = 0
         self.rx_tx_int_enable = 0
         self.tx_was_full = False
+        self.last_rx_char = None
+
+    def _prepare_stdin(self):
+        """Disable canonical line buffering while keeping terminal echo enabled."""
+        if not hasattr(sys.stdin, "fileno"):
+            return
+        try:
+            fd = sys.stdin.fileno()
+            if self._stdin_fd is None:
+                self._stdin_fd = fd
+            if not self._stdin_cbreak:
+                self._stdin_termios = termios.tcgetattr(fd)
+                attrs = list(self._stdin_termios)
+                attrs[3] &= ~(termios.ICANON | termios.IEXTEN | termios.ECHOCTL)
+                attrs[3] |= termios.ECHO
+                attrs[6][termios.VMIN] = 1
+                attrs[6][termios.VTIME] = 0
+                termios.tcsetattr(fd, termios.TCSANOW, attrs)
+                self._stdin_cbreak = True
+        except Exception:
+            pass
+
+    def _restore_stdin(self):
+        if self._stdin_fd is not None and self._stdin_termios is not None and self._stdin_cbreak:
+            try:
+                termios.tcsetattr(self._stdin_fd, termios.TCSADRAIN, self._stdin_termios)
+            except Exception:
+                pass
+            self._stdin_cbreak = False
 
     def read_reg(self, offset):
         """Read a register from the UART device based on byte offset."""
@@ -83,12 +118,37 @@ class UARTDevice:
         try:
             # Verify stdin is a TTY and has data available to avoid blocking
             if sys.stdin.isatty():
+                self._prepare_stdin()
+                fd = self._stdin_fd if self._stdin_fd is not None else sys.stdin.fileno()
                 # select with timeout=0 is completely non-blocking
-                r, _, _ = select.select([sys.stdin], [], [], 0)
+                r, _, _ = select.select([fd], [], [], 0)
                 if r:
-                    char = sys.stdin.read(1)
+                    char = os.read(fd, 1)
                     if char:
-                        self.rx_fifo.append(ord(char))
+                        char = char.decode("utf-8", errors="replace")
+
+                        if char in ('\x7f', '\b'):
+                            # Normalize DEL/backspace to a single backspace byte so the guest console
+                            # can treat it as line editing without emitting caret-style control noise.
+                            char = '\b'
+                            try:
+                                sys.stdout.write('\b \b')
+                                sys.stdout.flush()
+                            except Exception:
+                                pass
+
+                        if char == '\r':
+                            # Normalize Enter to a single LF terminator so the guest sees one line end.
+                            char = '\n'
+                            self.rx_fifo.append(ord(char))
+                            self.last_rx_char = '\r'
+                        elif char == '\n' and self.last_rx_char == '\r':
+                            # The terminal may emit CRLF; drop the duplicated LF and keep only one line end.
+                            self.last_rx_char = '\n'
+                        else:
+                            self.rx_fifo.append(ord(char))
+                            self.last_rx_char = char
+
                         #if uart not masked set fire irq
                         if self.rx_tx_int_enable & 1:
                             irq = True

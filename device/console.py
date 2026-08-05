@@ -100,7 +100,7 @@ class ConsoleDevice:
                         return 0
                     if not data:
                         return 0
-                    self.pending_input += data
+                    self.pending_input += data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
                     if b"\n" in self.pending_input or len(self.pending_input) >= length:
                         break
                 newline_pos = self.pending_input.find(b"\n")
@@ -126,7 +126,7 @@ class ConsoleDevice:
                 data = b""
             if isinstance(data, str):
                 data = data.encode("utf-8", errors="replace")
-            self.pending_input = data
+            self.pending_input = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
         if b"\n" in self.pending_input:
             newline_pos = self.pending_input.index(b"\n") + 1

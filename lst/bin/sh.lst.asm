@@ -1255,94 +1255,111 @@ shell_loop:
 0x00043C3A       LI R2 input_buf
 0x00043C42       LI R3 127
 0x00043C4A   CALL read
-0x00043C52       CMP R1 0
-0x00043C56       BLE exit_shell
-0x00043C5E       MOV R4 R1           ; R4 = bytes read
-   ; ; ---- Strip CR/LF and null-terminate ----
-0x00043C62      LI R5 input_buf
-0x00043C6A      ADD R5 R5 R4
-0x00043C6E      LI R8 input_buf  ; R8 start R5 - end
+0x00043C52       debug 2
+0x00043C56       CMP R1 0
+0x00043C5A       BLE exit_shell
+0x00043C62       MOV R4 R1           ; R4 = bytes read
 
-strip_loop:
-0x00043C76      CMP R5 R8
-0x00043C7A      BLE strip_done
-0x00043C82      SUB R5 R5 1      ; move end r5 to r8
-0x00043C86      LDB R6 [R5]
-0x00043C8A      CMP R6 10        ; if x0a
-0x00043C8E      BEQ strip_char
-0x00043C96      CMP R6 13        ; x0d
-0x00043C9A      BEQ strip_char
-0x00043CA2      ADD R5 R5 1
-0x00043CA6      LI  R2 0
-0x00043CAE      STB R2 [R5]
-0x00043CB2      B strip_done
+    ; ---- Normalize line editing characters before parsing ----
+    ; Treat BS/DEL as a backspace in the current command buffer.
+0x00043C66       LI R8 input_buf
+0x00043C6E       LI R9 input_buf
+0x00043C76       LI R10 0            ; source index
 
-strip_char:
-0x00043CBA      LI  R2 0
-0x00043CC2      STB R2 [R5]
-0x00043CC6      B strip_loop
+normalize_input_loop:
+0x00043C7E       CMP R10 R4
+0x00043C82       BGE normalize_input_done
 
-strip_done:
+0x00043C8A       ADD R5 R8 R10
+0x00043C8E       LDB R6 [R5]
+
+0x00043C92       CMP R6 10            ; LF
+0x00043C96       BEQ normalize_input_next
+0x00043C9E       CMP R6 13            ; CR
+0x00043CA2       BEQ normalize_input_next
+0x00043CAA       CMP R6 8             ; BS
+0x00043CAE       BEQ normalize_input_backspace
+0x00043CB6       CMP R6 127           ; DEL
+0x00043CBA       BEQ normalize_input_backspace
+
+0x00043CC2       STB R6 [R9]
+0x00043CC6       ADD R9 R9 1
+0x00043CCA       B normalize_input_next
+
+normalize_input_backspace:
+0x00043CD2       CMP R9 R8
+0x00043CD6       BLE normalize_input_next
+0x00043CDE       SUB R9 R9 1
+0x00043CE2       B normalize_input_next
+
+normalize_input_next:
+0x00043CEA       ADD R10 R10 1
+0x00043CEE       B normalize_input_loop
+
+normalize_input_done:
+0x00043CF6       LI R6 0
+0x00043CFE       STB R6 [R9]
+
     ; Skip empty lines
-0x00043CCE       LI R7 input_buf
-0x00043CD6       LDB R6 [R7]
-0x00043CDA       CMP R6 0
-0x00043CDE       BEQ shell_loop
+0x00043D02       LI R7 input_buf
+0x00043D0A       LDB R6 [R7]
+0x00043D0E       CMP R6 0
+0x00043D12       BEQ shell_loop
 
-0x00043CE6   CALL parse_command
+0x00043D1A   CALL parse_command
 
-0x00043CEE       LI R1 input_buf
-0x00043CF6       LI R2 quit_cmd
-0x00043CFE   CALL strcmp
-0x00043D06       CMP R1 1
-0x00043D0A       BEQ exit_shell  ;if type "quit" exit shell
+0x00043D22       LI R1 input_buf
+0x00043D2A       LI R2 quit_cmd
+0x00043D32   CALL strcmp
+0x00043D3A       CMP R1 1
+0x00043D3E       BEQ exit_shell  ;if type "quit" exit shell
 
     ; ---- Fork ----
-0x00043D12   CALL fork
-0x00043D1A       CMP R1 0
-0x00043D1E       BEQ child_process
-0x00043D26       BLT fork_error
+0x00043D46   CALL fork
+0x00043D4E       CMP R1 0
+0x00043D52       BEQ child_process
+0x00043D5A       BLT fork_error
 
     ;Debug 2
     ;POP LR
     ;RET
 
     ; ---- Parent: wait for child ----
-0x00043D2E       LI R1 -1
-0x00043D36       LI R2 0
-0x00043D3E   CALL waitpid
-0x00043D46       CMP R1 0
-0x00043D4A       BLT wait_error
+0x00043D62       LI R1 -1
+0x00043D6A       LI R2 0
+0x00043D72   CALL waitpid
+0x00043D7A       CMP R1 0
+0x00043D7E       BLT wait_error
 
-0x00043D52       B shell_loop
+0x00043D86       B shell_loop
 
     ; ---- Child: execute command ----
 child_process:
     ; pathname = input_buf (copied early by kernel, before data page zeroed)
     ; argv = argv_buf
-0x00043D5A       LI R1 input_buf
-0x00043D62       LI R2 argv_buf
-0x00043D6A       LI R3 0
-0x00043D72   CALL execve
-0x00043D7A       LI R1 exec_failed_msg
-0x00043D82   CALL puts
+0x00043D8E       LI R1 input_buf
+0x00043D96       LI R2 argv_buf
+0x00043D9E       LI R3 0
+0x00043DA6   CALL execve
+0x00043DAE       LI R1 exec_failed_msg
+0x00043DB6   CALL puts
 
-0x00043D8A       POP LR
-0x00043D8E       RET
+0x00043DBE       POP LR
+0x00043DC2       RET
 
 fork_error:
-0x00043D92       LI R1 fork_error_msg
-0x00043D9A   CALL puts
-0x00043DA2       B shell_loop
+0x00043DC6       LI R1 fork_error_msg
+0x00043DCE   CALL puts
+0x00043DD6       B shell_loop
 
 wait_error:
-0x00043DAA       LI R1 wait_error_msg
-0x00043DB2   CALL puts
-0x00043DBA       B shell_loop
+0x00043DDE       LI R1 wait_error_msg
+0x00043DE6   CALL puts
+0x00043DEE       B shell_loop
 
 exit_shell:
-0x00043DC2       POP LR
-0x00043DC6       RET
+0x00043DF6       POP LR
+0x00043DFA       RET
 
 ; ---------------------------------------------------------------
 ; parse_command() – parse input_buf into argv_buf
@@ -1352,61 +1369,61 @@ exit_shell:
 ; ---------------------------------------------------------------
 
 parse_command:
-0x00043DCA       PUSH LR
-0x00043DCE       PUSH R8
-0x00043DD2       PUSH R9
-0x00043DD6       PUSH R10
-0x00043DDA       PUSH R11
+0x00043DFE       PUSH LR
+0x00043E02       PUSH R8
+0x00043E06       PUSH R9
+0x00043E0A       PUSH R10
+0x00043E0E       PUSH R11
 
-0x00043DDE       LI R8 input_buf
-0x00043DE6       LI R9 argv_buf
-0x00043DEE       LI R10 0
+0x00043E12       LI R8 input_buf
+0x00043E1A       LI R9 argv_buf
+0x00043E22       LI R10 0
 
 parse_skip_spaces:
-0x00043DF6       LDB R11 [R8]
-0x00043DFA       CMP R11 32      ;" "
-0x00043DFE       BNE parse_token_start
-0x00043E06       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
-0x00043E0E       STB R11 [R8]
-0x00043E12       ADD R8 R8 1
-0x00043E16       B parse_skip_spaces
+0x00043E2A       LDB R11 [R8]
+0x00043E2E       CMP R11 32      ;" "
+0x00043E32       BNE parse_token_start
+0x00043E3A       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
+0x00043E42       STB R11 [R8]
+0x00043E46       ADD R8 R8 1
+0x00043E4A       B parse_skip_spaces
 
 parse_token_start:
-0x00043E1E       LDB R11 [R8]
-0x00043E22       CMP R11 0
-0x00043E26       BEQ parse_done
-0x00043E2E       CMP R10 8       ;up to 8 args
-0x00043E32       BGE parse_done
+0x00043E52       LDB R11 [R8]
+0x00043E56       CMP R11 0
+0x00043E5A       BEQ parse_done
+0x00043E62       CMP R10 8       ;up to 8 args
+0x00043E66       BGE parse_done
 
-0x00043E3A       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
-0x00043E3E       ADD R9 R9 4
-0x00043E42       ADD R10 R10 1   ;argc for execve
+0x00043E6E       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
+0x00043E72       ADD R9 R9 4
+0x00043E76       ADD R10 R10 1   ;argc for execve
 
 parse_token_body:
-0x00043E46       LDB R11 [R8]
-0x00043E4A       CMP R11 0
-0x00043E4E       BEQ parse_done
-0x00043E56       CMP R11 32      ;" "
-0x00043E5A       BEQ parse_end_token
-0x00043E62       ADD R8 R8 1
-0x00043E66       B parse_token_body
+0x00043E7A       LDB R11 [R8]
+0x00043E7E       CMP R11 0
+0x00043E82       BEQ parse_done
+0x00043E8A       CMP R11 32      ;" "
+0x00043E8E       BEQ parse_end_token
+0x00043E96       ADD R8 R8 1
+0x00043E9A       B parse_token_body
 
 parse_end_token:
-0x00043E6E       LI R11 0
-0x00043E76       STB R11 [R8]    ; put null terminator at end of token
-0x00043E7A       ADD R8 R8 1     ; move to next char in input_buf
-0x00043E7E       B parse_skip_spaces
+0x00043EA2       LI R11 0
+0x00043EAA       STB R11 [R8]    ; put null terminator at end of token
+0x00043EAE       ADD R8 R8 1     ; move to next char in input_buf
+0x00043EB2       B parse_skip_spaces
 
 parse_done:
-0x00043E86       LI R11 0
-0x00043E8E       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
-0x00043E92       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
+0x00043EBA       LI R11 0
+0x00043EC2       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
+0x00043EC6       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
                     ;  and in format for execve
-0x00043E96       POP R10
-0x00043E9A       POP R9
-0x00043E9E       POP R8
-0x00043EA2       POP LR
-0x00043EA6       RET
+0x00043ECA       POP R10
+0x00043ECE       POP R9
+0x00043ED2       POP R8
+0x00043ED6       POP LR
+0x00043EDA       RET
 
 ;---------------------------------------------------------------
 ; Data
