@@ -20,6 +20,8 @@ from device.timer import PIT
 from device.pic import PIC
 from device.uart import UARTDevice
 
+from device.bmi import BMIDevice
+
 # KR32 REGS CONVENTION:
 #   R0        = hardwired ZERO
 #   R1-R4     = argument registers (arg0..arg3)
@@ -172,6 +174,8 @@ class CPU:
         self.pic = PIC()
         self.pic.enable_irq(0)  # enable timer IRQ
         self.uart = UARTDevice()
+
+        self.bmi = BMIDevice(cpu=self)
        
 
         # -------------------------------------------------
@@ -898,7 +902,11 @@ class CPU:
     # -----------------------------------------------------
     def is_mmio(self, paddr):
         # MMIO resides in pages 0x00100000 (UART), 0x00101000 (Timer/PIT), 0x00102000 (PIC)
-        return 0x00100000 <= paddr < 0x00103000
+        # and BMI registers live at physical page 0x00017000.
+        return (
+            0x00100000 <= paddr < 0x00103000
+            or 0x00017000 <= paddr < 0x00018000
+        )
     #-----------------------------------------------------
     # mmio_read and mmio_write: Helpers to handle memory-mapped I/O accesses by dispatching 
     # reads/writes to the appropriate device emulation based on the physical address.
@@ -915,6 +923,8 @@ class CPU:
             return self.timer.read_reg(offset)
         elif page == 0x00102000:
             return self.pic.read_reg(offset)
+        elif page == 0x00017000:
+            return self.bmi.read_reg(offset)
         return 0
 
     def mmio_write(self, paddr, val):
@@ -926,6 +936,8 @@ class CPU:
             self.timer.write_reg(offset, val)
         elif page == 0x00102000:
             self.pic.write_reg(offset, val)
+        elif page == 0x00017000:
+            self.bmi.write_reg(offset, val)
     #-----------------------------------------------------
     # physical_read_u8 and physical_write_u8: Helpers to perform byte-level reads/writes to physical memory,
     # while checking for MMIO and ensuring memory safety.
@@ -1261,6 +1273,11 @@ class CPU:
                     if self.trace_output and self.trace_events:
                         print(f"[IRQ {irq}] pending..")
                     self.raise_trap(TRAP_IRQ, irq)
+
+        
+            # BMI device
+            self.bmi.update()
+
 
             instr = self.fetch()
             self.current_instr = instr

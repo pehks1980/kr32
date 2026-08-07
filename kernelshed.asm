@@ -155,6 +155,20 @@ idle_task:
     LI R1 0
 idle_loop:
     ADD R1 R1 1
+    ;------------------------------------------------------
+    ; bmi_call
+    ;
+    ; R1 = opcode
+    ; R2 = payload pointer
+    ; R3 = payload length
+    ; R4 = namespace
+    MOV R1 NS_CREATE
+    LI R2 0x00000000
+    mov r3 r2
+    mov r4 r2
+    Debug 2
+    call bmi_call
+
    ; DEBUG 1
     B idle_loop
 
@@ -362,6 +376,22 @@ map_common_kernel:
     LI R3 0x0000C000
     LI R4 KERNEL_FLAGS
     BL map_page
+
+    LI R2 0x00015000      ; page for BMI buffers for NSFS (write) - 4K each
+    LI R3 0x00015000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x00016000      ; page for BMI buffers for NSFS (read) - 4K each
+    LI R3 0x00016000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x00017000      ; page for BMI buffers for NSFS (read) - 4K each
+    LI R3 0x00017000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
 
     
 
@@ -7859,6 +7889,117 @@ console_unlock:
     POP LR
     RET
 
+;------------------------------------------------------
+; bmi_call
+;
+; R1 = opcode
+; R2 = payload pointer
+; R3 = payload length
+; R4 = namespace
+;
+; Returns:
+;   R1 = BMI reply code
+;------------------------------------------------------
+
+bmi_call:
+    PUSH LR
+    PUSH R6
+    PUSH R7
+    PUSH R8
+    PUSH R9
+
+    ;------------------------------------
+    ; Fill BMI packet
+    ;------------------------------------
+    LI  R6 BMI_BUF_WRITE
+
+    STH R1 [R6 + BMI_HDR_OPCODE]
+
+    LI  R7 0
+    STH R7 [R6 + BMI_HDR_FLAGS]
+
+    STW R4 [R6 + BMI_HDR_NAMESPACE]
+    STW R3 [R6 + BMI_HDR_PAYLOAD_LEN]
+
+    ; Copy payload
+
+    ADD R7 R6 BMI_HDR_SIZEOF
+
+    MOV R1 R7          ; dst
+    MOV R2 R2          ; src
+    MOV R3 R3          ; len
+
+    BL memcpy
+
+    ;------------------------------------
+    ; Ring doorbell
+    ;------------------------------------
+
+    LI  R6 BMI_REG_BASE
+
+    LI  R7 BMI_READY
+    STW R7 [R6 + BMI_STATUS]
+
+    LI  R7 1
+    STW R7 [R6 + BMI_DOORBELL]
+
+wait_reply:
+
+    LDW R7 [R6 + BMI_STATUS]
+
+    ;DEBUG 2
+    
+    CMP R7 BMI_DONE
+    BEQ bmi_done
+
+    CMP R7 BMI_ERROR
+    BEQ bmi_error
+
+    B wait_reply
+
+bmi_done:
+
+    ;----------------------------------------
+    ; Read BMI reply packet
+    ;----------------------------------------
+
+    LI  R8 BMI_BUF_READ
+
+    LDH R1 [R8 + BMI_HDR_OPCODE]
+    LDH R2 [R8 + BMI_HDR_FLAGS]
+    LDW R3 [R8 + BMI_HDR_NAMESPACE]
+    LDW R4 [R8 + BMI_HDR_PAYLOAD_LEN]
+
+    ; R8 + BMI_HDR_SIZEOF points to reply payload
+
+
+    LDW R1 [R6 + BMI_REPLY]
+
+    ; reset state
+
+    LI R7 BMI_IDLE
+    STW R7 [R6 + BMI_STATUS]
+
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP LR
+    RET
+
+bmi_error:
+    LI R1 -1
+    LI R7 BMI_IDLE
+    STW R7 [R6 + BMI_STATUS]
+
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP LR
+
+    RET
+
 
 
 ; ==================================================
@@ -7880,10 +8021,57 @@ console_unlock:
 .EQU USER_READ_BUF,  0x00042000
 .EQU USER_WRITE_BUF, 0x00042100
 
+; ==================================================
+; BMI module
+; ==================================================
+
+.EQU BMI_HDR_OPCODE, 0
+.EQU BMI_HDR_FLAGS,  2
+.EQU BMI_HDR_NAMESPACE, 4
+.EQU BMI_HDR_PAYLOAD_LEN, 8 
+.EQU BMI_HDR_SIZEOF, 12
+.EQU BMI_PAYLOAD, 12
+
+; ==================================================
+; BMI OPCODES for NSFS
+; ==================================================
+
+.EQU NS_CREATE,   0x01
+.EQU NS_DELETE,   0x02
+.EQU FILE_CREATE, 0x10
+.EQU FILE_DELETE, 0x11
+.EQU DIR_CREATE,  0x20
+.EQU DIR_DELETE,  0x21
+
+
+; ==================================================
+; BMI buffers for NSFS should be alligned to 4K page boundaries and be at least 4K in size
+; ==================================================
+.ORG 0x15000
+BMI_BUF_WRITE:
+    .SPACE 4096
+.ORG 0x16000
+BMI_BUF_READ:
+    .SPACE 4096
+.ORG 0x17000
+BMI_REG_BASE:
+    .SPACE 4096 
+
+.EQU BMI_STATUS,    0
+.EQU BMI_DOORBELL,  4
+.EQU BMI_REPLY,     8
+
+.EQU BMI_IDLE,      0
+.EQU BMI_READY,     1
+.EQU BMI_BUSY,      2
+.EQU BMI_DONE,      3
+.EQU BMI_ERROR,     4
+
+
 
 
 ; ================================================================
-; USER mode TASKS
+; USER SPACE !!!! mode TASKS
 ; ================================================================
 
 
