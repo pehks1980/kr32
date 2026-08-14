@@ -2,7 +2,7 @@ KR32 Manifest — principles I'd add
 
 I'd keep it almost Lenin-like: short sentences, no marketing language, each sentence a rule.
 
-KR32 tovarishi! =)
+KR32 Tovarishi! 
 
 KR32 is a computer system built from first principles.
 
