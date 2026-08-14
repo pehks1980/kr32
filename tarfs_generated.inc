@@ -16,14 +16,6 @@ tarfs_start:
     .ASCIIZ "5"
     .SPACE 354
 
-; etc/network/
-    .ASCIIZ "etc/network/"
-    .SPACE 111
-    .ASCIIZ "00000000000"
-    .SPACE 20
-    .ASCIIZ "5"
-    .SPACE 354
-
 ; lib/
     .ASCIIZ "lib/"
     .SPACE 119

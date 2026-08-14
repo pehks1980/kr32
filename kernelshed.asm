@@ -151,10 +151,7 @@ B KERNEL_START
 ;
 ;======================================================================================================
 idle_task:
-    ENABLEINT
     LI R1 0
-idle_loop:
-    ADD R1 R1 1
     ;------------------------------------------------------
     ; bmi_call
     ;
@@ -166,13 +163,31 @@ idle_loop:
     LI R2 0x00000000
     mov r3 r2
     mov r4 r2
-    Debug 2
     call bmi_call
+
+    MOV R1 FILE_CREATE
+    LI R2 cr_file
+    LI R3 13
+    LI R4 0
+    call bmi_call
+
+    MOV R1 FILE_DELETE
+    LI R2 cr_file
+    LI R3 13
+    LI R4 0
+    call bmi_call
+
+    ENABLEINT
+
+idle_loop:
+    ADD R1 R1 1
+    
 
    ; DEBUG 1
     B idle_loop
 
-
+cr_file:
+    .asciiz "etc/crash.txt"
 
 .org 0x2000
 
@@ -434,7 +449,7 @@ map_common_dynamic_done:
     RET
 
 ;================================================================
-; Map a single page: VA in R2, PA in R3, flags in R
+; Map a single page: VA in R2, PA in R3, flags in R4
 ;================================================================
 
 map_page:
@@ -2238,6 +2253,141 @@ devfs_found:
 devfs_fail:
     LI R1 0
     POP LR
+    RET
+
+;====================================================================
+; NSFS VFS driver skeleton
+;
+; NSFS is the writable overlay between devfs and tarfs:
+;   devfs_lookup -> nsfs_lookup -> tarfs_lookup
+;
+; These stubs define the ABI and struct shape. The real implementation will
+; use BMI opcodes to query/create/delete entries in the host JSON KV store.
+;====================================================================
+
+nsfs_node_alloc:
+    LI R2 0
+
+nsfs_node_alloc_loop:
+    CMP R2 NSFS_MAX_NODES
+    BGE nsfs_node_alloc_fail
+
+    SHL R3 R2 2
+    LI R4 nsfs_node_used
+    ADD R4 R4 R3
+
+    LDW R5 [R4]
+    CMP R5 0
+    BEQ nsfs_node_alloc_found
+
+    ADD R2 R2 1
+    B nsfs_node_alloc_loop
+
+nsfs_node_alloc_found:
+    LI R5 1
+    STW R5 [R4]
+
+    LI R3 NSFS_NODE_SIZEOF
+    MUL R6 R2 R3
+    LI R1 nsfs_node_pool
+    ADD R1 R1 R6
+    RET
+
+nsfs_node_alloc_fail:
+    LI R1 0
+    RET
+
+nsfs_node_free:
+    LI R2 nsfs_node_pool
+    SUB R3 R1 R2
+
+    LI R4 NSFS_NODE_SIZEOF
+    DIV R5 R3 R4
+
+    SHL R5 R5 2
+    LI R6 nsfs_node_used
+    ADD R6 R6 R5
+
+    LI R7 0
+    STW R7 [R6]
+    RET
+
+; nsfs_lookup
+; in:  R1 = pathname
+; out: R1 = inode ptr if present in NSFS overlay, or 0 if not found
+nsfs_lookup:
+    ; TODO:
+    ; 1. BMI lookup/read metadata for ns:<default_ns>:path:<pathname>.
+    ; 2. Allocate nsfs_node and copy/cache path metadata.
+    ; 3. Allocate inode and init with nsfs_ops, nsfs_node, type, size.
+    LI R1 0
+    RET
+
+; nsfs_open
+; in:  R1 = file ptr
+; out: R1 = 0
+nsfs_open:
+    LI R1 0
+    RET
+
+; nsfs_close
+; in:  R1 = file ptr
+; out: R1 = 0
+nsfs_close:
+    LI R1 0
+    RET
+
+; nsfs_read
+; in:  R1 = file ptr, R2 = user buffer, R3 = length
+; out: R1 = bytes read or errno
+nsfs_read:
+    LI R1 ERR_NOENT
+    RET
+
+; nsfs_write
+; in:  R1 = file ptr, R2 = user buffer, R3 = length
+; out: R1 = bytes written or errno
+nsfs_write:
+    LI R1 ERR_NOENT
+    RET
+
+; nsfs_readdir
+; in:  R1 = file ptr, R2 = userspace dirent buffer
+; out: R1 = 1 entry, 0 EOF, or errno
+nsfs_readdir:
+    LI R1 0
+    RET
+
+; nsfs_create
+; in:  R1 = pathname, R2 = mode/type flags
+; out: R1 = 0 or errno
+nsfs_create:
+    ; TODO: FILE_CREATE over BMI, then nsfs_lookup can materialize inode.
+    LI R1 ERR_NOENT
+    RET
+
+; nsfs_unlink
+; in:  R1 = pathname
+; out: R1 = 0 or errno
+nsfs_unlink:
+    ; TODO: FILE_DELETE over BMI and create whiteout when shadowing tarfs.
+    LI R1 ERR_NOENT
+    RET
+
+; nsfs_mkdir
+; in:  R1 = pathname, R2 = mode
+; out: R1 = 0 or errno
+nsfs_mkdir:
+    ; TODO: DIR_CREATE over BMI.
+    LI R1 ERR_NOENT
+    RET
+
+; nsfs_rmdir
+; in:  R1 = pathname
+; out: R1 = 0 or errno
+nsfs_rmdir:
+    ; TODO: DIR_DELETE over BMI.
+    LI R1 ERR_NOENT
     RET
 
 ;====================================================================
@@ -4542,6 +4692,58 @@ devfs_ops:
     .WORD 0
     .WORD 0
 
+;==============================================================
+; NSFS skeleton
+;==============================================================
+
+; NSFS private vnode stored behind inode->private.
+; Later this can hold a cached path key, namespace id, host handle,
+; materialized size/type, dirty flags, and page-cache pointer.
+.EQU NSFS_NODE_NAMESPACE, 0
+.EQU NSFS_NODE_PATH,      4
+.EQU NSFS_NODE_TYPE,      8
+.EQU NSFS_NODE_SIZE,     12
+.EQU NSFS_NODE_FLAGS,    16
+.EQU NSFS_NODE_SIZEOF,   20
+
+.EQU NSFS_DEFAULT_NS,     0
+.EQU NSFS_MAX_NODES,     64
+
+nsfs_ops:
+    .WORD nsfs_open
+    .WORD nsfs_read
+    .WORD nsfs_write
+    .WORD nsfs_close
+    .WORD nsfs_readdir
+    .WORD nsfs_lookup
+    .WORD nsfs_create
+    .WORD nsfs_unlink
+    .WORD nsfs_mkdir
+    .WORD nsfs_rmdir
+
+nsfs_root_inode:
+    .WORD nsfs_ops          ; INODE_OPS
+    .WORD nsfs_root_node    ; INODE_PRIVATE
+    .WORD INODE_DIR         ; INODE_TYPE
+    .WORD 0                 ; size
+    .WORD 1                 ; refcnt
+
+nsfs_root_path:
+    .ASCIIZ "/"
+
+nsfs_root_node:
+    .WORD NSFS_DEFAULT_NS
+    .WORD nsfs_root_path
+    .WORD INODE_DIR
+    .WORD 0
+    .WORD 0
+
+nsfs_node_pool:
+    .SPACE NSFS_MAX_NODES * NSFS_NODE_SIZEOF
+
+nsfs_node_used:
+    .SPACE NSFS_MAX_NODES * 4
+
 ; special con uart related
 ;con_ops:
 ;    .WORD con_read
@@ -5968,8 +6170,13 @@ vfs_lookup:
     BNE vfs_done
 
     MOV R1 R8
+    BL nsfs_lookup     ; 2 writable overlay above tarfs
+    CMP R1 0
+    BNE vfs_done
 
-    BL tarfs_lookup     ; 2 check in rootfs-tarfs /... (both funcs in R1-pathname)
+    MOV R1 R8
+
+    BL tarfs_lookup     ; 3 check in rootfs-tarfs /... (both funcs in R1-pathname)
     CMP R1 0
     BEQ vfs_not_found   
 
@@ -7950,14 +8157,14 @@ wait_reply:
     ;DEBUG 2
     
     CMP R7 BMI_DONE
-    BEQ bmi_done
+    BEQ bmi_call_done
 
     CMP R7 BMI_ERROR
-    BEQ bmi_error
+    BEQ bmi_call_error
 
     B wait_reply
 
-bmi_done:
+bmi_call_done:
 
     ;----------------------------------------
     ; Read BMI reply packet
@@ -7987,7 +8194,7 @@ bmi_done:
     POP LR
     RET
 
-bmi_error:
+bmi_call_error:
     LI R1 -1
     LI R7 BMI_IDLE
     STW R7 [R6 + BMI_STATUS]

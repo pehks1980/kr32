@@ -10,6 +10,8 @@
 # KR32 continues.
 #=========================================================
 
+from device.nsfs import NSFSStore
+
 # BMI MMIO registers
 
 BMI_REG_BASE = 0x17000
@@ -37,8 +39,9 @@ BMI_ERROR = 4
 
 class BMIDevice:
 
-    def __init__(self, cpu):
+    def __init__(self, cpu, nsfs=None):
         self.cpu = cpu
+        self.nsfs = nsfs if nsfs is not None else NSFSStore()
 
     def phys_read_u8(self, paddr):
         self.cpu.check_physical_mem(paddr, 1)
@@ -72,17 +75,27 @@ class BMIDevice:
         self.phys_write_u8(paddr + 3, (value >> 24) & 0xFF)
 
     def read_reg(self, offset):
-        addr = BMI_REG_BASE + offset
-        return self.phys_read_u32(addr)
+        aligned = offset & ~3
+        addr = BMI_REG_BASE + aligned
+        value = self.phys_read_u32(addr)
+        if offset != aligned:
+            return (value >> ((offset & 3) * 8)) & 0xFF
+        return value
 
     def write_reg(self, offset, value):
-        addr = BMI_REG_BASE + offset
+        aligned = offset & ~3
+        addr = BMI_REG_BASE + aligned
+        if offset != aligned or value <= 0xFF:
+            shift = (offset & 3) * 8
+            old = self.phys_read_u32(addr)
+            value = (old & ~(0xFF << shift)) | ((value & 0xFF) << shift)
         self.phys_write_u32(addr, value)
 
     def update(self):
         status = self.read_reg(0)
+        doorbell = self.read_reg(4)
 
-        if status != BMI_READY:
+        if status != BMI_READY or doorbell == 0:
             return
 
         self.process()
@@ -94,10 +107,12 @@ class BMIDevice:
             packet = self.read_packet()
             reply = self.dispatch(packet)
             self.write_reply(reply)
+            self.write_reg(BMI_REPLY - BMI_REG_BASE, reply["status"])
             self.write_reg(0, BMI_DONE)
 
         except Exception as e:
             print("[BMI]", e)
+            self.write_reg(BMI_REPLY - BMI_REG_BASE, BMI_ERROR)
             self.write_reg(0, BMI_ERROR)
 
         self.write_reg(4, 0)
@@ -127,9 +142,10 @@ class BMIDevice:
         print("namespace :", packet["namespace"])
         print("payload   :", packet["payload"])
         print("=======================")
+        status, payload = self.nsfs.handle_packet(packet)
         return {
-            "status": 0,
-            "payload": b""
+            "status": status,
+            "payload": payload
         }
 
     def write_reply(self, reply):
