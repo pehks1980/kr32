@@ -4864,7 +4864,7 @@ tarfs_ops:
     .WORD tarfs_close
     .WORD tarfs_readdir
     .WORD tarfs_lookup
-    .WORD 0 ;to do
+    .WORD 0 
     .WORD 0
     .WORD 0
     .WORD 0

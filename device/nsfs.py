@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+from ast import Delete
 import json
 from pathlib import Path
 from time import time
+from xxlimited import new
 
 
-NS_CREATE = 0x01
-NS_DELETE = 0x02
-FILE_CREATE = 0x10
-FILE_DELETE = 0x11
-DIR_CREATE = 0x20
-DIR_DELETE = 0x21
+NS_CREATE = 0x01    #Create a new namespace
+NS_DELETE = 0x02    #Delete an existing namespace
+FILE_CREATE = 0x10  #Create a new file in a namespace
+FILE_DELETE = 0x11  #Delete an existing file in a namespace
+DIR_CREATE = 0x20   #Create a new directory in a namespace  
+DIR_DELETE = 0x21   #Delete an existing directory in a namespace
 
 NSFS_OK = 0
 NSFS_EINVAL = 22
@@ -21,7 +23,7 @@ NSFS_EEXIST = 17
 NSFS_ENOTEMPTY = 39
 
 
-class NSFSStore:
+class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
     """Tiny JSON-backed KV store used by the VM for NSFS debugging."""
 
     def __init__(self, path="nsfs_store.json"):
@@ -78,8 +80,9 @@ class NSFSStore:
 
     def _path_key(self, namespace, path):
         return self._key(namespace, "path", path)
-
-    def create_namespace(self, namespace):
+    
+    # make a new namespace, if it already exists, return NSFS_EEXIST
+    def create_namespace(self, namespace): 
         key = self._key(namespace, "meta")
         if key in self.data["kv"]:
             return NSFS_EEXIST, b""
@@ -97,7 +100,8 @@ class NSFSStore:
         }
         self._flush()
         return NSFS_OK, b""
-
+    
+    # delete a namespace, if it does not exist, return NSFS_ENOENT
     def delete_namespace(self, namespace):
         prefix = self._key(namespace)
         keys = [key for key in self.data["kv"] if key == prefix or key.startswith(prefix + ":")]
@@ -108,7 +112,8 @@ class NSFSStore:
             del self.data["kv"][key]
         self._flush()
         return NSFS_OK, b""
-
+    
+    # create a new file in a namespace, if it already exists, return NSFS_EEXIST
     def create_file(self, namespace, payload):
         if not self.namespace_exists(namespace):
             return NSFS_ENOENT, b""
@@ -131,6 +136,7 @@ class NSFSStore:
         self._flush()
         return NSFS_OK, b""
 
+    # delete a file in a namespace, if it does not exist, return NSFS_ENOENT
     def delete_file(self, namespace, payload):
         path = self._decode_path(payload)
         if path is None:
@@ -146,6 +152,7 @@ class NSFSStore:
         self._flush()
         return NSFS_OK, b""
 
+    # create a new directory in a namespace, if it already exists, return NSFS_EEXIST
     def create_dir(self, namespace, payload):
         if not self.namespace_exists(namespace):
             return NSFS_ENOENT, b""
@@ -166,7 +173,8 @@ class NSFSStore:
         }
         self._flush()
         return NSFS_OK, b""
-
+    
+    # delete a directory in a namespace, if it does not exist, return NSFS_ENOENT
     def delete_dir(self, namespace, payload):
         path = self._decode_path(payload)
         if path is None:
@@ -186,6 +194,8 @@ class NSFSStore:
         self._flush()
         return NSFS_OK, b""
 
+    # handle_packet: dispatches the packet to the appropriate handler based on opcode
+    # func will add new fetures to NSFS 
     def handle_packet(self, packet):
         opcode = packet["opcode"]
         namespace = packet["namespace"]

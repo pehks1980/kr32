@@ -780,6 +780,26 @@ itoa_hex:
     POP  LR
     RET
 
+
+;---------------------------------------------------------
+; itoa_oct - Octal conversion wrapper
+;
+; R1 = destination buffer
+; R2 = unsigned integer
+; Returns: R1 = original buffer pointer
+;---------------------------------------------------------
+itoa_oct:
+    PUSH LR
+    
+    ; Max 12 digits + null = 13 bytes
+    LI   R3 8            ; Base 8
+    LI   R4 0            ; Unsigned (shows raw bits)
+    LI   R5 13           ; Temp buffer size
+    CALL itoa_core
+    
+    POP  LR
+    RET
+
 ;---------------------------------------------------------
 ; itoa_bin - Binary conversion wrapper
 ;
@@ -1177,47 +1197,291 @@ slash_char:
 newline_char:
     .WORD 10
 
+; Arguments are passed in R2..R12 (up to 11).
+; Output is written immediately; no internal buffering.
+;
+; IN:  R1 = format string
+; OUT: R1 = number of characters written (optional, can be ignored)
+; usage:
+;   printf("Hello %s, number=%d, hex=%x, char=%c\n", "world", 42, 255, 'A')
+;   KR32:
+;   LI R1 fmt_str
+;   LI R2 42
+;   LI R3 hello_str
+;   BL printf
+;...
+;fmt_str: .ASCIIZ "Number: %d, String: %s\n"
+;hello_str: .ASCIIZ "world"
+;------------------------------------------------------------------------------
 
 ;------------------------------------------------------------------------------
-; printf() - note (echo, cat, sh, ps dont need it yet can be made with putchar)
+; printf - Formatted output to stdout
 ;
-; Tiny implementation only.
+; Supported conversions:
+;   %%      literal '%'
+;   %s      string (char*)
+;   %d / %i signed decimal
+;   %x      unsigned hexadecimal (lowercase)
+;   %c      single character
+;   %b      unsigned binary
+;   %o      unsigned octal
 ;
-; Supported:
-;
-;   %%      percent
-;   %s
-;   %d
-;   %x
-;   %c
-;
-; No width.
-; No precision.
-; No floating point.
-;
-; Later split into:
-;
-; printf()
-; vprintf()
-; vsnprintf()
+; Arguments: R2..R12 (first 11), then on stack (caller‑pushed).
 ;------------------------------------------------------------------------------
 printf:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
 
-    ; TODO
-    ;
-    ; scan format string
-    ; copy normal chars
-    ; decode %
-    ; dispatch formatter
-    ;
-    ; %s
-    ; %d
-    ; %x
-    ; %c
+    SUB SP SP 80              ; local frame: 44 + 34 + padding
 
+    MOV R8 R1                 ; format pointer
+    LI  R9 0                  ; argument index
+
+    ; Save R2..R12 to local array
+    STW R2 [SP + 0]
+    STW R3 [SP + 4]
+    STW R4 [SP + 8]
+    STW R5 [SP + 12]
+    STW R6 [SP + 16]
+    STW R7 [SP + 20]
+    STW R8 [SP + 24]
+    STW R9 [SP + 28]
+    STW R10 [SP + 32]
+    STW R11 [SP + 36]
+    STW R12 [SP + 40]
+
+    MOV R10 SP                ; base of saved registers
+    ADD R11 SP 44             ; conversion buffer
+
+printf_loop:
+    LDB R1 [R8]     ;read fmt string char
+    CMP R1 0
+    BEQ printf_done
+
+    CMP R1 37   ;check for '%'
+    BNE printf_normal_char
+
+    ADD R8 R8 1 ; its a '%', move to next char for specifier
+    LDB R2 [R8]
+    CMP R2 0
+    BEQ printf_done
+
+    CMP R2 37   ; check for '%%'
+    BEQ printf_percent
+    CMP R2 115  ; check for '%s'
+    BEQ printf_string
+    CMP R2 100  ;check for '%d'
+    BEQ printf_int
+    CMP R2 105  ;check for '%i'
+    BEQ printf_int
+    CMP R2 120  ;check for '%x'
+    BEQ printf_hex
+    CMP R2 99   ;check for '%c'
+    BEQ printf_char
+    CMP R2 98   ;check for '%b'
+    BEQ printf_bin
+    CMP R2 111  ;check for '%o'
+    BEQ printf_oct
+
+    ; unknown specifier
+    LI  R1 37   ;unknown specifier, print '%'
+    CALL putchar
+    MOV R1 R2   ; print the unknown specifier char
+    CALL putchar
+    B   printf_continue
+
+printf_normal_char:
+    CALL putchar
+    B   printf_continue
+
+printf_percent:
+    LI  R1 37   ;print '%'
+    CALL putchar
+    B   printf_continue
+
+;------------------------------------------------------------------------------
+; Argument fetch helpers (same as before)
+;------------------------------------------------------------------------------
+_fetch_arg_r1:
+    PUSH LR 
+    PUSH R3
+    CALL _get_arg_address
+    LDW R1 [R3]
+    POP R3
+    POP LR
+    RET
+
+_fetch_arg_r2:
+    PUSH LR
+    PUSH R3
+    CALL _get_arg_address
+    LDW R2 [R3]
+    POP R3
+    POP LR
+    RET
+
+_get_arg_address:   ; fetch the address of the next argument based on R9 (arg index)
+    CMP R9 11       ; if arg index >= 11, it's on the stack
+    BLT _arg_in_regs
+    SUB R3 R9 11    ; R3 = number of extra args on stack
+    LI  R4 4
+    MUL R3 R3 R4
+    ADD R3 SP R3    ; R3 = address of first extra arg on stack (not sure if this is correct)
+    ADD R3 R3 104   ; offset to caller's first extra arg 104 
+                    ;is the size of the local frame (80) + saved registers (44)
+    RET
+
+_arg_in_regs:       ; fetch argument from R2..R12 based on R9
+    LI  R4 4        
+    MUL R3 R9 R4    ; R9 = arg index, (R3 = offset in bytes)
+    ADD R3 R10 R3   ; R3 = address of saved register in local array, R10 = base of saved registers
+    RET
+
+;------------------------------------------------------------------------------
+; Specifier handlers
+;------------------------------------------------------------------------------
+printf_string:
+    CALL _fetch_arg_r1  ;get string pointer from R1
+    ADD R9 R9 1
+    CALL _print_string  ;print the string
+    B   printf_continue
+
+printf_int:
+    CALL _fetch_arg_r2  ;get integer from R2
+    ADD R9 R9 1
+    MOV R1 R11          ; r11 is the conversion buffer (on stack)
+    CALL _print_number  ;print the integer
+    B   printf_continue
+
+printf_hex:
+    CALL _fetch_arg_r2
+    ADD R9 R9 1
+    MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
+    CALL _print_hex
+    B   printf_continue
+
+printf_char:
+    CALL _fetch_arg_r1
+    ADD R9 R9 1
+    CALL putchar
+    B   printf_continue
+
+printf_bin:
+    CALL _fetch_arg_r2
+    ADD R9 R9 1
+    MOV R1 R11
+    CALL _print_bin
+    B   printf_continue
+
+printf_oct:
+    CALL _fetch_arg_r2
+    ADD R9 R9 1
+    MOV R1 R11
+    CALL _print_oct
+    B   printf_continue
+
+printf_continue:    ;to continue processing format string
+    ADD R8 R8 1
+    B   printf_loop
+
+printf_done:
+    ADD SP SP 80
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;------------------------------------------------------------------------------
+; _print_string - Write a null‑terminated string to stdout (no newline)
+;
+; Uses the libc `write` wrapper (fd, buffer, len) instead of direct SVC.
+;
+; IN:  R1 = pointer to string
+; OUT: none
+;------------------------------------------------------------------------------
+_print_string:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    MOV R8 R1
+    CALL strlen               ; R1 = length
+    MOV R9 R1
+    LI  R1 STDOUT_FD
+    MOV R2 R8
+    MOV R3 R9
+    CALL write                ; libc wrapper, not direct SVC
+    POP R9
+    POP R8
+    POP LR
     RET
 
 
+;------------------------------------------------------------------------------
+; _print_number - Format and print a signed integer (uses itoa_dec)
+;
+; IN:  R1 = destination buffer (must be ≥13 bytes)
+;      R2 = signed integer
+; OUT: none
+;------------------------------------------------------------------------------
+_print_number:
+    PUSH LR
+    CALL itoa_dec             ; uses R1 (buffer) and R2 (value)
+    MOV R1 R1                 ; R1 still points to buffer start
+    CALL _print_string
+    POP LR
+    RET
+
+;------------------------------------------------------------------------------
+; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
+;
+; IN:  R1 = destination buffer (must be ≥9 bytes)
+;      R2 = unsigned integer
+; OUT: none
+;------------------------------------------------------------------------------
+_print_hex:
+    PUSH LR
+    CALL itoa_hex
+    MOV R1 R1
+    CALL _print_string
+    POP LR
+    RET
+
+;------------------------------------------------------------------------------
+; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
+;
+; IN:  R1 = destination buffer (must be ≥9 bytes)
+;      R2 = unsigned integer
+; OUT: none
+;------------------------------------------------------------------------------
+_print_bin:
+    PUSH LR
+    CALL itoa_bin
+    MOV R1 R1
+    CALL _print_string
+    POP LR
+    RET
+
+;------------------------------------------------------------------------------
+; _print_oct - Format and print an unsigned integer in octal (uses itoa_oct)
+;
+; IN:  R1 = destination buffer (must be ≥9 bytes)
+;      R2 = unsigned integer
+; OUT: none
+;------------------------------------------------------------------------------
+_print_oct:
+    PUSH LR
+    CALL itoa_oct
+    MOV R1 R1
+    CALL _print_string
+    POP LR
+    RET
 
 ;==============================================================================
 ; Data Section
