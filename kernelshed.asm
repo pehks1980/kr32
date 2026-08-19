@@ -21,21 +21,22 @@
 .org 0x0000
 B KERNEL_START
 
-.EQU PTE_R,       0x0001
-.EQU PTE_W,       0x0002
-.EQU PTE_X,       0x0004
-.EQU PTE_U,       0x0008
-.EQU PTE_P,       0x0010
-.EQU PTE_G,       0x0020
+.EQU PTE_R,       0x0001    ;RD perm
+.EQU PTE_W,       0x0002    ;WR perm
+.EQU PTE_X,       0x0004    ;EXEC perm
+.EQU PTE_U,       0x0008    ;USER mode only
+.EQU PTE_P,       0x0010    ;Privileged mode
+.EQU PTE_G,       0x0020    ;G bit - PTE is not flushed when switch happens (OS related) 
 
-.EQU KERNEL_FLAGS, 0x0037       ; P|R|W|X|G, supervisor-only shared mapping
-.EQU USER_RX,      0x001D       ; P|R|X|U
-.EQU USER_RW,      0x001B       ; P|R|W|U
-.EQU KERN_USER_RX, 0x003D       ; P|R|X|U|G, shared executable (kernel can fetch user code)
-.EQU KERNEL_USER_ALL, 0x001F   ; P|R|W|X|U, per-task user executable mapping
+.EQU KERNEL_FLAGS, 0x0037       ; P|R|W|X|G, supervisor-only shared mapping  GP-XWR 
+.EQU USER_RX,      0x001D       ; P|R|X|U  ;                                 -PUX-R
+.EQU USER_RW,      0x001B       ; P|R|W|U  ;                                 -PU-WR ; used for load image to memory in execve
+.EQU KERN_USER_RX, 0x003D       ; P|R|X|U|G, shared executable (kernel can   GPUX-R fetch user code); not used
+.EQU KERNEL_USER_ALL, 0x001F   ; P|R|W|X|U, per-task user executable mapping -PUXWR ;needed for execve kenrel executes loaded code
 
 .EQU PAGE_SIZE,    0x1000
 .EQU PAGE_MASK,    0x0FFF
+.EQU MAX_APP_SIZE, 0xFFFF   ;64 for userland app code page 
 
 ;.EQU TASK0_PTBR,   0x00010000   ; page table at 64KB (one 1 MiB one-level table per address space)
 ;.EQU TASK1_PTBR,   0x00020000   ; page table at 128KB
@@ -1131,7 +1132,7 @@ syscall_execve:
     ; R1 = user path
     ; R2 = user argv (NULL-terminated vector of user string pointers)
     ; R3 = user envp (ignored for now)
-    ;
+    ; + added multipage code support
     ; overview and why its better then previous what serous obstacles it is able to overcome
 
     LDW R8 [SP + TF_R1]        ; user path pointer
@@ -1177,6 +1178,8 @@ argc_done:
     BNE exec_fail
 
     LI R1 exec_path
+    ; load exec image to allocted memory
+    ; map_rt pages
     BL exec_load_binary
     CMP R1 0
     BEQ exec_fail
@@ -1241,37 +1244,52 @@ exec_commit_image:
     MOV R3 R8
     BL memcpy
 
-    LI R1 USER_CODE_VA      ; commit task state
-    TASK_SET_PC R5,R1
-    TASK_SET_CODE_PAGE R5,R11
+    LI R1 USER_CODE_VA      ; commit task state: 
+    TASK_SET_PC R5,R1       ; PC starts to USER_CODE_VA
+    TASK_SET_CODE_PAGE R5,R11 ; set new code page (tab+pages) 
     MOV R1 R9
-    TASK_SET_USP R5,R1
+    TASK_SET_USP R5,R1        ; set USP
     LI R1 HEAP_START
-    TASK_SET_BREAK R5,R1
+    TASK_SET_BREAK R5,R1      ; set BRK
 
     ; Make sure the task's fixed user stack page is still mapped RW before
     ; returning to user mode. execve rewrites the stack contents, but the
     ; page-table entry must remain valid even if the task was previously
     ; switched through another path.
-    TASK_GET_PTBR R1,R5
+    TASK_GET_PTBR R2,R5
     TASK_GET_USTACK_PAGE R3,R5
     CMP R3 0
     BEQ exec_commit_skip_stack_map
-    LI R2 USER_STACK_VA
+    ; ---- remap new code pages to RW ---- don know why
+    MOV R1 R11
+    LI R3 USER_CODE_VA
     LI R4 USER_RW
-    BL map_page_rt
+    BL pages_map_table
+
+  ;  LI R2 USER_STACK_VA
+  ;  LI R4 USER_RW
+  ;  BL map_page_rt
 
 exec_commit_skip_stack_map:
-    TASK_GET_PTBR R1,R5
-    LI R2 USER_CODE_VA
-    MOV R3 R11
-    LI R4 KERNEL_USER_ALL   ; map code page RX subject to permissions on X (now all X)
-    BL map_page_rt
+
+    TASK_GET_PTBR R2,R5
+    MOV R1 R11
+    LI R3 USER_CODE_VA
+    LI R4 KERNEL_USER_ALL
+    BL pages_map_table
+
+;    LI R2 USER_CODE_VA
+;    MOV R3 R11
+;    LI R4 KERNEL_USER_ALL   ; map code page RX subject to permissions on X (now all X)
+;    BL map_page_rt
 
     CMP R12 0               ; free old pa page (R12) if have
     BEQ no_old_page
+
     MOV R1 R12
-    BL page_put             ; free page
+    BL pages_free_table     ; ---- free old codepage (table and pages) ----
+
+   ; BL page_put             ; free page
 no_old_page:
 
     LI  R1 exec_argc
@@ -1472,7 +1490,7 @@ exec_load_binary:
     CMP R1 R2
     BEQ load_noexec
     LDW R3 [R9 + INODE_SIZE]
-    LI R4 PAGE_SIZE
+    LI R4 MAX_APP_SIZE
     CMP R3 R4
     BGT load_noexec
 
@@ -1485,22 +1503,36 @@ exec_load_binary:
     LI R3 FD_FLAG_READ
     BL file_init
 
-    BL page_alloc               ; pa page for code
+    ; ---- allocate table and code pages ----
+    ; makes table page and few pages up on file size
+    LDW R1 [R9 + INODE_SIZE]
+    ;MOV R1 R6                  ; file size
+    BL pages_allocate_table
     CMP R1 0
     BEQ load_file_fail
 
-    MOV R11 R1                  ;new pa page code
+    MOV R11 R1                 ; new table PA
+    MOV R12 R2                 ; count (not needed further)
 
+    ; ---- map pages RW ----
     GET_CURR_TASK_IDX R4        ;current task
     GET_TASK_PTR R5,R4
+
     TASK_GET_CODE_PAGE R12,R5   ; save old pa code page from this task to R12
 
-    TASK_GET_PTBR R1,R5
-    LI R2 USER_CODE_VA
-    MOV R3 R11                  ;new pa code page
-    LI R4 USER_RW
-    BL map_page_rt              ;map it for loading to USER_CODE_VA
+   ; TASK_GET_PTBR R1,R5
+   ; LI R2 USER_CODE_VA
+   ; MOV R3 R11                 ;new pa code page
+   ; LI R4 USER_RW
+   ; BL map_page_rt             ;map it for loading to USER_CODE_VA
 
+    TASK_GET_PTBR R2, R5        ; PTBR
+    LI R3 USER_CODE_VA          ; starting new code page VA
+    LI R4 USER_RW               ; mapping flAGS
+    MOV R1 R11                  ; new table PA (with pa pages)
+    BL pages_map_table
+
+    ; ---- zero data page ----
     TASK_GET_DATA_PAGE R1,R5    ; tasks va data_page
     CMP R1 0
     BEQ load_read
@@ -1509,14 +1541,15 @@ exec_load_binary:
 
 load_read:
     MOV R1 R10                  ; file* with program
-    LI R2 USER_CODE_VA
-    LI R3 PAGE_SIZE
+    LI  R2 USER_CODE_VA
+    LDW R3 [R9 + INODE_SIZE]    ; file size
     BL file_read
     CMP R1 0
     BLT load_read_fail
-    MOV R1 R10                  ; release file*
+
+    MOV R1 R10                  ;loaded release file*
     BL file_put
-    ; all loaedd R1 - new code page pa R2 - old code page pa
+    ; all loaedd R1 - new code page pa tab, R2 - old code page pa tab
     MOV R1 R11
     MOV R2 R12
 
@@ -1564,7 +1597,6 @@ load_noent:
     LI R1 0
     LI R2 ERR_NOENT
     B  exec_lb_exit
-
 
 ;=============================================================
 ; Copy argv strings into kernel workspace
@@ -6973,6 +7005,222 @@ page_put:
 page_put_done:
     RET
 
+;==============================================================================
+; TABLE-BASED PAGE MANAGEMENT (for multi-page executables)
+;==============================================================================
+
+;------------------------------------------------------------------------------
+; pages_allocate_table - Allocate a table page and all code pages needed for a file.
+;
+; IN:   R1 = file size in bytes
+;
+; OUT:  R1 = physical address of the table page (0 on failure)
+;       R2 = number of code pages allocated
+;       R3 = 0 on success, ERR_NOMEM on failure
+;
+; The table page layout:
+;   [table + 0]  : count (number of code pages)
+;   [table + 4]  : physical address of code page 0
+;   [table + 8]  : physical address of code page 1
+;   ...
+;   [table + 4 + i*4] : physical address of code page i
+;
+; On failure, all allocated pages are freed automatically.
+;------------------------------------------------------------------------------
+pages_allocate_table:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R1                 ; file size
+    LI  R2 PAGE_SIZE
+    ; compute num_pages = ceil(size / PAGE_SIZE)
+    ADD R1 R8 R2
+    SUB R1 R1 1               ; (fsz + 4095) / 4096
+    DIV R1 R1 R2              ; R1 = count
+    MOV R9 R1                 ; save count
+
+    Debug 2
+
+    ; ---- allocate table page ----
+    BL page_alloc
+    CMP R1 0
+    BEQ table_alloc_fail
+    MOV R10 R1                ; table PA
+    LI R3 PAGE_SIZE
+    BL mem_zero               ; zero table
+    STW R9 [R10]              ; store count
+
+    ; ---- allocate code pages and fill table ----
+    LI R11 0                  ; index
+    LI R12 0                  ; error flag
+alloc_table_loop:
+    CMP R11 R9
+    BGE alloc_table_done
+    BL page_alloc             ;get new page
+    CMP R1 0
+    BEQ alloc_table_fail
+    SHL R3 R11 2
+    ADD R4 R10 R3
+    ADD R4 R4 4
+    STW R1 [R4]               ; store R1 - new PA at table[4 + i*4]
+    ADD R11 R11 1
+    B alloc_table_loop
+alloc_table_done:
+    ; success
+    MOV R1 R10                ; table PA
+    MOV R2 R9                 ; count
+    LI R3 0                   ; success
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+alloc_table_fail:
+    ; free all already allocated code pages and the table
+    MOV R12 R11               ; number allocated so far
+    LI R11 0
+rollback_loop:
+    CMP R11 R12
+    BGE rollback_done
+    SHL R3 R11 2
+    ADD R4 R10 R3
+    ADD R4 R4 4
+    LDW R1 [R4]
+    CMP R1 0
+    BEQ rollback_next
+    BL page_put
+rollback_next:
+    ADD R11 R11 1
+    B rollback_loop
+rollback_done:
+    MOV R1 R10
+    BL page_put               ; free table
+    LI R1 0
+    LI R2 0
+    LI R3 ERR_NOMEM
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+table_alloc_fail:
+    LI R1 0
+    LI R2 0
+    LI R3 ERR_NOMEM
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;------------------------------------------------------------------------------
+; pages_free_table - Free a table and all its code pages.
+;
+; IN:   R1 = physical address of the table page
+; OUT:  none
+;------------------------------------------------------------------------------
+pages_free_table:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
+    CMP R1 0
+    BEQ free_table_done
+    MOV R8 R1                 ; table PA
+    LDW R9 [R8]               ; count
+    LI R10 0
+free_table_loop:
+    CMP R10 R9
+    BGE free_table_done_pages
+    SHL R3 R10 2
+    ADD R4 R8 R3
+    ADD R4 R4 4
+    LDW R1 [R4]
+    CMP R1 0
+    BEQ free_table_next
+    BL page_put
+free_table_next:
+    ADD R10 R10 1
+    B free_table_loop
+free_table_done_pages:
+    MOV R1 R8
+    BL page_put               ; free the table page itself
+free_table_done:
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;------------------------------------------------------------------------------
+; pages_map_table - Map all code pages from a table to consecutive virtual addresses.
+;
+; IN:   R1 = table PA
+;       R2 = PTBR
+;       R3 = starting virtual address (page-aligned)
+;       R4 = page flags (e.g., USER_RW, KERNEL_USER_ALL)
+;
+; OUT:  none (assumes all pages are valid)
+;
+; Clobbers: R5-R11
+;------------------------------------------------------------------------------
+pages_map_table:
+    PUSH LR
+    PUSH R5
+    PUSH R6
+    PUSH R7
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+
+    MOV R8 R1                 ; table PA
+    MOV R9 R2                 ; PTBR
+    MOV R10 R3                ; VA start
+    MOV R11 R4                ; flags
+    LDW R6 [R8]               ; count
+    LI R7 0
+map_table_loop:
+    CMP R7 R6
+    BGE map_table_done
+    SHL R3 R7 2
+    ADD R4 R8 R3
+    ADD R4 R4 4
+    LDW R5 [R4]            ; physical address
+    MOV R1 R9                 ; PTBR
+    LI  R3 PAGE_SIZE
+    MUL R3 R7 R3              ; offset = index * PAGE_SIZE
+    MOV R2 R10
+    ADD R2 R2 R3              ; VA for this page
+    MOV R3 R5                 ; restore physical page after calculating VA offset
+    MOV R4 R11
+    BL map_page_rt
+    ADD R7 R7 1
+    B map_table_loop
+map_table_done:
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP R5
+    POP LR
+    RET
+
 
 ;================================================================
 ; Page deallocation routines
@@ -7480,15 +7728,46 @@ task_clone_current:
     LI R3 PAGE_SIZE
     BL page_copy
 
-    ; child will inherit code page pa from parent 
-    TASK_GET_CODE_PAGE R2, R7   ; R2 = parent's code page PA
-    TASK_SET_CODE_PAGE R10, R2  ; set child's code page PA to parent's code page PA
-    ; Now increment refcount for the shared code page (if code page is allocated). 
-    ;(it is in case when execve was called before fork or when fork-execve, then fork-execve, then fork-execve etc. - all children share the same code page)
+    ; child will inherit code page pa (tab+codepages) from parent 
+    TASK_GET_CODE_PAGE R2, R7   ; R2 = parent's code page PA table
     CMP R2 0
     BEQ skip_code_get
+    ; 1) allocate new table page
+    BL page_alloc
+    CMP R1 0
+    BEQ clone_fail
+    MOV R12 R1
+    ; 2) copy the table page parnt to child (it contins count and pointers to pa pages)
     MOV R1 R2
-    BL page_get     ;increment refcount for the shared code page (if code page is allocated)
+    MOV R2 R12
+    LI R3 PAGE_SIZE
+    BL page_copy    ;4k
+
+; increment refcounts for each code page
+    LDW R8 [R12]               ; count: +0
+    LI R9 0                    ; page index in tab
+clone_inc_loop:
+    CMP R9 R8
+    BGE clone_inc_done
+    SHL R3 R9 2
+    ADD R4 R12 R3
+    ADD R4 R4 4
+    LDW R1 [R4]                ;pa ptr: R4=R12(=+0) + 4+idx*4
+    CMP R1 0
+    BEQ clone_inc_next
+    BL page_get                ; refcount+1
+clone_inc_next:
+    ADD R9 R9 1
+    B clone_inc_loop
+clone_inc_done:
+
+    TASK_SET_CODE_PAGE R10, R12 ;  set child's code page PA (tab+pages)
+
+   ; TASK_SET_CODE_PAGE R10, R2  ; set child's code page PA to parent's code page PA
+    ; Now increment refcount for the shared code page (if code page is allocated). 
+    ;(it is in case when execve was called before fork or when fork-execve, then fork-execve, then fork-execve etc. - all children share the same code page)
+   ; MOV R1 R2
+   ; BL page_get     ;increment refcount for the shared code page (if code page is allocated)
 skip_code_get:
 
     ; The child has inherited the parent's kernel and code mappings.
@@ -7599,9 +7878,13 @@ clone_fd_done:
 
     
     ; Copy the current kernel trapframe into the child's new kernel stack.
-    ; The trapframe is at SP + 24 (after 6 pushes of 4 bytes each)
-    ; Child trapframe goes at the top of child's stack (R12 - 80)
-    MOV R1 R8                     ; R1 = parent trapframe BASE saved in the beginiig of func
+    ; task_clone_current has one saved return address below the trapframe, so
+    ; recover the trapframe from the balanced current SP instead of R8, which
+    ; was reused for the code-page count above. eto pizdec nado decompose clone.
+    ; issue is fixed by friend - it found SP is in balance here
+    ; so SP+4 is what was in R8 here
+    MOV R1 SP
+    ADD R1 R1 4                   ; R1 = parent trapframe base
     MOV R6 R12
     LI R5 80                    ; trapframe size in bytes
     SUB R6 R6 R5               ; R6 = child trapframe base inside new kernel stack
@@ -7716,8 +7999,11 @@ td_skip_code:
     TASK_GET_CODE_PAGE R2, R12
     CMP R2 0
     BEQ td_done
+
     MOV R1 R2
-    BL page_put        ; put-free user code page
+    BL pages_free_table ;codepage (tab+pages)
+
+    ;BL page_put        ; put-free user code page
 
 td_done:
 
