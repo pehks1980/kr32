@@ -10,7 +10,6 @@
 #include "../lib/libc.inc"
 
 
-
 ;==============================================================================
 ; main - Program entry point
 ; IN:  R1 = argc, R2 = argv
@@ -27,7 +26,6 @@ main:
     PUSH R12
 
     ; allocate 256-byte buffer on stack for reading directory entries
-    ;DEBUG 2
     LI  R3 256
     SUB SP SP R3
     MOV R12 SP              ; R12 = buffer pointer

@@ -7043,8 +7043,6 @@ pages_allocate_table:
     DIV R1 R1 R2              ; R1 = count
     MOV R9 R1                 ; save count
 
-    Debug 2
-
     ; ---- allocate table page ----
     BL page_alloc
     CMP R1 0

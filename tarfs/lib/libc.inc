@@ -87,6 +87,8 @@ puts:
     MOV R2 R8            ; Buffer = string
     MOV R3 R9            ; Count = length
     SVC SYS_WRITE
+    LI  R1 10             ; Newline character
+    BL  putchar           ; Write newline
     POP R9
     POP R8
     POP LR
@@ -1238,9 +1240,6 @@ printf:
 
     SUB SP SP 80              ; local frame: 44 + 34 + padding
 
-    MOV R8 R1                 ; format pointer
-    LI  R9 0                  ; argument index
-
     ; Save R2..R12 to local array
     STW R2 [SP + 0]
     STW R3 [SP + 4]
@@ -1253,6 +1252,9 @@ printf:
     STW R10 [SP + 32]
     STW R11 [SP + 36]
     STW R12 [SP + 40]
+
+    MOV R8 R1                 ; format pointer
+    LI  R9 0                  ; argument index
 
     MOV R10 SP                ; base of saved registers
     ADD R11 SP 44             ; conversion buffer
@@ -1494,3 +1496,72 @@ newline_str:
 
 ch_buf:
     .ASCIIZ "\0"
+
+;------------------------------------------------------------------------------
+; atoi
+;
+; Convert decimal ASCII string to signed integer.
+;
+; IN:
+;   R1 = string pointer
+;
+; OUT:
+;   R1 = integer
+;
+; Supports:
+;   "123"
+;   "-123"
+;   "0"
+;
+; Minimal KR32 implementation.
+;------------------------------------------------------------------------------
+
+atoi:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
+    MOV R8 R1          ; R8 = string
+    LI  R9 0           ; R9 = result
+    LI  R10 0          ; R10 = negative flag
+
+    ; Check '-'
+    LDB R2 [R8]
+    CMP R2 45          ; '-'
+    BNE atoi_loop
+    LI R10 1
+    ADD R8 R8 1
+atoi_loop:
+    LDB R2 [R8]
+    ; end of string
+    CMP R2 0
+    BEQ atoi_done
+    ; only accept '0'..'9'
+    CMP R2 48       ; '0'
+    BLT atoi_done
+    CMP R2 57       ; '9'
+    BGT atoi_done
+
+    ; digit = char - '0'
+    SUB R2 R2 48
+
+    ; result = result * 10 + digit
+    LI  R3 10
+    MUL R9 R9 R3
+    ADD R9 R9 R2
+    ADD R8 R8 1
+    B atoi_loop
+atoi_done:
+    CMP R10 1
+    BNE atoi_positive
+    ; negate NEG =)
+    NOT R9 R9
+    ADD R9 R9 1
+atoi_positive:
+    MOV R1 R9
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
