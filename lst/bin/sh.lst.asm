@@ -617,137 +617,236 @@ malloc_init_done:
 ;==============================================================================
 ; INTERNAL HELPERS
 ;==============================================================================
+; ================================================================
+; Convert integer into temporary buffer
+;
+; R9  = current value
+; R10 = pointer to next free byte in temporary buffer
+; R11 = base (2, 10, or 16)
+; R4  = number of digits stored
+;
+; Each division produces:
+;
+;   quotient  = value / base
+;   remainder = value % base
+;
+; The remainder is the next digit.
+;
+; Digits are generated backwards, for example:
+;
+;   123
+;
+; first produces:
+;
+;   3
+;   2
+;   1
+;
+; so the temporary buffer contains:
+;
+;   "321"
+;
+; The copy loop below will reverse it into "123".
+;
+;                 itoa_core
+;                     |
+;          ┌──────────┴──────────┐
+;          │                     │
+;      R9 = value           R10 = temp[]
+;          │                     │
+;          ↓                     ↓
+;       DIV/MOD                STB
+;          │                     │
+;     ┌────┴────┐                │
+;     ↓         ↓                │
+; R6=quotient R7=remainder       │
+;     │         │                │
+;     │         └──→ ASCII ────--┘
+;     │
+;     └────→ R9 for next loop
+;R8  destination pointer
+;R9  current integer value
+;R10 temporary-buffer pointer
+;R11 base
+;R12 sign flag
+;R4  digit counter
+;R6  quotient
+;R7  remainder
+;R5  scratch / divisor
+; ================================================================
 
-;---------------------------------------------------------
-; itoa_core - Universal integer to string converter
-;
-; R1 = destination buffer
-; R2 = integer to convert
-; R3 = base (2, 10, or 16)
-; R4 = sign flag (1 = signed, 0 = unsigned)
-; R5 = temp buffer size needed
-;
-; Returns:
-;   R1 = original destination pointer
-;---------------------------------------------------------
 itoa_core:
 0x00043698       PUSH LR
-0x0004369C       PUSH R8
-0x000436A0       PUSH R9
-0x000436A4       PUSH R10
-0x000436A8       PUSH R11
-0x000436AC       PUSH R12
+0x0004369C       PUSH R5
+0x000436A0       PUSH R6
+0x000436A4       PUSH R7
+0x000436A8       PUSH R8
+0x000436AC       PUSH R9
+0x000436B0       PUSH R10
+0x000436B4       PUSH R11
+0x000436B8       PUSH R12
 
-0x000436B0       MOV  R8  R1          ; Save destination
-
-0x000436B4       MOV  R9  R2          ; Working value
-0x000436B8       MOV  R11 R3          ; Base
-0x000436BC       MOV  R12 R4          ; Sign flag
-    ;MOV  R10 R5          ; Temp buffer size
-
+0x000436BC       MOV  R8  R1          ; Save destination
+0x000436C0       MOV  R9  R2          ; Working value
+0x000436C4       MOV  R11 R3          ; Base
+0x000436C8       MOV  R12 R4          ; Sign flag
     ; Allocate temp buffer (size passed in R5)
-0x000436C0       SUB  SP SP R5
-0x000436C4       MOV  R10 R1          ; Keep original pointer
-0x000436C8       MOV  R6  SP          ; Temp buffer pointer
-0x000436CC       push R5              ; save R5 for frame leave
-0x000436D0       MOV  R7  R6          ; Save start of temp buffer
+0x000436CC       SUB  SP SP R5
+0x000436D0       MOV  R10 SP          ; Temp buffer pointer
+
+0x000436D4       PUSH R5              ; save R5 for frame leave
+0x000436D8       PUSH R8              ; save result bufer
 
     ; Check for sign (if signed and negative)
-0x000436D4       CMP  R12 1
-0x000436D8       BNE  itoa_core_unsigned
+0x000436DC       CMP  R12 1
+0x000436E0       BNE  itoa_core_unsigned
 
-0x000436E0       CMP  R9 0
-0x000436E4       BGE  itoa_core_unsigned
+0x000436E8       CMP  R9 0
+0x000436EC       BGE  itoa_core_unsigned
 
     ; Negative number - add minus sign
-0x000436EC       LI   R2 45     ;'-'
-0x000436F4       STB  R2 [R8]
-0x000436F8       ADD  R8 R8 1
-0x000436FC       NOT  R9 R9
-0x00043700       ADD  R9 R9 1
+0x000436F4       LI   R2 45     ;'-'
+0x000436FC       STB  R2 [R8]
+0x00043700       ADD  R8 R8 1
+0x00043704       NOT  R9 R9
+0x00043708       ADD  R9 R9 1
     ;NEG  R9              ; Make positive
 
 itoa_core_unsigned:
     ; Special case: zero
-0x00043704       CMP  R9 0
-0x00043708       BNE  itoa_core_convert
+0x0004370C       CMP  R9 0
+0x00043710       BNE  itoa_core_convert
 
-0x00043710       LI   R2 48    ; '0'
-0x00043718       STB  R2 [R8]
-0x0004371C       ADD  R8 R8 1
-0x00043720       LI   R2 0
-0x00043728       STB  R2 [R8]
-0x0004372C       B    itoa_core_finish
+0x00043718       LI   R2 48    ; '0'
+0x00043720       STB  R2 [R8]
+0x00043724       ADD  R8 R8 1
+0x00043728       LI   R2 0
+0x00043730       STB  R2 [R8]
+0x00043734       B    itoa_core_finish
 
 itoa_core_convert:
-0x00043734       LI   R4 0            ; Digit counter
+
+0x0004373C       LI  R4 0                  ; R4 = digit counter
 
 itoa_core_divloop:
-0x0004373C       MOV  R5 R9
-0x00043740       DIV  R6 R5 R11       ; R6 = quotient, R9 = remainder
-0x00043744       MOD  R7 R9 R11       ; R7 = remainder
-
-    ; Convert digit to ASCII based on base
-0x00043748       CMP  R11 16
-0x0004374C       BEQ  itoa_core_hex_digit
-
-    ; Base 2 or 10: digit 0-9
-0x00043754       ADD  R7 R7 48        ; '0' + digit
-0x00043758       B    itoa_core_store
+    ; ------------------------------------------------------------
+    ; Divide current value by base
+    ;
+    ; R9  = current value
+    ; R11 = base
+    ;
+    ; We need to keep R9 unchanged for MOD, so use R5
+    ; as the DIV source.
+    ; ------------------------------------------------------------
+0x00043744       MOV R5 R9
+    ; R6 = quotient
+0x00043748       DIV R6 R5 R11
+    ; R7 = remainder
+0x0004374C       MOD R7 R9 R11
+    ; ------------------------------------------------------------
+    ; Convert remainder to ASCII
+    ;
+    ; For base 2 and 10:
+    ;     0..9 -> '0'..'9'
+    ;
+    ; For base 16:
+    ;     0..9  -> '0'..'9'
+    ;     10..15 -> 'A'..'F'
+    ; ------------------------------------------------------------
+0x00043750       CMP R11 16
+0x00043754       BEQ itoa_core_hex_digit
+    ; Base 2 or base 10
+0x0004375C       ADD R7 R7 48             ; '0' + digit
+0x00043760       B itoa_core_store
 
 itoa_core_hex_digit:
-    ; Base 16: digit 0-15
-0x00043760       CMP  R7 9
-0x00043764       BGT  itoa_core_hex_letter
-0x0004376C       ADD  R7 R7 48        ; '0' + digit
-0x00043770       B    itoa_core_store
+0x00043768       CMP R7 9
+0x0004376C       BGT itoa_core_hex_letter
+    ; 0..9
+0x00043774       ADD R7 R7 48             ; '0' + digit
+0x00043778       B itoa_core_store
 
 itoa_core_hex_letter:
-0x00043778       SUB  R7 R7 10
-0x0004377C       ADD  R7 R7 65        ; 'A' + (digit-10)
+    ; 10..15
+0x00043780       SUB R7 R7 10
+0x00043784       ADD R7 R7 65             ; 'A' + (digit - 10)
+
+; ================================================================
+; Store generated digit
+; ================================================================
 
 itoa_core_store:
-0x00043780       STB  R7 [R6]         ; Store in temp buffer
-0x00043784       ADD  R6 R6 1
-0x00043788       ADD  R4 R4 1         ; Increment digit count
 
-0x0004378C       MOV  R9 R5           ; Quotient becomes new value
-0x00043790       CMP  R9 0
-0x00043794       BNE  itoa_core_divloop
+0x00043788       STB R7 [R10]    ;R10 is the temporary-buffer pointer.
 
-    ; Point to last digit
-0x0004379C       SUB  R6 R6 1
+0x0004378C       ADD R10 R10 1
+0x00043790       ADD R4 R4 1     ; One more digit generated
+
+    ; ------------------------------------------------------------
+    ; The quotient becomes the value for the next iteration.
+    ;
+    ; Example:
+    ;
+    ;   123 / 10 = 12
+    ;    12 / 10 = 1
+    ;     1 / 10 = 0
+    ; ------------------------------------------------------------
+
+0x00043794       MOV R9 R6
+
+    ; Continue until quotient becomes zero
+0x00043798       CMP R9 0
+0x0004379C       BNE itoa_core_divloop
+
+; ================================================================
+; Digits are now stored backwards in temporary buffer.
+; temp = "321"
+;
+; R10 points just AFTER the last digit.
+;
+; Move back to the final digit:
+; ================================================================
+
+0x000437A4       SUB R10 R10 1
+
+; ================================================================
+; Copy digits from temporary buffer backwards
+; ================================================================
 
 itoa_core_copy:
-0x000437A0       CMP  R4 0
-0x000437A4       BEQ  itoa_core_done
-
-0x000437AC       LDB  R2 [R6]         ; Get digit from temp (reverse order)
-0x000437B0       STB  R2 [R8]         ; Store in destination
-0x000437B4       ADD  R8 R8 1
-0x000437B8       SUB  R6 R6 1
-0x000437BC       SUB  R4 R4 1
-0x000437C0       B    itoa_core_copy
+0x000437A8       CMP R4 0
+0x000437AC       BEQ itoa_core_done
+    ; Read last generated digit
+0x000437B4       LDB R2 [R10]
+    ; Write it to destination
+0x000437B8       STB R2 [R8]
+0x000437BC       ADD R8 R8 1
+    ; Move backwards through temporary buffer
+0x000437C0       SUB R10 R10 1
+    ; One less digit
+0x000437C4       SUB R4 R4 1
+0x000437C8       B itoa_core_copy
 
 itoa_core_done:
-0x000437C8       LI   R2 0
-0x000437D0       STB  R2 [R8]         ; Null terminate
+0x000437D0       LI   R2 0
+0x000437D8       STB  R2 [R8]         ; Null terminate
 
 itoa_core_finish:
-0x000437D4       POP  R5
+0x000437DC       POP  R1              ; Return original pointer
+0x000437E0       POP  R5
     ; Clean up temp buffer
-0x000437D8       ADD  SP SP R5
+0x000437E4       ADD  SP SP R5
 
-    ; Return original pointer
-0x000437DC       MOV  R1 R10
-
-0x000437E0       POP  R12
-0x000437E4       POP  R11
-0x000437E8       POP  R10
-0x000437EC       POP  R9
-0x000437F0       POP  R8
-0x000437F4       POP  LR
-0x000437F8       RET
+0x000437E8       POP R12
+0x000437EC       POP R11
+0x000437F0       POP R10
+0x000437F4       POP R9
+0x000437F8       POP R8
+0x000437FC       POP R7
+0x00043800       POP R6
+0x00043804       POP R5
+0x00043808       POP LR
+0x0004380C       RET
 
 ;---------------------------------------------------------
 ; itoa_dec - Decimal conversion wrapper
@@ -757,16 +856,16 @@ itoa_core_finish:
 ; Returns: R1 = original buffer pointer
 ;---------------------------------------------------------
 itoa_dec:
-0x000437FC       PUSH LR
+0x00043810       PUSH LR
 
     ; Max 11 digits + sign + null = 13 bytes
-0x00043800       LI   R3 10           ; Base 10
-0x00043808       LI   R4 1            ; Signed
-0x00043810       LI   R5 13           ; Temp buffer size
-0x00043818   CALL itoa_core
+0x00043814       LI   R3 10           ; Base 10
+0x0004381C       LI   R4 1            ; Signed
+0x00043824       LI   R5 13           ; Temp buffer size
+0x0004382C   CALL itoa_core
 
-0x00043820       POP  LR
-0x00043824       RET
+0x00043834       POP  LR
+0x00043838       RET
 
 ;---------------------------------------------------------
 ; itoa_hex - Hexadecimal conversion wrapper
@@ -776,16 +875,16 @@ itoa_dec:
 ; Returns: R1 = original buffer pointer
 ;---------------------------------------------------------
 itoa_hex:
-0x00043828       PUSH LR
+0x0004383C       PUSH LR
 
     ; Max 8 digits + null = 9 bytes
-0x0004382C       LI   R3 16           ; Base 16
-0x00043834       LI   R4 0            ; Unsigned (shows raw bits)
-0x0004383C       LI   R5 9            ; Temp buffer size
-0x00043844   CALL itoa_core
+0x00043840       LI   R3 16           ; Base 16
+0x00043848       LI   R4 0            ; Unsigned (shows raw bits)
+0x00043850       LI   R5 9            ; Temp buffer size
+0x00043858   CALL itoa_core
 
-0x0004384C       POP  LR
-0x00043850       RET
+0x00043860       POP  LR
+0x00043864       RET
 
 
 ;---------------------------------------------------------
@@ -796,16 +895,16 @@ itoa_hex:
 ; Returns: R1 = original buffer pointer
 ;---------------------------------------------------------
 itoa_oct:
-0x00043854       PUSH LR
+0x00043868       PUSH LR
 
     ; Max 12 digits + null = 13 bytes
-0x00043858       LI   R3 8            ; Base 8
-0x00043860       LI   R4 0            ; Unsigned (shows raw bits)
-0x00043868       LI   R5 13           ; Temp buffer size
-0x00043870   CALL itoa_core
+0x0004386C       LI   R3 8            ; Base 8
+0x00043874       LI   R4 0            ; Unsigned (shows raw bits)
+0x0004387C       LI   R5 13           ; Temp buffer size
+0x00043884   CALL itoa_core
 
-0x00043878       POP  LR
-0x0004387C       RET
+0x0004388C       POP  LR
+0x00043890       RET
 
 ;---------------------------------------------------------
 ; itoa_bin - Binary conversion wrapper
@@ -815,16 +914,16 @@ itoa_oct:
 ; Returns: R1 = original buffer pointer
 ;---------------------------------------------------------
 itoa_bin:
-0x00043880       PUSH LR
+0x00043894       PUSH LR
 
     ; Max 32 bits + null = 33 bytes
-0x00043884       LI   R3 2            ; Base 2
-0x0004388C       LI   R4 0            ; Unsigned (shows raw bits)
-0x00043894       LI   R5 33           ; Temp buffer size
-0x0004389C   CALL itoa_core
+0x00043898       LI   R3 2            ; Base 2
+0x000438A0       LI   R4 0            ; Unsigned (shows raw bits)
+0x000438A8       LI   R5 33           ; Temp buffer size
+0x000438B0   CALL itoa_core
 
-0x000438A4       POP  LR
-0x000438A8       RET
+0x000438B8       POP  LR
+0x000438BC       RET
 
 ;---------------------------------------------------------
 ; itoa_signed_hex - Signed hexadecimal wrapper
@@ -834,16 +933,16 @@ itoa_bin:
 ; Returns: R1 = original buffer pointer
 ;---------------------------------------------------------
 itoa_signed_hex:
-0x000438AC       PUSH LR
+0x000438C0       PUSH LR
 
     ; Max 8 digits + sign + null = 10 bytes
-0x000438B0       LI   R3 16           ; Base 16
-0x000438B8       LI   R4 1            ; Signed (shows sign)
-0x000438C0       LI   R5 10           ; Temp buffer size
-0x000438C8   CALL itoa_core
+0x000438C4       LI   R3 16           ; Base 16
+0x000438CC       LI   R4 1            ; Signed (shows sign)
+0x000438D4       LI   R5 10           ; Temp buffer size
+0x000438DC   CALL itoa_core
 
-0x000438D0       POP  LR
-0x000438D4       RET
+0x000438E4       POP  LR
+0x000438E8       RET
 
 ;---------------------------------------------------------
 ; itoa_signed_bin - Signed binary wrapper
@@ -853,16 +952,16 @@ itoa_signed_hex:
 ; Returns: R1 = original buffer pointer
 ;---------------------------------------------------------
 itoa_signed_bin:
-0x000438D8       PUSH LR
+0x000438EC       PUSH LR
 
     ; Max 32 bits + sign + null = 34 bytes
-0x000438DC       LI   R3 2            ; Base 2
-0x000438E4       LI   R4 1            ; Signed (shows sign)
-0x000438EC       LI   R5 34           ; Temp buffer size
-0x000438F4   CALL itoa_core
+0x000438F0       LI   R3 2            ; Base 2
+0x000438F8       LI   R4 1            ; Signed (shows sign)
+0x00043900       LI   R5 34           ; Temp buffer size
+0x00043908   CALL itoa_core
 
-0x000438FC       POP  LR
-0x00043900       RET
+0x00043910       POP  LR
+0x00043914       RET
 
 ;------------------------------------------------------------------------------
 ; strcpy(dest, src)
@@ -877,25 +976,25 @@ itoa_signed_bin:
 ;   R1 = destination pointer (original)
 ;------------------------------------------------------------------------------
 strcpy:
-0x00043904       PUSH LR
-0x00043908       MOV R3 R1              ; Save original destination pointer
-0x0004390C       MOV R4 R2              ; Save source pointer
+0x00043918       PUSH LR
+0x0004391C       MOV R3 R1              ; Save original destination pointer
+0x00043920       MOV R4 R2              ; Save source pointer
 
 strcpy_loop:
-0x00043910       LDB R2 [R4]            ; Load byte from source
-0x00043914       STB R2 [R1]            ; Store byte to destination
+0x00043924       LDB R2 [R4]            ; Load byte from source
+0x00043928       STB R2 [R1]            ; Store byte to destination
 
-0x00043918       CMP R2 0               ; Check if it's null terminator
-0x0004391C       BEQ strcpy_done        ; If zero, we're done
+0x0004392C       CMP R2 0               ; Check if it's null terminator
+0x00043930       BEQ strcpy_done        ; If zero, we're done
 
-0x00043924       ADD R1 R1 1            ; Advance destination pointer
-0x00043928       ADD R4 R4 1            ; Advance source pointer
-0x0004392C       B strcpy_loop
+0x00043938       ADD R1 R1 1            ; Advance destination pointer
+0x0004393C       ADD R4 R4 1            ; Advance source pointer
+0x00043940       B strcpy_loop
 
 strcpy_done:
-0x00043934       MOV R1 R3              ; Return original destination pointer
-0x00043938       POP LR
-0x0004393C       RET
+0x00043948       MOV R1 R3              ; Return original destination pointer
+0x0004394C       POP LR
+0x00043950       RET
 
 
 ;==============================================================================
@@ -918,53 +1017,53 @@ strcpy_done:
 ; Opens a directory file and returns a handle for readdir
 ;------------------------------------------------------------------------------
 opendir:
-0x00043940       PUSH LR
-0x00043944       PUSH R8
-0x00043948       PUSH R9
+0x00043954       PUSH LR
+0x00043958       PUSH R8
+0x0004395C       PUSH R9
 
-0x0004394C       MOV R8 R1            ; Save path
+0x00043960       MOV R8 R1            ; Save path
     ; Open directory with read-only flags (same as your ls.asm)
-0x00043950       MOV R1 R8
-0x00043954       LI  R2 O_RDONLY
-0x0004395C       SVC SYS_OPEN
-0x00043960       MOV R9 R1           ;fd
-0x00043964       CMP R1 0
-0x00043968       BLT opendir_error
+0x00043964       MOV R1 R8
+0x00043968       LI  R2 O_RDONLY
+0x00043970       SVC SYS_OPEN
+0x00043974       MOV R9 R1           ;fd
+0x00043978       CMP R1 0
+0x0004397C       BLT opendir_error
 
     ; Allocate DIR structure (small, just fd and offset)
-0x00043970       PUSH R9                 ;save R9 jic
-0x00043974       LI R1 DIR_SIZEOF
-0x0004397C   CALL malloc
-0x00043984       POP  R9
+0x00043984       PUSH R9                 ;save R9 jic
+0x00043988       LI R1 DIR_SIZEOF
+0x00043990   CALL malloc
+0x00043998       POP  R9
 
-0x00043988       CMP R1 0
-0x0004398C       BEQ opendir_error_close
+0x0004399C       CMP R1 0
+0x000439A0       BEQ opendir_error_close
 
-0x00043994       MOV R8 R1            ; Save DIR*
+0x000439A8       MOV R8 R1            ; Save DIR*
 
     ; Initialize DIR structure
     ; R2 still has fd from open
-0x00043998       STW R9 [R8 + DIR_FD]
-0x0004399C       LI  R2 0
-0x000439A4       STW R2 [R8 + DIR_OFFSET]
+0x000439AC       STW R9 [R8 + DIR_FD]
+0x000439B0       LI  R2 0
+0x000439B8       STW R2 [R8 + DIR_OFFSET]
 
-0x000439A8       MOV R1 R8            ; Return DIR*
-0x000439AC       B opendir_done
+0x000439BC       MOV R1 R8            ; Return DIR*
+0x000439C0       B opendir_done
 
 opendir_error_close:
-0x000439B4       MOV R1 R9            ; fd is in R9
-0x000439B8       SVC SYS_CLOSE
-0x000439BC       LI R1 0
-0x000439C4       B opendir_done
+0x000439C8       MOV R1 R9            ; fd is in R9
+0x000439CC       SVC SYS_CLOSE
+0x000439D0       LI R1 0
+0x000439D8       B opendir_done
 
 opendir_error:
-0x000439CC       LI R1 0
+0x000439E0       LI R1 0
 
 opendir_done:
-0x000439D4       POP R9
-0x000439D8       POP R8
-0x000439DC       POP LR
-0x000439E0       RET
+0x000439E8       POP R9
+0x000439EC       POP R8
+0x000439F0       POP LR
+0x000439F4       RET
 
 ;------------------------------------------------------------------------------
 ; readdir - Read next directory entry
@@ -976,51 +1075,51 @@ opendir_done:
 ; Reads the next directory entry using the kernel's readdir via SYS_READ
 ;------------------------------------------------------------------------------
 readdir:
-0x000439E4       PUSH LR
-0x000439E8       PUSH R8
-0x000439EC       PUSH R9
+0x000439F8       PUSH LR
+0x000439FC       PUSH R8
+0x00043A00       PUSH R9
 
-0x000439F0       MOV R8 R1            ; DIR*
-0x000439F4       MOV R9 R2            ; User's dirent buffer
+0x00043A04       MOV R8 R1            ; DIR*
+0x00043A08       MOV R9 R2            ; User's dirent buffer
 
     ; Check if DIR pointer is valid
-0x000439F8       CMP R8 0
-0x000439FC       BEQ readdir_error
+0x00043A0C       CMP R8 0
+0x00043A10       BEQ readdir_error
 
     ; Read one dirent from directory fd using current offset
-0x00043A04       LDW R1 [R8 + DIR_FD] ; fd
+0x00043A18       LDW R1 [R8 + DIR_FD] ; fd
 
     ; Use the directory's offset - we need to implement lseek or use
     ; the fact that each read gets one dirent at a time from tarfs
-0x00043A08       MOV R2 R9            ; user buffer
-0x00043A0C       LI  R3 DIRENT_SIZEOF ; size of one dirent
-0x00043A14       SVC SYS_READ
-0x00043A18       CMP R1 0
-0x00043A1C       BEQ readdir_end      ; EOF
-0x00043A24       CMP R1 DIRENT_SIZEOF
-0x00043A28       BNE readdir_error    ; Short read or error
+0x00043A1C       MOV R2 R9            ; user buffer
+0x00043A20       LI  R3 DIRENT_SIZEOF ; size of one dirent
+0x00043A28       SVC SYS_READ
+0x00043A2C       CMP R1 0
+0x00043A30       BEQ readdir_end      ; EOF
+0x00043A38       CMP R1 DIRENT_SIZEOF
+0x00043A3C       BNE readdir_error    ; Short read or error
 
     ; Entry read successfully
     ; Update the offset in DIR structure
-0x00043A30       LDW R2 [R8 + DIR_OFFSET]
-0x00043A34       ADD R2 R2 1
-0x00043A38       STW R2 [R8 + DIR_OFFSET]
+0x00043A44       LDW R2 [R8 + DIR_OFFSET]
+0x00043A48       ADD R2 R2 1
+0x00043A4C       STW R2 [R8 + DIR_OFFSET]
 
-0x00043A3C       LI R1 1              ; Return success
-0x00043A44       B readdir_done
+0x00043A50       LI R1 1              ; Return success
+0x00043A58       B readdir_done
 
 readdir_error:
-0x00043A4C       LI R1 -1
-0x00043A54       B readdir_done
+0x00043A60       LI R1 -1
+0x00043A68       B readdir_done
 
 readdir_end:
-0x00043A5C       LI R1 0
+0x00043A70       LI R1 0
 
 readdir_done:
-0x00043A64       POP R9
-0x00043A68       POP R8
-0x00043A6C       POP LR
-0x00043A70       RET
+0x00043A78       POP R9
+0x00043A7C       POP R8
+0x00043A80       POP LR
+0x00043A84       RET
 
 ;------------------------------------------------------------------------------
 ; closedir - Close directory stream
@@ -1029,31 +1128,31 @@ readdir_done:
 ; OUT: R1 = 0 on success, -1 on error
 ;------------------------------------------------------------------------------
 closedir:
-0x00043A74       PUSH LR
-0x00043A78       PUSH R8
+0x00043A88       PUSH LR
+0x00043A8C       PUSH R8
 
-0x00043A7C       MOV R8 R1
-0x00043A80       CMP R8 0
-0x00043A84       BEQ closedir_error
+0x00043A90       MOV R8 R1
+0x00043A94       CMP R8 0
+0x00043A98       BEQ closedir_error
 
     ; Close the directory fd
-0x00043A8C       LDW R1 [R8 + DIR_FD]
-0x00043A90       SVC SYS_CLOSE
+0x00043AA0       LDW R1 [R8 + DIR_FD]
+0x00043AA4       SVC SYS_CLOSE
 
     ; Free the DIR structure
-0x00043A94       MOV R1 R8
-0x00043A98   CALL free
+0x00043AA8       MOV R1 R8
+0x00043AAC   CALL free
 
-0x00043AA0       LI R1 0
-0x00043AA8       B closedir_done
+0x00043AB4       LI R1 0
+0x00043ABC       B closedir_done
 
 closedir_error:
-0x00043AB0       LI R1 -1
+0x00043AC4       LI R1 -1
 
 closedir_done:
-0x00043AB8       POP R8
-0x00043ABC       POP LR
-0x00043AC0       RET
+0x00043ACC       POP R8
+0x00043AD0       POP LR
+0x00043AD4       RET
 
 ;------------------------------------------------------------------------------
 ; rewinddir - Reset directory stream to beginning
@@ -1061,29 +1160,29 @@ closedir_done:
 ; IN:  R1 = DIR*
 ;------------------------------------------------------------------------------
 rewinddir:
-0x00043AC4       CMP R1 0
-0x00043AC8       BEQ rewinddir_done
+0x00043AD8       CMP R1 0
+0x00043ADC       BEQ rewinddir_done
 
-0x00043AD0       LI R2 0
-0x00043AD8       STW R2 [R1 + DIR_OFFSET]
+0x00043AE4       LI R2 0
+0x00043AEC       STW R2 [R1 + DIR_OFFSET]
 
     ; Need to seek to beginning of directory
     ; For tarfs, this means closing and reopening, or using lseek
     ; Simple approach: close and reopen
-0x00043ADC       PUSH LR
-0x00043AE0       PUSH R8
+0x00043AF0       PUSH LR
+0x00043AF4       PUSH R8
 
-0x00043AE4       MOV R8 R1
+0x00043AF8       MOV R8 R1
     ; Save the path - we don't have it stored, so this is tricky
     ; In a real implementation, store path in DIR structure
 
     ; For now, just reset offset and rely on readdir's behavior
 
-0x00043AE8       POP R8
-0x00043AEC       POP LR
+0x00043AFC       POP R8
+0x00043B00       POP LR
 
 rewinddir_done:
-0x00043AF0       RET
+0x00043B04       RET
 
 ;------------------------------------------------------------------------------
 ; dirfd - Get file descriptor from DIR*
@@ -1092,15 +1191,15 @@ rewinddir_done:
 ; OUT: R1 = file descriptor, or -1 on error
 ;------------------------------------------------------------------------------
 dirfd:
-0x00043AF4       CMP R1 0
-0x00043AF8       BEQ dirfd_error
+0x00043B08       CMP R1 0
+0x00043B0C       BEQ dirfd_error
 
-0x00043B00       LDW R1 [R1 + DIR_FD]
-0x00043B04       RET
+0x00043B14       LDW R1 [R1 + DIR_FD]
+0x00043B18       RET
 
 dirfd_error:
-0x00043B08       LI R1 -1
-0x00043B10       RET
+0x00043B1C       LI R1 -1
+0x00043B24       RET
 
 ;------------------------------------------------------------------------------
 ; Helper: is_dir - Check if a path is a directory
@@ -1109,92 +1208,92 @@ dirfd_error:
 ; OUT: R1 = 1 if directory, 0 if not, -1 on error
 ;------------------------------------------------------------------------------
 is_dir:
-0x00043B14       PUSH LR
+0x00043B28       PUSH LR
 
     ; Try to open as directory
-0x00043B18   CALL opendir
-0x00043B20       CMP R1 0
-0x00043B24       BEQ is_dir_not_dir
+0x00043B2C   CALL opendir
+0x00043B34       CMP R1 0
+0x00043B38       BEQ is_dir_not_dir
 
     ; It opened as a directory
-0x00043B2C       MOV R2 R1            ; Save DIR*
-0x00043B30       LI R1 1              ; Return true
-0x00043B38   CALL closedir
-0x00043B40       B is_dir_done
+0x00043B40       MOV R2 R1            ; Save DIR*
+0x00043B44       LI R1 1              ; Return true
+0x00043B4C   CALL closedir
+0x00043B54       B is_dir_done
 
 is_dir_not_dir:
-0x00043B48       LI R1 0
+0x00043B5C       LI R1 0
 
 is_dir_done:
-0x00043B50       POP LR
-0x00043B54       RET
+0x00043B64       POP LR
+0x00043B68       RET
 
 ;------------------------------------------------------------------------------
 ; Example usage function - list directory contents (like ls)
 ; This demonstrates how to use opendir/readdir/closedir
 ;------------------------------------------------------------------------------
 list_directory:
-0x00043B58       PUSH LR
-0x00043B5C       PUSH R8
-0x00043B60       PUSH R9
+0x00043B6C       PUSH LR
+0x00043B70       PUSH R8
+0x00043B74       PUSH R9
 
-0x00043B64       MOV R8 R1            ; path
+0x00043B78       MOV R8 R1            ; path
 
     ; Allocate dirent on stack
-0x00043B68       SUB SP SP DIRENT_SIZEOF
-0x00043B6C       MOV R9 SP
+0x00043B7C       SUB SP SP DIRENT_SIZEOF
+0x00043B80       MOV R9 SP
 
     ; Open directory
-0x00043B70       MOV R1 R8
-0x00043B74   CALL opendir
-0x00043B7C       CMP R1 0
-0x00043B80       BEQ list_dir_error
+0x00043B84       MOV R1 R8
+0x00043B88   CALL opendir
+0x00043B90       CMP R1 0
+0x00043B94       BEQ list_dir_error
 
-0x00043B88       MOV R8 R1            ; DIR*
+0x00043B9C       MOV R8 R1            ; DIR*
 
 list_dir_loop:
-0x00043B8C       MOV R1 R8
-0x00043B90       MOV R2 R9
-0x00043B94   CALL readdir
-0x00043B9C       CMP R1 0
-0x00043BA0       BEQ list_dir_close
-0x00043BA8       LI  R2 -1
-0x00043BB0       CMP R1 R2
-0x00043BB4       BEQ list_dir_error
+0x00043BA0       MOV R1 R8
+0x00043BA4       MOV R2 R9
+0x00043BA8   CALL readdir
+0x00043BB0       CMP R1 0
+0x00043BB4       BEQ list_dir_close
+0x00043BBC       LI  R2 -1
+0x00043BC4       CMP R1 R2
+0x00043BC8       BEQ list_dir_error
 
     ; Print the name
-0x00043BBC       ADD R1 R9 DIRENT_NAME
-0x00043BC0   CALL puts
+0x00043BD0       ADD R1 R9 DIRENT_NAME
+0x00043BD4   CALL puts
 
     ; If it's a directory, print '/'
-0x00043BC8       LDW R2 [R9 + DIRENT_TYPE]
-0x00043BCC       CMP R2 DT_DIR
-0x00043BD0       BNE list_dir_not_dir
+0x00043BDC       LDW R2 [R9 + DIRENT_TYPE]
+0x00043BE0       CMP R2 DT_DIR
+0x00043BE4       BNE list_dir_not_dir
 
-0x00043BD8       LI R1 slash_char
-0x00043BE0   CALL putchar
+0x00043BEC       LI R1 slash_char
+0x00043BF4   CALL putchar
 
 list_dir_not_dir:
-0x00043BE8       LI R1 newline_char
-0x00043BF0   CALL putchar
+0x00043BFC       LI R1 newline_char
+0x00043C04   CALL putchar
 
-0x00043BF8       B list_dir_loop
+0x00043C0C       B list_dir_loop
 
 list_dir_close:
-0x00043C00       MOV R1 R8
-0x00043C04   CALL closedir
-0x00043C0C       LI R1 0
-0x00043C14       B list_dir_done
+0x00043C14       MOV R1 R8
+0x00043C18   CALL closedir
+0x00043C20       LI R1 0
+0x00043C28       B list_dir_done
 
 list_dir_error:
-0x00043C1C       LI R1 -1
+0x00043C30       LI R1 -1
 
 list_dir_done:
-0x00043C24       ADD SP SP DIRENT_SIZEOF
-0x00043C28       POP R9
-0x00043C2C       POP R8
-0x00043C30       POP LR
-0x00043C34       RET
+0x00043C38       ADD SP SP DIRENT_SIZEOF
+0x00043C3C       POP R9
+0x00043C40       POP R8
+0x00043C44       POP LR
+0x00043C48       RET
 
 ;------------------------------------------------------------------------------
 ; Data Section
@@ -1236,174 +1335,174 @@ newline_char:
 ; Arguments: R2..R12 (first 11), then on stack (caller‑pushed).
 ;------------------------------------------------------------------------------
 printf:
-0x00043C40       PUSH LR
-0x00043C44       PUSH R8
-0x00043C48       PUSH R9
-0x00043C4C       PUSH R10
-0x00043C50       PUSH R11
-0x00043C54       PUSH R12
+0x00043C54       PUSH LR
+0x00043C58       PUSH R8
+0x00043C5C       PUSH R9
+0x00043C60       PUSH R10
+0x00043C64       PUSH R11
+0x00043C68       PUSH R12
 
-0x00043C58       SUB SP SP 80              ; local frame: 44 + 34 + padding
+0x00043C6C       SUB SP SP 80              ; local frame: 44 + 34 + padding
 
     ; Save R2..R12 to local array
-0x00043C5C       STW R2 [SP + 0]
-0x00043C60       STW R3 [SP + 4]
-0x00043C64       STW R4 [SP + 8]
-0x00043C68       STW R5 [SP + 12]
-0x00043C6C       STW R6 [SP + 16]
-0x00043C70       STW R7 [SP + 20]
-0x00043C74       STW R8 [SP + 24]
-0x00043C78       STW R9 [SP + 28]
-0x00043C7C       STW R10 [SP + 32]
-0x00043C80       STW R11 [SP + 36]
-0x00043C84       STW R12 [SP + 40]
+0x00043C70       STW R2 [SP + 0]
+0x00043C74       STW R3 [SP + 4]
+0x00043C78       STW R4 [SP + 8]
+0x00043C7C       STW R5 [SP + 12]
+0x00043C80       STW R6 [SP + 16]
+0x00043C84       STW R7 [SP + 20]
+0x00043C88       STW R8 [SP + 24]
+0x00043C8C       STW R9 [SP + 28]
+0x00043C90       STW R10 [SP + 32]
+0x00043C94       STW R11 [SP + 36]
+0x00043C98       STW R12 [SP + 40]
 
-0x00043C88       MOV R8 R1                 ; format pointer
-0x00043C8C       LI  R9 0                  ; argument index
+0x00043C9C       MOV R8 R1                 ; format pointer
+0x00043CA0       LI  R9 0                  ; argument index
 
-0x00043C94       MOV R10 SP                ; base of saved registers
-0x00043C98       ADD R11 SP 44             ; conversion buffer
+0x00043CA8       MOV R10 SP                ; base of saved registers
+0x00043CAC       ADD R11 SP 44             ; conversion buffer
 
 printf_loop:
-0x00043C9C       LDB R1 [R8]     ;read fmt string char
-0x00043CA0       CMP R1 0
-0x00043CA4       BEQ printf_done
+0x00043CB0       LDB R1 [R8]     ;read fmt string char
+0x00043CB4       CMP R1 0
+0x00043CB8       BEQ printf_done
 
-0x00043CAC       CMP R1 37   ;check for '%'
-0x00043CB0       BNE printf_normal_char
+0x00043CC0       CMP R1 37   ;check for '%'
+0x00043CC4       BNE printf_normal_char
 
-0x00043CB8       ADD R8 R8 1 ; its a '%', move to next char for specifier
-0x00043CBC       LDB R2 [R8]
-0x00043CC0       CMP R2 0
-0x00043CC4       BEQ printf_done
+0x00043CCC       ADD R8 R8 1 ; its a '%', move to next char for specifier
+0x00043CD0       LDB R2 [R8]
+0x00043CD4       CMP R2 0
+0x00043CD8       BEQ printf_done
 
-0x00043CCC       CMP R2 37   ; check for '%%'
-0x00043CD0       BEQ printf_percent
-0x00043CD8       CMP R2 115  ; check for '%s'
-0x00043CDC       BEQ printf_string
-0x00043CE4       CMP R2 100  ;check for '%d'
-0x00043CE8       BEQ printf_int
-0x00043CF0       CMP R2 105  ;check for '%i'
-0x00043CF4       BEQ printf_int
-0x00043CFC       CMP R2 120  ;check for '%x'
-0x00043D00       BEQ printf_hex
-0x00043D08       CMP R2 99   ;check for '%c'
-0x00043D0C       BEQ printf_char
-0x00043D14       CMP R2 98   ;check for '%b'
-0x00043D18       BEQ printf_bin
-0x00043D20       CMP R2 111  ;check for '%o'
-0x00043D24       BEQ printf_oct
+0x00043CE0       CMP R2 37   ; check for '%%'
+0x00043CE4       BEQ printf_percent
+0x00043CEC       CMP R2 115  ; check for '%s'
+0x00043CF0       BEQ printf_string
+0x00043CF8       CMP R2 100  ;check for '%d'
+0x00043CFC       BEQ printf_int
+0x00043D04       CMP R2 105  ;check for '%i'
+0x00043D08       BEQ printf_int
+0x00043D10       CMP R2 120  ;check for '%x'
+0x00043D14       BEQ printf_hex
+0x00043D1C       CMP R2 99   ;check for '%c'
+0x00043D20       BEQ printf_char
+0x00043D28       CMP R2 98   ;check for '%b'
+0x00043D2C       BEQ printf_bin
+0x00043D34       CMP R2 111  ;check for '%o'
+0x00043D38       BEQ printf_oct
 
     ; unknown specifier
-0x00043D2C       LI  R1 37   ;unknown specifier, print '%'
-0x00043D34   CALL putchar
-0x00043D3C       MOV R1 R2   ; print the unknown specifier char
-0x00043D40   CALL putchar
-0x00043D48       B   printf_continue
+0x00043D40       LI  R1 37   ;unknown specifier, print '%'
+0x00043D48   CALL putchar
+0x00043D50       MOV R1 R2   ; print the unknown specifier char
+0x00043D54   CALL putchar
+0x00043D5C       B   printf_continue
 
 printf_normal_char:
-0x00043D50   CALL putchar
-0x00043D58       B   printf_continue
+0x00043D64   CALL putchar
+0x00043D6C       B   printf_continue
 
 printf_percent:
-0x00043D60       LI  R1 37   ;print '%'
-0x00043D68   CALL putchar
-0x00043D70       B   printf_continue
+0x00043D74       LI  R1 37   ;print '%'
+0x00043D7C   CALL putchar
+0x00043D84       B   printf_continue
 
 ;------------------------------------------------------------------------------
 ; Argument fetch helpers (same as before)
 ;------------------------------------------------------------------------------
 _fetch_arg_r1:
-0x00043D78       PUSH LR
-0x00043D7C       PUSH R3
-0x00043D80   CALL _get_arg_address
-0x00043D88       LDW R1 [R3]
-0x00043D8C       POP R3
-0x00043D90       POP LR
-0x00043D94       RET
+0x00043D8C       PUSH LR
+0x00043D90       PUSH R3
+0x00043D94   CALL _get_arg_address
+0x00043D9C       LDW R1 [R3]
+0x00043DA0       POP R3
+0x00043DA4       POP LR
+0x00043DA8       RET
 
 _fetch_arg_r2:
-0x00043D98       PUSH LR
-0x00043D9C       PUSH R3
-0x00043DA0   CALL _get_arg_address
-0x00043DA8       LDW R2 [R3]
-0x00043DAC       POP R3
-0x00043DB0       POP LR
-0x00043DB4       RET
+0x00043DAC       PUSH LR
+0x00043DB0       PUSH R3
+0x00043DB4   CALL _get_arg_address
+0x00043DBC       LDW R2 [R3]
+0x00043DC0       POP R3
+0x00043DC4       POP LR
+0x00043DC8       RET
 
 _get_arg_address:   ; fetch the address of the next argument based on R9 (arg index)
-0x00043DB8       CMP R9 11       ; if arg index >= 11, it's on the stack
-0x00043DBC       BLT _arg_in_regs
-0x00043DC4       SUB R3 R9 11    ; R3 = number of extra args on stack
-0x00043DC8       LI  R4 4
-0x00043DD0       MUL R3 R3 R4
-0x00043DD4       ADD R3 SP R3    ; R3 = address of first extra arg on stack (not sure if this is correct)
-0x00043DD8       ADD R3 R3 104   ; offset to caller's first extra arg 104
+0x00043DCC       CMP R9 11       ; if arg index >= 11, it's on the stack
+0x00043DD0       BLT _arg_in_regs
+0x00043DD8       SUB R3 R9 11    ; R3 = number of extra args on stack
+0x00043DDC       LI  R4 4
+0x00043DE4       MUL R3 R3 R4
+0x00043DE8       ADD R3 SP R3    ; R3 = address of first extra arg on stack (not sure if this is correct)
+0x00043DEC       ADD R3 R3 104   ; offset to caller's first extra arg 104
                     ;is the size of the local frame (80) + saved registers (44)
-0x00043DDC       RET
+0x00043DF0       RET
 
 _arg_in_regs:       ; fetch argument from R2..R12 based on R9
-0x00043DE0       LI  R4 4
-0x00043DE8       MUL R3 R9 R4    ; R9 = arg index, (R3 = offset in bytes)
-0x00043DEC       ADD R3 R10 R3   ; R3 = address of saved register in local array, R10 = base of saved registers
-0x00043DF0       RET
+0x00043DF4       LI  R4 4
+0x00043DFC       MUL R3 R9 R4    ; R9 = arg index, (R3 = offset in bytes)
+0x00043E00       ADD R3 R10 R3   ; R3 = address of saved register in local array, R10 = base of saved registers
+0x00043E04       RET
 
 ;------------------------------------------------------------------------------
 ; Specifier handlers
 ;------------------------------------------------------------------------------
 printf_string:
-0x00043DF4   CALL _fetch_arg_r1
-0x00043DFC       ADD R9 R9 1
-0x00043E00   CALL _print_string
-0x00043E08       B   printf_continue
+0x00043E08   CALL _fetch_arg_r1
+0x00043E10       ADD R9 R9 1
+0x00043E14   CALL _print_string
+0x00043E1C       B   printf_continue
 
 printf_int:
-0x00043E10   CALL _fetch_arg_r2
-0x00043E18       ADD R9 R9 1
-0x00043E1C       MOV R1 R11          ; r11 is the conversion buffer (on stack)
-0x00043E20   CALL _print_number
-0x00043E28       B   printf_continue
+0x00043E24   CALL _fetch_arg_r2
+0x00043E2C       ADD R9 R9 1
+0x00043E30       MOV R1 R11          ; r11 is the conversion buffer (on stack)
+0x00043E34   CALL _print_number
+0x00043E3C       B   printf_continue
 
 printf_hex:
-0x00043E30   CALL _fetch_arg_r2
-0x00043E38       ADD R9 R9 1
-0x00043E3C       MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
-0x00043E40   CALL _print_hex
-0x00043E48       B   printf_continue
+0x00043E44   CALL _fetch_arg_r2
+0x00043E4C       ADD R9 R9 1
+0x00043E50       MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
+0x00043E54   CALL _print_hex
+0x00043E5C       B   printf_continue
 
 printf_char:
-0x00043E50   CALL _fetch_arg_r1
-0x00043E58       ADD R9 R9 1
-0x00043E5C   CALL putchar
-0x00043E64       B   printf_continue
+0x00043E64   CALL _fetch_arg_r1
+0x00043E6C       ADD R9 R9 1
+0x00043E70   CALL putchar
+0x00043E78       B   printf_continue
 
 printf_bin:
-0x00043E6C   CALL _fetch_arg_r2
-0x00043E74       ADD R9 R9 1
-0x00043E78       MOV R1 R11
-0x00043E7C   CALL _print_bin
-0x00043E84       B   printf_continue
+0x00043E80   CALL _fetch_arg_r2
+0x00043E88       ADD R9 R9 1
+0x00043E8C       MOV R1 R11
+0x00043E90   CALL _print_bin
+0x00043E98       B   printf_continue
 
 printf_oct:
-0x00043E8C   CALL _fetch_arg_r2
-0x00043E94       ADD R9 R9 1
-0x00043E98       MOV R1 R11
-0x00043E9C   CALL _print_oct
-0x00043EA4       B   printf_continue
+0x00043EA0   CALL _fetch_arg_r2
+0x00043EA8       ADD R9 R9 1
+0x00043EAC       MOV R1 R11
+0x00043EB0   CALL _print_oct
+0x00043EB8       B   printf_continue
 
 printf_continue:    ;to continue processing format string
-0x00043EAC       ADD R8 R8 1
-0x00043EB0       B   printf_loop
+0x00043EC0       ADD R8 R8 1
+0x00043EC4       B   printf_loop
 
 printf_done:
-0x00043EB8       ADD SP SP 80
-0x00043EBC       POP R12
-0x00043EC0       POP R11
-0x00043EC4       POP R10
-0x00043EC8       POP R9
-0x00043ECC       POP R8
-0x00043ED0       POP LR
-0x00043ED4       RET
+0x00043ECC       ADD SP SP 80
+0x00043ED0       POP R12
+0x00043ED4       POP R11
+0x00043ED8       POP R10
+0x00043EDC       POP R9
+0x00043EE0       POP R8
+0x00043EE4       POP LR
+0x00043EE8       RET
 
 ;------------------------------------------------------------------------------
 ; _print_string - Write a null‑terminated string to stdout (no newline)
@@ -1414,20 +1513,20 @@ printf_done:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_string:
-0x00043ED8       PUSH LR
-0x00043EDC       PUSH R8
-0x00043EE0       PUSH R9
-0x00043EE4       MOV R8 R1
-0x00043EE8   CALL strlen
-0x00043EF0       MOV R9 R1
-0x00043EF4       LI  R1 STDOUT_FD
-0x00043EFC       MOV R2 R8
-0x00043F00       MOV R3 R9
-0x00043F04   CALL write
-0x00043F0C       POP R9
-0x00043F10       POP R8
-0x00043F14       POP LR
-0x00043F18       RET
+0x00043EEC       PUSH LR
+0x00043EF0       PUSH R8
+0x00043EF4       PUSH R9
+0x00043EF8       MOV R8 R1
+0x00043EFC   CALL strlen
+0x00043F04       MOV R9 R1
+0x00043F08       LI  R1 STDOUT_FD
+0x00043F10       MOV R2 R8
+0x00043F14       MOV R3 R9
+0x00043F18   CALL write
+0x00043F20       POP R9
+0x00043F24       POP R8
+0x00043F28       POP LR
+0x00043F2C       RET
 
 
 ;------------------------------------------------------------------------------
@@ -1438,12 +1537,12 @@ _print_string:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_number:
-0x00043F1C       PUSH LR
-0x00043F20   CALL itoa_dec
-0x00043F28       MOV R1 R1                 ; R1 still points to buffer start
-0x00043F2C   CALL _print_string
-0x00043F34       POP LR
-0x00043F38       RET
+0x00043F30       PUSH LR
+0x00043F34   CALL itoa_dec
+0x00043F3C       MOV R1 R1                 ; R1 still points to buffer start
+0x00043F40   CALL _print_string
+0x00043F48       POP LR
+0x00043F4C       RET
 
 ;------------------------------------------------------------------------------
 ; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
@@ -1453,12 +1552,12 @@ _print_number:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_hex:
-0x00043F3C       PUSH LR
-0x00043F40   CALL itoa_hex
-0x00043F48       MOV R1 R1
-0x00043F4C   CALL _print_string
-0x00043F54       POP LR
-0x00043F58       RET
+0x00043F50       PUSH LR
+0x00043F54   CALL itoa_hex
+0x00043F5C       MOV R1 R1
+0x00043F60   CALL _print_string
+0x00043F68       POP LR
+0x00043F6C       RET
 
 ;------------------------------------------------------------------------------
 ; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
@@ -1468,12 +1567,12 @@ _print_hex:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_bin:
-0x00043F5C       PUSH LR
-0x00043F60   CALL itoa_bin
-0x00043F68       MOV R1 R1
-0x00043F6C   CALL _print_string
-0x00043F74       POP LR
-0x00043F78       RET
+0x00043F70       PUSH LR
+0x00043F74   CALL itoa_bin
+0x00043F7C       MOV R1 R1
+0x00043F80   CALL _print_string
+0x00043F88       POP LR
+0x00043F8C       RET
 
 ;------------------------------------------------------------------------------
 ; _print_oct - Format and print an unsigned integer in octal (uses itoa_oct)
@@ -1483,12 +1582,12 @@ _print_bin:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_oct:
-0x00043F7C       PUSH LR
-0x00043F80   CALL itoa_oct
-0x00043F88       MOV R1 R1
-0x00043F8C   CALL _print_string
-0x00043F94       POP LR
-0x00043F98       RET
+0x00043F90       PUSH LR
+0x00043F94   CALL itoa_oct
+0x00043F9C       MOV R1 R1
+0x00043FA0   CALL _print_string
+0x00043FA8       POP LR
+0x00043FAC       RET
 
 ;==============================================================================
 ; Data Section
@@ -1522,54 +1621,54 @@ ch_buf:
 ;------------------------------------------------------------------------------
 
 atoi:
-0x00043FA2       PUSH LR
-0x00043FA6       PUSH R8
-0x00043FAA       PUSH R9
-0x00043FAE       PUSH R10
+0x00043FB6       PUSH LR
+0x00043FBA       PUSH R8
+0x00043FBE       PUSH R9
+0x00043FC2       PUSH R10
 
-0x00043FB2       MOV R8 R1          ; R8 = string
-0x00043FB6       LI  R9 0           ; R9 = result
-0x00043FBE       LI  R10 0          ; R10 = negative flag
+0x00043FC6       MOV R8 R1          ; R8 = string
+0x00043FCA       LI  R9 0           ; R9 = result
+0x00043FD2       LI  R10 0          ; R10 = negative flag
 
     ; Check '-'
-0x00043FC6       LDB R2 [R8]
-0x00043FCA       CMP R2 45          ; '-'
-0x00043FCE       BNE atoi_loop
-0x00043FD6       LI R10 1
-0x00043FDE       ADD R8 R8 1
+0x00043FDA       LDB R2 [R8]
+0x00043FDE       CMP R2 45          ; '-'
+0x00043FE2       BNE atoi_loop
+0x00043FEA       LI R10 1
+0x00043FF2       ADD R8 R8 1
 atoi_loop:
-0x00043FE2       LDB R2 [R8]
+0x00043FF6       LDB R2 [R8]
     ; end of string
-0x00043FE6       CMP R2 0
-0x00043FEA       BEQ atoi_done
+0x00043FFA       CMP R2 0
+0x00043FFE       BEQ atoi_done
     ; only accept '0'..'9'
-0x00043FF2       CMP R2 48       ; '0'
-0x00043FF6       BLT atoi_done
-0x00043FFE       CMP R2 57       ; '9'
-0x00044002       BGT atoi_done
+0x00044006       CMP R2 48       ; '0'
+0x0004400A       BLT atoi_done
+0x00044012       CMP R2 57       ; '9'
+0x00044016       BGT atoi_done
 
     ; digit = char - '0'
-0x0004400A       SUB R2 R2 48
+0x0004401E       SUB R2 R2 48
 
     ; result = result * 10 + digit
-0x0004400E       LI  R3 10
-0x00044016       MUL R9 R9 R3
-0x0004401A       ADD R9 R9 R2
-0x0004401E       ADD R8 R8 1
-0x00044022       B atoi_loop
+0x00044022       LI  R3 10
+0x0004402A       MUL R9 R9 R3
+0x0004402E       ADD R9 R9 R2
+0x00044032       ADD R8 R8 1
+0x00044036       B atoi_loop
 atoi_done:
-0x0004402A       CMP R10 1
-0x0004402E       BNE atoi_positive
+0x0004403E       CMP R10 1
+0x00044042       BNE atoi_positive
     ; negate NEG =)
-0x00044036       NOT R9 R9
-0x0004403A       ADD R9 R9 1
+0x0004404A       NOT R9 R9
+0x0004404E       ADD R9 R9 1
 atoi_positive:
-0x0004403E       MOV R1 R9
-0x00044042       POP R10
-0x00044046       POP R9
-0x0004404A       POP R8
-0x0004404E       POP LR
-0x00044052       RET
+0x00044052       MOV R1 R9
+0x00044056       POP R10
+0x0004405A       POP R9
+0x0004405E       POP R8
+0x00044062       POP LR
+0x00044066       RET
 
 .EQU STDIN_FD,  0
 .EQU MAX_ARGS,  8
@@ -1578,123 +1677,123 @@ atoi_positive:
 ; main() – shell loop
 ;---------------------------------------------------------------
 main:
-0x00044056       PUSH LR
+0x0004406A       PUSH LR
 
 shell_loop:
     ; Print prompt
-0x0004405A       LI R1 STDOUT_FD
-0x00044062       LI R2 prompt
-0x0004406A       LI R3 2
-0x00044072   CALL write
+0x0004406E       LI R1 STDOUT_FD
+0x00044076       LI R2 prompt
+0x0004407E       LI R3 2
+0x00044086   CALL write
     ; Read command
-0x0004407A       LI R1 STDIN_FD
-0x00044082       LI R2 input_buf
-0x0004408A       LI R3 127
-0x00044092   CALL read
-0x0004409A       CMP R1 0
-0x0004409E       BLE exit_shell
-0x000440A6       MOV R4 R1           ; R4 = bytes read
+0x0004408E       LI R1 STDIN_FD
+0x00044096       LI R2 input_buf
+0x0004409E       LI R3 127
+0x000440A6   CALL read
+0x000440AE       CMP R1 0
+0x000440B2       BLE exit_shell
+0x000440BA       MOV R4 R1           ; R4 = bytes read
 
     ; ---- Normalize line editing characters before parsing ----
     ; Treat BS/DEL as a backspace in the current command buffer.
-0x000440AA       LI R8 input_buf
-0x000440B2       LI R9 input_buf
-0x000440BA       LI R10 0            ; source index
+0x000440BE       LI R8 input_buf
+0x000440C6       LI R9 input_buf
+0x000440CE       LI R10 0            ; source index
 
 normalize_input_loop:
-0x000440C2       CMP R10 R4
-0x000440C6       BGE normalize_input_done
+0x000440D6       CMP R10 R4
+0x000440DA       BGE normalize_input_done
 
-0x000440CE       ADD R5 R8 R10
-0x000440D2       LDB R6 [R5]
+0x000440E2       ADD R5 R8 R10
+0x000440E6       LDB R6 [R5]
 
-0x000440D6       CMP R6 10            ; LF
-0x000440DA       BEQ normalize_input_next
-0x000440E2       CMP R6 13            ; CR
-0x000440E6       BEQ normalize_input_next
-0x000440EE       CMP R6 8             ; BS
-0x000440F2       BEQ normalize_input_backspace
-0x000440FA       CMP R6 127           ; DEL
-0x000440FE       BEQ normalize_input_backspace
+0x000440EA       CMP R6 10            ; LF
+0x000440EE       BEQ normalize_input_next
+0x000440F6       CMP R6 13            ; CR
+0x000440FA       BEQ normalize_input_next
+0x00044102       CMP R6 8             ; BS
+0x00044106       BEQ normalize_input_backspace
+0x0004410E       CMP R6 127           ; DEL
+0x00044112       BEQ normalize_input_backspace
 
-0x00044106       STB R6 [R9]
-0x0004410A       ADD R9 R9 1
-0x0004410E       B normalize_input_next
+0x0004411A       STB R6 [R9]
+0x0004411E       ADD R9 R9 1
+0x00044122       B normalize_input_next
 
 normalize_input_backspace:
-0x00044116       CMP R9 R8
-0x0004411A       BLE normalize_input_next
-0x00044122       SUB R9 R9 1
-0x00044126       B normalize_input_next
+0x0004412A       CMP R9 R8
+0x0004412E       BLE normalize_input_next
+0x00044136       SUB R9 R9 1
+0x0004413A       B normalize_input_next
 
 normalize_input_next:
-0x0004412E       ADD R10 R10 1
-0x00044132       B normalize_input_loop
+0x00044142       ADD R10 R10 1
+0x00044146       B normalize_input_loop
 
 normalize_input_done:
-0x0004413A       LI R6 0
-0x00044142       STB R6 [R9]
+0x0004414E       LI R6 0
+0x00044156       STB R6 [R9]
 
     ; Skip empty lines
-0x00044146       LI R7 input_buf
-0x0004414E       LDB R6 [R7]
-0x00044152       CMP R6 0
-0x00044156       BEQ shell_loop
+0x0004415A       LI R7 input_buf
+0x00044162       LDB R6 [R7]
+0x00044166       CMP R6 0
+0x0004416A       BEQ shell_loop
 
-0x0004415E   CALL parse_command
+0x00044172   CALL parse_command
 
-0x00044166       LI R1 input_buf
-0x0004416E       LI R2 quit_cmd
-0x00044176   CALL strcmp
-0x0004417E       CMP R1 1
-0x00044182       BEQ exit_shell  ;if type "quit" exit shell
+0x0004417A       LI R1 input_buf
+0x00044182       LI R2 quit_cmd
+0x0004418A   CALL strcmp
+0x00044192       CMP R1 1
+0x00044196       BEQ exit_shell  ;if type "quit" exit shell
 
     ; ---- Fork ----
-0x0004418A   CALL fork
-0x00044192       CMP R1 0
-0x00044196       BEQ child_process
-0x0004419E       BLT fork_error
+0x0004419E   CALL fork
+0x000441A6       CMP R1 0
+0x000441AA       BEQ child_process
+0x000441B2       BLT fork_error
 
     ;Debug 2
     ;POP LR
     ;RET
 
     ; ---- Parent: wait for child ----
-0x000441A6       LI R1 -1
-0x000441AE       LI R2 0
-0x000441B6   CALL waitpid
-0x000441BE       CMP R1 0
-0x000441C2       BLT wait_error
+0x000441BA       LI R1 -1
+0x000441C2       LI R2 0
+0x000441CA   CALL waitpid
+0x000441D2       CMP R1 0
+0x000441D6       BLT wait_error
 
-0x000441CA       B shell_loop
+0x000441DE       B shell_loop
 
     ; ---- Child: execute command ----
 child_process:
     ; pathname = input_buf (copied early by kernel, before data page zeroed)
     ; argv = argv_buf
-0x000441D2       LI R1 input_buf
-0x000441DA       LI R2 argv_buf
-0x000441E2       LI R3 0
-0x000441EA   CALL execve
-0x000441F2       LI R1 exec_failed_msg
-0x000441FA   CALL puts
+0x000441E6       LI R1 input_buf
+0x000441EE       LI R2 argv_buf
+0x000441F6       LI R3 0
+0x000441FE   CALL execve
+0x00044206       LI R1 exec_failed_msg
+0x0004420E   CALL puts
 
-0x00044202       POP LR
-0x00044206       RET
+0x00044216       POP LR
+0x0004421A       RET
 
 fork_error:
-0x0004420A       LI R1 fork_error_msg
-0x00044212   CALL puts
-0x0004421A       B shell_loop
+0x0004421E       LI R1 fork_error_msg
+0x00044226   CALL puts
+0x0004422E       B shell_loop
 
 wait_error:
-0x00044222       LI R1 wait_error_msg
-0x0004422A   CALL puts
-0x00044232       B shell_loop
+0x00044236       LI R1 wait_error_msg
+0x0004423E   CALL puts
+0x00044246       B shell_loop
 
 exit_shell:
-0x0004423A       POP LR
-0x0004423E       RET
+0x0004424E       POP LR
+0x00044252       RET
 
 ; ---------------------------------------------------------------
 ; parse_command() – parse input_buf into argv_buf
@@ -1785,18 +1884,18 @@ exit_shell:
 
 parse_command:
 
-0x00044242       PUSH LR
-0x00044246       PUSH R8
-0x0004424A       PUSH R9
-0x0004424E       PUSH R10
-0x00044252       PUSH R11
-0x00044256       PUSH R12
+0x00044256       PUSH LR
+0x0004425A       PUSH R8
+0x0004425E       PUSH R9
+0x00044262       PUSH R10
+0x00044266       PUSH R11
+0x0004426A       PUSH R12
 
-0x0004425A       LI R8 input_buf
-0x00044262       LI R9 input_buf
+0x0004426E       LI R8 input_buf
+0x00044276       LI R9 input_buf
 
-0x0004426A       LI R10 0              ; argc
-0x00044272       LI R12 0              ; quote state
+0x0004427E       LI R10 0              ; argc
+0x00044286       LI R12 0              ; quote state
 
 
 ; ===============================================================
@@ -1805,16 +1904,16 @@ parse_command:
 
 parse_skip_spaces:
 
-0x0004427A       LDB R11 [R8]
+0x0004428E       LDB R11 [R8]
 
-0x0004427E       CMP R11 0
-0x00044282       BEQ parse_done
+0x00044292       CMP R11 0
+0x00044296       BEQ parse_done
 
-0x0004428A       CMP R11 32            ; space
-0x0004428E       BNE parse_token_start
+0x0004429E       CMP R11 32            ; space
+0x000442A2       BNE parse_token_start
 
-0x00044296       ADD R8 R8 1
-0x0004429A       B parse_skip_spaces
+0x000442AA       ADD R8 R8 1
+0x000442AE       B parse_skip_spaces
 
 
 ; ===============================================================
@@ -1823,26 +1922,26 @@ parse_skip_spaces:
 
 parse_token_start:
 
-0x000442A2       CMP R10 MAX_ARGS
-0x000442A6       BGE parse_done
+0x000442B6       CMP R10 MAX_ARGS
+0x000442BA       BGE parse_done
 
     ; ------------------------------------------------------------
     ; argv[argc] = current output pointer
     ; ------------------------------------------------------------
 
-0x000442AE       LI R7 argv_buf
+0x000442C2       LI R7 argv_buf
 
-0x000442B6       MOV R6 R10
-0x000442BA       shl R6 R6 2
-0x000442BE       ADD R7 R7 R6
+0x000442CA       MOV R6 R10
+0x000442CE       shl R6 R6 2
+0x000442D2       ADD R7 R7 R6
 
-0x000442C2       STW R9 [R7]
+0x000442D6       STW R9 [R7]
 
-0x000442C6       ADD R10 R10 1
+0x000442DA       ADD R10 R10 1
 
-0x000442CA       LI R12 0              ; outside quotes
+0x000442DE       LI R12 0              ; outside quotes
 
-0x000442D2       B parse_token_body
+0x000442E6       B parse_token_body
 
 
 ; ===============================================================
@@ -1851,48 +1950,48 @@ parse_token_start:
 
 parse_token_body:
 
-0x000442DA       LDB R11 [R8]
+0x000442EE       LDB R11 [R8]
 
     ; End of command
-0x000442DE       CMP R11 0
-0x000442E2       BEQ parse_token_done
+0x000442F2       CMP R11 0
+0x000442F6       BEQ parse_token_done
 
 
     ; ------------------------------------------------------------
     ; Outside quotes
     ; ------------------------------------------------------------
 
-0x000442EA       CMP R12 0
-0x000442EE       BNE parse_inside_quotes
+0x000442FE       CMP R12 0
+0x00044302       BNE parse_inside_quotes
 
 
     ; Space terminates argument
-0x000442F6       CMP R11 32
-0x000442FA       BEQ parse_token_end
+0x0004430A       CMP R11 32
+0x0004430E       BEQ parse_token_end
 
 
     ; Double quote
-0x00044302       CMP R11 34
-0x00044306       BEQ parse_start_double
+0x00044316       CMP R11 34
+0x0004431A       BEQ parse_start_double
 
 
     ; Single quote
-0x0004430E       CMP R11 39
-0x00044312       BEQ parse_start_single
+0x00044322       CMP R11 39
+0x00044326       BEQ parse_start_single
 
 
     ; Backslash
-0x0004431A       CMP R11 92
-0x0004431E       BEQ parse_escape
+0x0004432E       CMP R11 92
+0x00044332       BEQ parse_escape
 
 
     ; Normal character
-0x00044326       STB R11 [R9]
+0x0004433A       STB R11 [R9]
 
-0x0004432A       ADD R8 R8 1
-0x0004432E       ADD R9 R9 1
+0x0004433E       ADD R8 R8 1
+0x00044342       ADD R9 R9 1
 
-0x00044332       B parse_token_body
+0x00044346       B parse_token_body
 
 
 ; ===============================================================
@@ -1901,11 +2000,11 @@ parse_token_body:
 
 parse_start_double:
 
-0x0004433A       LI R12 34
+0x0004434E       LI R12 34
 
-0x00044342       ADD R8 R8 1
+0x00044356       ADD R8 R8 1
 
-0x00044346       B parse_token_body
+0x0004435A       B parse_token_body
 
 
 ; ===============================================================
@@ -1914,11 +2013,11 @@ parse_start_double:
 
 parse_start_single:
 
-0x0004434E       LI R12 39
+0x00044362       LI R12 39
 
-0x00044356       ADD R8 R8 1
+0x0004436A       ADD R8 R8 1
 
-0x0004435A       B parse_token_body
+0x0004436E       B parse_token_body
 
 
 ; ===============================================================
@@ -1928,22 +2027,22 @@ parse_start_single:
 parse_inside_quotes:
 
     ; Closing quote?
-0x00044362       CMP R11 R12
-0x00044366       BEQ parse_close_quote
+0x00044376       CMP R11 R12
+0x0004437A       BEQ parse_close_quote
 
 
     ; Backslash
-0x0004436E       CMP R11 92
-0x00044372       BEQ parse_escape
+0x00044382       CMP R11 92
+0x00044386       BEQ parse_escape
 
 
     ; Normal character
-0x0004437A       STB R11 [R9]
+0x0004438E       STB R11 [R9]
 
-0x0004437E       ADD R8 R8 1
-0x00044382       ADD R9 R9 1
+0x00044392       ADD R8 R8 1
+0x00044396       ADD R9 R9 1
 
-0x00044386       B parse_token_body
+0x0004439A       B parse_token_body
 
 
 ; ===============================================================
@@ -1952,11 +2051,11 @@ parse_inside_quotes:
 
 parse_close_quote:
 
-0x0004438E       LI R12 0
+0x000443A2       LI R12 0
 
-0x00044396       ADD R8 R8 1
+0x000443AA       ADD R8 R8 1
 
-0x0004439A       B parse_token_body
+0x000443AE       B parse_token_body
 
 
 ; ===============================================================
@@ -1968,61 +2067,61 @@ parse_close_quote:
 
 parse_escape:
 
-0x000443A2       ADD R8 R8 1
+0x000443B6       ADD R8 R8 1
 
-0x000443A6       LDB R11 [R8]
+0x000443BA       LDB R11 [R8]
 
     ; Backslash was last character
-0x000443AA       CMP R11 0
-0x000443AE       BEQ parse_token_done
+0x000443BE       CMP R11 0
+0x000443C2       BEQ parse_token_done
 
 
     ; ------------------------------------------------------------
     ; \n
     ; ------------------------------------------------------------
 
-0x000443B6       CMP R11 110           ; 'n'
-0x000443BA       BEQ parse_escape_n
+0x000443CA       CMP R11 110           ; 'n'
+0x000443CE       BEQ parse_escape_n
 
 
     ; ------------------------------------------------------------
     ; \r
     ; ------------------------------------------------------------
 
-0x000443C2       CMP R11 114           ; 'r'
-0x000443C6       BEQ parse_escape_r
+0x000443D6       CMP R11 114           ; 'r'
+0x000443DA       BEQ parse_escape_r
 
 
     ; ------------------------------------------------------------
     ; \t
     ; ------------------------------------------------------------
 
-0x000443CE       CMP R11 116           ; 't'
-0x000443D2       BEQ parse_escape_t
+0x000443E2       CMP R11 116           ; 't'
+0x000443E6       BEQ parse_escape_t
 
 
     ; ------------------------------------------------------------
     ; \\
     ; ------------------------------------------------------------
 
-0x000443DA       CMP R11 92
-0x000443DE       BEQ parse_escape_backslash
+0x000443EE       CMP R11 92
+0x000443F2       BEQ parse_escape_backslash
 
 
     ; ------------------------------------------------------------
     ; \"
     ; ------------------------------------------------------------
 
-0x000443E6       CMP R11 34
-0x000443EA       BEQ parse_escape_quote
+0x000443FA       CMP R11 34
+0x000443FE       BEQ parse_escape_quote
 
 
     ; ------------------------------------------------------------
     ; \'
     ; ------------------------------------------------------------
 
-0x000443F2       CMP R11 39
-0x000443F6       BEQ parse_escape_single
+0x00044406       CMP R11 39
+0x0004440A       BEQ parse_escape_single
 
 
     ; ------------------------------------------------------------
@@ -2031,12 +2130,12 @@ parse_escape:
     ; \x -> x
     ; ------------------------------------------------------------
 
-0x000443FE       STB R11 [R9]
+0x00044412       STB R11 [R9]
 
-0x00044402       ADD R8 R8 1
-0x00044406       ADD R9 R9 1
+0x00044416       ADD R8 R8 1
+0x0004441A       ADD R9 R9 1
 
-0x0004440A       B parse_token_body
+0x0004441E       B parse_token_body
 
 
 ; ===============================================================
@@ -2045,38 +2144,38 @@ parse_escape:
 
 parse_escape_n:
 
-0x00044412       LI R11 10
-0x0004441A       B parse_escape_store
+0x00044426       LI R11 10
+0x0004442E       B parse_escape_store
 
 
 parse_escape_r:
 
-0x00044422       LI R11 13
-0x0004442A       B parse_escape_store
+0x00044436       LI R11 13
+0x0004443E       B parse_escape_store
 
 
 parse_escape_t:
 
-0x00044432       LI R11 9
-0x0004443A       B parse_escape_store
+0x00044446       LI R11 9
+0x0004444E       B parse_escape_store
 
 
 parse_escape_backslash:
 
-0x00044442       LI R11 92
-0x0004444A       B parse_escape_store
+0x00044456       LI R11 92
+0x0004445E       B parse_escape_store
 
 
 parse_escape_quote:
 
-0x00044452       LI R11 34
-0x0004445A       B parse_escape_store
+0x00044466       LI R11 34
+0x0004446E       B parse_escape_store
 
 
 parse_escape_single:
 
-0x00044462       LI R11 39
-0x0004446A       B parse_escape_store
+0x00044476       LI R11 39
+0x0004447E       B parse_escape_store
 
 
 ; ===============================================================
@@ -2085,12 +2184,12 @@ parse_escape_single:
 
 parse_escape_store:
 
-0x00044472       STB R11 [R9]
+0x00044486       STB R11 [R9]
 
-0x00044476       ADD R8 R8 1
-0x0004447A       ADD R9 R9 1
+0x0004448A       ADD R8 R8 1
+0x0004448E       ADD R9 R9 1
 
-0x0004447E       B parse_token_body
+0x00044492       B parse_token_body
 
 
 ; ===============================================================
@@ -2100,13 +2199,13 @@ parse_escape_store:
 parse_token_end:
 
     ; terminate output string
-0x00044486       LI R11 0
-0x0004448E       STB R11 [R9]
+0x0004449A       LI R11 0
+0x000444A2       STB R11 [R9]
 
-0x00044492       ADD R9 R9 1
-0x00044496       ADD R8 R8 1
+0x000444A6       ADD R9 R9 1
+0x000444AA       ADD R8 R8 1
 
-0x0004449A       B parse_skip_spaces
+0x000444AE       B parse_skip_spaces
 
 
 ; ===============================================================
@@ -2116,8 +2215,8 @@ parse_token_end:
 parse_token_done:
 
     ; terminate current string
-0x000444A2       LI R11 0
-0x000444AA       STB R11 [R9]
+0x000444B6       LI R11 0
+0x000444BE       STB R11 [R9]
 
 
 ; ===============================================================
@@ -2128,26 +2227,26 @@ parse_done:
 
     ; R7 = argv_buf + argc * 4
 
-0x000444AE       LI R7 argv_buf
+0x000444C2       LI R7 argv_buf
 
-0x000444B6       MOV R6 R10
-0x000444BA       SHL R6 R6 2
-0x000444BE       ADD R7 R7 R6
+0x000444CA       MOV R6 R10
+0x000444CE       SHL R6 R6 2
+0x000444D2       ADD R7 R7 R6
 
     ; argv[argc] = NULL
 
-0x000444C2       LI R11 0
-0x000444CA       STW R11 [R7]
+0x000444D6       LI R11 0
+0x000444DE       STW R11 [R7]
 
 
-0x000444CE       POP R12
-0x000444D2       POP R11
-0x000444D6       POP R10
-0x000444DA       POP R9
-0x000444DE       POP R8
-0x000444E2       POP LR
+0x000444E2       POP R12
+0x000444E6       POP R11
+0x000444EA       POP R10
+0x000444EE       POP R9
+0x000444F2       POP R8
+0x000444F6       POP LR
 
-0x000444E6       RET
+0x000444FA       RET
 
 ; ---------------------------------------------------------------
 ; parse_command() – parse input_buf into argv_buf
@@ -2157,61 +2256,61 @@ parse_done:
 ; ---------------------------------------------------------------
 
 parse_command0:
-0x000444EA       PUSH LR
-0x000444EE       PUSH R8
-0x000444F2       PUSH R9
-0x000444F6       PUSH R10
-0x000444FA       PUSH R11
+0x000444FE       PUSH LR
+0x00044502       PUSH R8
+0x00044506       PUSH R9
+0x0004450A       PUSH R10
+0x0004450E       PUSH R11
 
-0x000444FE       LI R8 input_buf
-0x00044506       LI R9 argv_buf
-0x0004450E       LI R10 0
+0x00044512       LI R8 input_buf
+0x0004451A       LI R9 argv_buf
+0x00044522       LI R10 0
 
 parse_skip_spaces0:
-0x00044516       LDB R11 [R8]
-0x0004451A       CMP R11 32      ;" "
-0x0004451E       BNE parse_token_start
-0x00044526       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
-0x0004452E       STB R11 [R8]
-0x00044532       ADD R8 R8 1
-0x00044536       B parse_skip_spaces0
+0x0004452A       LDB R11 [R8]
+0x0004452E       CMP R11 32      ;" "
+0x00044532       BNE parse_token_start
+0x0004453A       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
+0x00044542       STB R11 [R8]
+0x00044546       ADD R8 R8 1
+0x0004454A       B parse_skip_spaces0
 
 parse_token_start0:
-0x0004453E       LDB R11 [R8]
-0x00044542       CMP R11 0
-0x00044546       BEQ parse_done
-0x0004454E       CMP R10 8       ;up to 8 args
-0x00044552       BGE parse_done
+0x00044552       LDB R11 [R8]
+0x00044556       CMP R11 0
+0x0004455A       BEQ parse_done
+0x00044562       CMP R10 8       ;up to 8 args
+0x00044566       BGE parse_done
 
-0x0004455A       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
-0x0004455E       ADD R9 R9 4
-0x00044562       ADD R10 R10 1   ;argc for execve
+0x0004456E       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
+0x00044572       ADD R9 R9 4
+0x00044576       ADD R10 R10 1   ;argc for execve
 
 parse_token_body0:
-0x00044566       LDB R11 [R8]
-0x0004456A       CMP R11 0
-0x0004456E       BEQ parse_done
-0x00044576       CMP R11 32      ;" "
-0x0004457A       BEQ parse_end_token
-0x00044582       ADD R8 R8 1
-0x00044586       B parse_token_body
+0x0004457A       LDB R11 [R8]
+0x0004457E       CMP R11 0
+0x00044582       BEQ parse_done
+0x0004458A       CMP R11 32      ;" "
+0x0004458E       BEQ parse_end_token
+0x00044596       ADD R8 R8 1
+0x0004459A       B parse_token_body
 
 parse_end_token:
-0x0004458E       LI R11 0
-0x00044596       STB R11 [R8]    ; put null terminator at end of token
-0x0004459A       ADD R8 R8 1     ; move to next char in input_buf
-0x0004459E       B parse_skip_spaces
+0x000445A2       LI R11 0
+0x000445AA       STB R11 [R8]    ; put null terminator at end of token
+0x000445AE       ADD R8 R8 1     ; move to next char in input_buf
+0x000445B2       B parse_skip_spaces
 
 parse_done0:
-0x000445A6       LI R11 0
-0x000445AE       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
-0x000445B2       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
+0x000445BA       LI R11 0
+0x000445C2       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
+0x000445C6       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
                     ;  and in format for execve
-0x000445B6       POP R10
-0x000445BA       POP R9
-0x000445BE       POP R8
-0x000445C2       POP LR
-0x000445C6       RET
+0x000445CA       POP R10
+0x000445CE       POP R9
+0x000445D2       POP R8
+0x000445D6       POP LR
+0x000445DA       RET
 
 ;---------------------------------------------------------------
 ; Data

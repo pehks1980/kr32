@@ -63,7 +63,7 @@ main:
     BLT print_arg2_done
 
     LDW R1 [R9 + 8]
-    BL atoi
+    BL atoi             ;that is only in this first version assume args are numbers!
     MOV R2 R1
 
 print_arg2_done:

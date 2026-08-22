@@ -612,40 +612,85 @@ malloc_init_done:
 ;==============================================================================
 ; INTERNAL HELPERS
 ;==============================================================================
+; ================================================================
+; Convert integer into temporary buffer
+;
+; R9  = current value
+; R10 = pointer to next free byte in temporary buffer
+; R11 = base (2, 10, or 16)
+; R4  = number of digits stored
+;
+; Each division produces:
+;
+;   quotient  = value / base
+;   remainder = value % base
+;
+; The remainder is the next digit.
+;
+; Digits are generated backwards, for example:
+;
+;   123
+;
+; first produces:
+;
+;   3
+;   2
+;   1
+;
+; so the temporary buffer contains:
+;
+;   "321"
+;
+; The copy loop below will reverse it into "123".
+;
+;                 itoa_core
+;                     |
+;          ┌──────────┴──────────┐
+;          │                     │
+;      R9 = value           R10 = temp[]
+;          │                     │
+;          ↓                     ↓
+;       DIV/MOD                STB
+;          │                     │
+;     ┌────┴────┐                │
+;     ↓         ↓                │
+; R6=quotient R7=remainder       │
+;     │         │                │
+;     │         └──→ ASCII ────--┘
+;     │
+;     └────→ R9 for next loop
+;R8  destination pointer
+;R9  current integer value
+;R10 temporary-buffer pointer
+;R11 base
+;R12 sign flag
+;R4  digit counter
+;R6  quotient
+;R7  remainder
+;R5  scratch / divisor
+; ================================================================
 
-;---------------------------------------------------------
-; itoa_core - Universal integer to string converter
-;
-; R1 = destination buffer
-; R2 = integer to convert
-; R3 = base (2, 10, or 16)
-; R4 = sign flag (1 = signed, 0 = unsigned)
-; R5 = temp buffer size needed
-;
-; Returns:
-;   R1 = original destination pointer
-;---------------------------------------------------------
 itoa_core:
     PUSH LR
+    PUSH R5
+    PUSH R6
+    PUSH R7
     PUSH R8
     PUSH R9
     PUSH R10
     PUSH R11
-    PUSH R12
+    PUSH R12 
 
     MOV  R8  R1          ; Save destination
-    
     MOV  R9  R2          ; Working value
     MOV  R11 R3          ; Base
     MOV  R12 R4          ; Sign flag
-    ;MOV  R10 R5          ; Temp buffer size
-    
     ; Allocate temp buffer (size passed in R5)
     SUB  SP SP R5
-    MOV  R10 R1          ; Keep original pointer
-    MOV  R6  SP          ; Temp buffer pointer
-    push R5              ; save R5 for frame leave
-    MOV  R7  R6          ; Save start of temp buffer
+    MOV  R10 SP          ; Temp buffer pointer
+ 
+    PUSH R5              ; save R5 for frame leave
+    PUSH R8              ; save result bufer
     
     ; Check for sign (if signed and negative)
     CMP  R12 1
@@ -673,75 +718,129 @@ itoa_core_unsigned:
     LI   R2 0
     STB  R2 [R8]
     B    itoa_core_finish
-    
+
 itoa_core_convert:
-    LI   R4 0            ; Digit counter
-    
+
+    LI  R4 0                  ; R4 = digit counter
+
 itoa_core_divloop:
-    MOV  R5 R9
-    DIV  R6 R5 R11       ; R6 = quotient, R9 = remainder
-    MOD  R7 R9 R11       ; R7 = remainder
-    
-    ; Convert digit to ASCII based on base
-    CMP  R11 16
-    BEQ  itoa_core_hex_digit
-    
-    ; Base 2 or 10: digit 0-9
-    ADD  R7 R7 48        ; '0' + digit
-    B    itoa_core_store
-    
+    ; ------------------------------------------------------------
+    ; Divide current value by base
+    ;
+    ; R9  = current value
+    ; R11 = base
+    ;
+    ; We need to keep R9 unchanged for MOD, so use R5
+    ; as the DIV source.
+    ; ------------------------------------------------------------
+    MOV R5 R9
+    ; R6 = quotient
+    DIV R6 R5 R11
+    ; R7 = remainder
+    MOD R7 R9 R11
+    ; ------------------------------------------------------------
+    ; Convert remainder to ASCII
+    ;
+    ; For base 2 and 10:
+    ;     0..9 -> '0'..'9'
+    ;
+    ; For base 16:
+    ;     0..9  -> '0'..'9'
+    ;     10..15 -> 'A'..'F'
+    ; ------------------------------------------------------------
+    CMP R11 16
+    BEQ itoa_core_hex_digit
+    ; Base 2 or base 10
+    ADD R7 R7 48             ; '0' + digit
+    B itoa_core_store
+
 itoa_core_hex_digit:
-    ; Base 16: digit 0-15
-    CMP  R7 9
-    BGT  itoa_core_hex_letter
-    ADD  R7 R7 48        ; '0' + digit
-    B    itoa_core_store
-    
+    CMP R7 9
+    BGT itoa_core_hex_letter
+    ; 0..9
+    ADD R7 R7 48             ; '0' + digit
+    B itoa_core_store
+
 itoa_core_hex_letter:
-    SUB  R7 R7 10
-    ADD  R7 R7 65        ; 'A' + (digit-10)
-    
+    ; 10..15
+    SUB R7 R7 10
+    ADD R7 R7 65             ; 'A' + (digit - 10)
+
+; ================================================================
+; Store generated digit
+; ================================================================
+
 itoa_core_store:
-    STB  R7 [R6]         ; Store in temp buffer
-    ADD  R6 R6 1
-    ADD  R4 R4 1         ; Increment digit count
     
-    MOV  R9 R5           ; Quotient becomes new value
-    CMP  R9 0
-    BNE  itoa_core_divloop
-    
-    ; Point to last digit
-    SUB  R6 R6 1
-    
+    STB R7 [R10]    ;R10 is the temporary-buffer pointer.
+
+    ADD R10 R10 1
+    ADD R4 R4 1     ; One more digit generated
+
+    ; ------------------------------------------------------------
+    ; The quotient becomes the value for the next iteration.
+    ;
+    ; Example:
+    ;
+    ;   123 / 10 = 12
+    ;    12 / 10 = 1
+    ;     1 / 10 = 0
+    ; ------------------------------------------------------------
+
+    MOV R9 R6
+
+    ; Continue until quotient becomes zero
+    CMP R9 0
+    BNE itoa_core_divloop
+
+; ================================================================
+; Digits are now stored backwards in temporary buffer.
+; temp = "321"
+;
+; R10 points just AFTER the last digit.
+;
+; Move back to the final digit:
+; ================================================================
+
+    SUB R10 R10 1
+
+; ================================================================
+; Copy digits from temporary buffer backwards
+; ================================================================
+
 itoa_core_copy:
-    CMP  R4 0
-    BEQ  itoa_core_done
-    
-    LDB  R2 [R6]         ; Get digit from temp (reverse order)
-    STB  R2 [R8]         ; Store in destination
-    ADD  R8 R8 1
-    SUB  R6 R6 1
-    SUB  R4 R4 1
-    B    itoa_core_copy
-    
+    CMP R4 0
+    BEQ itoa_core_done
+    ; Read last generated digit
+    LDB R2 [R10]
+    ; Write it to destination
+    STB R2 [R8]
+    ADD R8 R8 1
+    ; Move backwards through temporary buffer
+    SUB R10 R10 1
+    ; One less digit
+    SUB R4 R4 1
+    B itoa_core_copy
+
 itoa_core_done:
     LI   R2 0
     STB  R2 [R8]         ; Null terminate
     
 itoa_core_finish:
+    POP  R1              ; Return original pointer
     POP  R5
     ; Clean up temp buffer
     ADD  SP SP R5
     
-    ; Return original pointer
-    MOV  R1 R10
-    
-    POP  R12
-    POP  R11
-    POP  R10
-    POP  R9
-    POP  R8
-    POP  LR
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP R5
+    POP LR
     RET
 
 ;---------------------------------------------------------
