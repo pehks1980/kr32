@@ -184,7 +184,7 @@ idle_loop:
     ADD R1 R1 1
     
 
-   ; DEBUG 1
+    ;DEBUG 10
     B idle_loop
 
 cr_file:

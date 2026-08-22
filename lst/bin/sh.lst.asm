@@ -1572,6 +1572,7 @@ atoi_positive:
 0x00044052       RET
 
 .EQU STDIN_FD,  0
+.EQU MAX_ARGS,  8
 
 ;---------------------------------------------------------------
 ; main() – shell loop
@@ -1697,67 +1698,520 @@ exit_shell:
 
 ; ---------------------------------------------------------------
 ; parse_command() – parse input_buf into argv_buf
-; input and output:
-;   input_buf: null-terminated string of command line
-;   output: all needed for execve (input_buf = pathname, argv_buf = argv) ready
+;
+; Supported syntax:
+;   command arg1 arg2
+;   command "argument with spaces"
+;   command 'argument with spaces'
+; Supported escapes inside quoted strings:
+;
+;   \n   newline
+;   \r   carriage return
+;   \t   tab
+;   \\   backslash
+;   \"   double quote
+;   \'   single quote
+;
+; input:
+;   input_buf = null-terminated command line
+;
+; output:
+;   argv_buf = NULL-terminated argv[] vector
+;
+; Important:
+;   Parsing is done IN PLACE.
+;
+;   Example:
+;
+;       /bin/print "hello world" 123
+;
+;   becomes internally:
+;
+;       /bin/print\0hello world\0123\0
+;
+;   argv_buf contains pointers:
+;
+;       argv[0] -> "/bin/print"
+;       argv[1] -> "hello world"
+;       argv[2] -> "123"
+;       argv[3] -> NULL
+;
+; Registers:
+;   R8  = source/read pointer
+;   R9  = destination/write pointer
+;   R10 = argc
+;   R11 = current character
+;   R12 = quote state
+;
+; quote state:
+;   0 = not inside quotes
+;   '"' = inside double quotes
+;   "'" = inside single quotes
+; ---------------------------------------------------------------
+; ---------------------------------------------------------------
+; parse_command()
+;
+; Parse input_buf in-place and build argv_buf.
+;
+; Supports:
+;
+;   command arg1 arg2
+;   command "argument with spaces"
+;   command 'argument with spaces'
+;
+; Escapes:
+;
+;   \n  -> LF
+;   \r  -> CR
+;   \t  -> TAB
+;   \\  -> \
+;   \"  -> "
+;   \'  -> '
+;
+; R8  = input/read pointer
+; R9  = output/write pointer
+; R10 = argc
+; R11 = current character
+; R12 = quote state
+;
+; R12:
+;   0  = outside quotes
+;   34 = inside double quotes
+;   39 = inside single quotes
+;
+; Maximum 8 arguments.
+; argv_buf = 8 pointers + NULL = 36 bytes.
 ; ---------------------------------------------------------------
 
 parse_command:
+
 0x00044242       PUSH LR
 0x00044246       PUSH R8
 0x0004424A       PUSH R9
 0x0004424E       PUSH R10
 0x00044252       PUSH R11
+0x00044256       PUSH R12
 
-0x00044256       LI R8 input_buf
-0x0004425E       LI R9 argv_buf
-0x00044266       LI R10 0
+0x0004425A       LI R8 input_buf
+0x00044262       LI R9 input_buf
+
+0x0004426A       LI R10 0              ; argc
+0x00044272       LI R12 0              ; quote state
+
+
+; ===============================================================
+; Find beginning of next argument
+; ===============================================================
 
 parse_skip_spaces:
-0x0004426E       LDB R11 [R8]
-0x00044272       CMP R11 32      ;" "
-0x00044276       BNE parse_token_start
-0x0004427E       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
-0x00044286       STB R11 [R8]
-0x0004428A       ADD R8 R8 1
-0x0004428E       B parse_skip_spaces
+
+0x0004427A       LDB R11 [R8]
+
+0x0004427E       CMP R11 0
+0x00044282       BEQ parse_done
+
+0x0004428A       CMP R11 32            ; space
+0x0004428E       BNE parse_token_start
+
+0x00044296       ADD R8 R8 1
+0x0004429A       B parse_skip_spaces
+
+
+; ===============================================================
+; Start new argument
+; ===============================================================
 
 parse_token_start:
-0x00044296       LDB R11 [R8]
-0x0004429A       CMP R11 0
-0x0004429E       BEQ parse_done
-0x000442A6       CMP R10 8       ;up to 8 args
-0x000442AA       BGE parse_done
 
-0x000442B2       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
-0x000442B6       ADD R9 R9 4
-0x000442BA       ADD R10 R10 1   ;argc for execve
+0x000442A2       CMP R10 MAX_ARGS
+0x000442A6       BGE parse_done
+
+    ; ------------------------------------------------------------
+    ; argv[argc] = current output pointer
+    ; ------------------------------------------------------------
+
+0x000442AE       LI R7 argv_buf
+
+0x000442B6       MOV R6 R10
+0x000442BA       shl R6 R6 2
+0x000442BE       ADD R7 R7 R6
+
+0x000442C2       STW R9 [R7]
+
+0x000442C6       ADD R10 R10 1
+
+0x000442CA       LI R12 0              ; outside quotes
+
+0x000442D2       B parse_token_body
+
+
+; ===============================================================
+; Process characters of current argument
+; ===============================================================
 
 parse_token_body:
-0x000442BE       LDB R11 [R8]
-0x000442C2       CMP R11 0
-0x000442C6       BEQ parse_done
-0x000442CE       CMP R11 32      ;" "
-0x000442D2       BEQ parse_end_token
-0x000442DA       ADD R8 R8 1
-0x000442DE       B parse_token_body
 
-parse_end_token:
-0x000442E6       LI R11 0
-0x000442EE       STB R11 [R8]    ; put null terminator at end of token
-0x000442F2       ADD R8 R8 1     ; move to next char in input_buf
-0x000442F6       B parse_skip_spaces
+0x000442DA       LDB R11 [R8]
+
+    ; End of command
+0x000442DE       CMP R11 0
+0x000442E2       BEQ parse_token_done
+
+
+    ; ------------------------------------------------------------
+    ; Outside quotes
+    ; ------------------------------------------------------------
+
+0x000442EA       CMP R12 0
+0x000442EE       BNE parse_inside_quotes
+
+
+    ; Space terminates argument
+0x000442F6       CMP R11 32
+0x000442FA       BEQ parse_token_end
+
+
+    ; Double quote
+0x00044302       CMP R11 34
+0x00044306       BEQ parse_start_double
+
+
+    ; Single quote
+0x0004430E       CMP R11 39
+0x00044312       BEQ parse_start_single
+
+
+    ; Backslash
+0x0004431A       CMP R11 92
+0x0004431E       BEQ parse_escape
+
+
+    ; Normal character
+0x00044326       STB R11 [R9]
+
+0x0004432A       ADD R8 R8 1
+0x0004432E       ADD R9 R9 1
+
+0x00044332       B parse_token_body
+
+
+; ===============================================================
+; Start double quote
+; ===============================================================
+
+parse_start_double:
+
+0x0004433A       LI R12 34
+
+0x00044342       ADD R8 R8 1
+
+0x00044346       B parse_token_body
+
+
+; ===============================================================
+; Start single quote
+; ===============================================================
+
+parse_start_single:
+
+0x0004434E       LI R12 39
+
+0x00044356       ADD R8 R8 1
+
+0x0004435A       B parse_token_body
+
+
+; ===============================================================
+; Inside quotes
+; ===============================================================
+
+parse_inside_quotes:
+
+    ; Closing quote?
+0x00044362       CMP R11 R12
+0x00044366       BEQ parse_close_quote
+
+
+    ; Backslash
+0x0004436E       CMP R11 92
+0x00044372       BEQ parse_escape
+
+
+    ; Normal character
+0x0004437A       STB R11 [R9]
+
+0x0004437E       ADD R8 R8 1
+0x00044382       ADD R9 R9 1
+
+0x00044386       B parse_token_body
+
+
+; ===============================================================
+; Close quote
+; ===============================================================
+
+parse_close_quote:
+
+0x0004438E       LI R12 0
+
+0x00044396       ADD R8 R8 1
+
+0x0004439A       B parse_token_body
+
+
+; ===============================================================
+; Escape sequence
+;
+; R8 points at '\'
+; Move to character after it.
+; ===============================================================
+
+parse_escape:
+
+0x000443A2       ADD R8 R8 1
+
+0x000443A6       LDB R11 [R8]
+
+    ; Backslash was last character
+0x000443AA       CMP R11 0
+0x000443AE       BEQ parse_token_done
+
+
+    ; ------------------------------------------------------------
+    ; \n
+    ; ------------------------------------------------------------
+
+0x000443B6       CMP R11 110           ; 'n'
+0x000443BA       BEQ parse_escape_n
+
+
+    ; ------------------------------------------------------------
+    ; \r
+    ; ------------------------------------------------------------
+
+0x000443C2       CMP R11 114           ; 'r'
+0x000443C6       BEQ parse_escape_r
+
+
+    ; ------------------------------------------------------------
+    ; \t
+    ; ------------------------------------------------------------
+
+0x000443CE       CMP R11 116           ; 't'
+0x000443D2       BEQ parse_escape_t
+
+
+    ; ------------------------------------------------------------
+    ; \\
+    ; ------------------------------------------------------------
+
+0x000443DA       CMP R11 92
+0x000443DE       BEQ parse_escape_backslash
+
+
+    ; ------------------------------------------------------------
+    ; \"
+    ; ------------------------------------------------------------
+
+0x000443E6       CMP R11 34
+0x000443EA       BEQ parse_escape_quote
+
+
+    ; ------------------------------------------------------------
+    ; \'
+    ; ------------------------------------------------------------
+
+0x000443F2       CMP R11 39
+0x000443F6       BEQ parse_escape_single
+
+
+    ; ------------------------------------------------------------
+    ; Unknown escape
+    ;
+    ; \x -> x
+    ; ------------------------------------------------------------
+
+0x000443FE       STB R11 [R9]
+
+0x00044402       ADD R8 R8 1
+0x00044406       ADD R9 R9 1
+
+0x0004440A       B parse_token_body
+
+
+; ===============================================================
+; Escape handlers
+; ===============================================================
+
+parse_escape_n:
+
+0x00044412       LI R11 10
+0x0004441A       B parse_escape_store
+
+
+parse_escape_r:
+
+0x00044422       LI R11 13
+0x0004442A       B parse_escape_store
+
+
+parse_escape_t:
+
+0x00044432       LI R11 9
+0x0004443A       B parse_escape_store
+
+
+parse_escape_backslash:
+
+0x00044442       LI R11 92
+0x0004444A       B parse_escape_store
+
+
+parse_escape_quote:
+
+0x00044452       LI R11 34
+0x0004445A       B parse_escape_store
+
+
+parse_escape_single:
+
+0x00044462       LI R11 39
+0x0004446A       B parse_escape_store
+
+
+; ===============================================================
+; Store translated escape
+; ===============================================================
+
+parse_escape_store:
+
+0x00044472       STB R11 [R9]
+
+0x00044476       ADD R8 R8 1
+0x0004447A       ADD R9 R9 1
+
+0x0004447E       B parse_token_body
+
+
+; ===============================================================
+; End argument because of space
+; ===============================================================
+
+parse_token_end:
+
+    ; terminate output string
+0x00044486       LI R11 0
+0x0004448E       STB R11 [R9]
+
+0x00044492       ADD R9 R9 1
+0x00044496       ADD R8 R8 1
+
+0x0004449A       B parse_skip_spaces
+
+
+; ===============================================================
+; End of input
+; ===============================================================
+
+parse_token_done:
+
+    ; terminate current string
+0x000444A2       LI R11 0
+0x000444AA       STB R11 [R9]
+
+
+; ===============================================================
+; Finish argv[]
+; ===============================================================
 
 parse_done:
-0x000442FE       LI R11 0
-0x00044306       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
-0x0004430A       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
+
+    ; R7 = argv_buf + argc * 4
+
+0x000444AE       LI R7 argv_buf
+
+0x000444B6       MOV R6 R10
+0x000444BA       SHL R6 R6 2
+0x000444BE       ADD R7 R7 R6
+
+    ; argv[argc] = NULL
+
+0x000444C2       LI R11 0
+0x000444CA       STW R11 [R7]
+
+
+0x000444CE       POP R12
+0x000444D2       POP R11
+0x000444D6       POP R10
+0x000444DA       POP R9
+0x000444DE       POP R8
+0x000444E2       POP LR
+
+0x000444E6       RET
+
+; ---------------------------------------------------------------
+; parse_command() – parse input_buf into argv_buf
+; input and output:
+;   input_buf: null-terminated string of command line
+;   output: all needed for execve (input_buf = pathname, argv_buf = argv) ready
+; ---------------------------------------------------------------
+
+parse_command0:
+0x000444EA       PUSH LR
+0x000444EE       PUSH R8
+0x000444F2       PUSH R9
+0x000444F6       PUSH R10
+0x000444FA       PUSH R11
+
+0x000444FE       LI R8 input_buf
+0x00044506       LI R9 argv_buf
+0x0004450E       LI R10 0
+
+parse_skip_spaces0:
+0x00044516       LDB R11 [R8]
+0x0004451A       CMP R11 32      ;" "
+0x0004451E       BNE parse_token_start
+0x00044526       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
+0x0004452E       STB R11 [R8]
+0x00044532       ADD R8 R8 1
+0x00044536       B parse_skip_spaces0
+
+parse_token_start0:
+0x0004453E       LDB R11 [R8]
+0x00044542       CMP R11 0
+0x00044546       BEQ parse_done
+0x0004454E       CMP R10 8       ;up to 8 args
+0x00044552       BGE parse_done
+
+0x0004455A       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
+0x0004455E       ADD R9 R9 4
+0x00044562       ADD R10 R10 1   ;argc for execve
+
+parse_token_body0:
+0x00044566       LDB R11 [R8]
+0x0004456A       CMP R11 0
+0x0004456E       BEQ parse_done
+0x00044576       CMP R11 32      ;" "
+0x0004457A       BEQ parse_end_token
+0x00044582       ADD R8 R8 1
+0x00044586       B parse_token_body
+
+parse_end_token:
+0x0004458E       LI R11 0
+0x00044596       STB R11 [R8]    ; put null terminator at end of token
+0x0004459A       ADD R8 R8 1     ; move to next char in input_buf
+0x0004459E       B parse_skip_spaces
+
+parse_done0:
+0x000445A6       LI R11 0
+0x000445AE       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
+0x000445B2       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
                     ;  and in format for execve
-0x0004430E       POP R10
-0x00044312       POP R9
-0x00044316       POP R8
-0x0004431A       POP LR
-0x0004431E       RET
+0x000445B6       POP R10
+0x000445BA       POP R9
+0x000445BE       POP R8
+0x000445C2       POP LR
+0x000445C6       RET
 
 ;---------------------------------------------------------------
 ; Data
@@ -1779,7 +2233,7 @@ input_buf:
     .SPACE 128
 
 argv_buf:
-    .SPACE 36
+    .SPACE 128
 ; ================================================================
 ; End
 ; ================================================================
