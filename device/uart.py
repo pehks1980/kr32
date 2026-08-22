@@ -27,6 +27,11 @@ class UARTDevice:
         self._stdin_fd = None
         self._stdin_termios = None
         self._stdin_cbreak = False
+        self._host_fd = None
+
+    def attach_host_fd(self, fd):
+        """Use an externally managed terminal fd for debugger I/O."""
+        self._host_fd = fd
 
     def reset(self):
         """Reset the UART device state."""
@@ -116,10 +121,12 @@ class UARTDevice:
         """
         irq = False
         try:
-            # Verify stdin is a TTY and has data available to avoid blocking
-            if sys.stdin.isatty():
-                self._prepare_stdin()
-                fd = self._stdin_fd if self._stdin_fd is not None else sys.stdin.fileno()
+            # Verify the input fd is ready before reading so the VM never blocks.
+            if self._host_fd is not None or sys.stdin.isatty():
+                fd = self._host_fd
+                if fd is None:
+                    self._prepare_stdin()
+                    fd = self._stdin_fd if self._stdin_fd is not None else sys.stdin.fileno()
                 # select with timeout=0 is completely non-blocking
                 r, _, _ = select.select([fd], [], [], 0)
                 if r:
@@ -132,8 +139,9 @@ class UARTDevice:
                             # can treat it as line editing without emitting caret-style control noise.
                             char = '\b'
                             try:
-                                sys.stdout.write('\b \b')
-                                sys.stdout.flush()
+                                if self._host_fd is None:
+                                    sys.stdout.write('\b \b')
+                                    sys.stdout.flush()
                             except Exception:
                                 pass
 
@@ -163,8 +171,11 @@ class UARTDevice:
                 char_val = self.tx_fifo.pop(0)
                 self.tx_output.append(char_val)
                 try:
-                    sys.stdout.write(chr(char_val))
-                    sys.stdout.flush()
+                    if self._host_fd is None:
+                        sys.stdout.write(chr(char_val))
+                        sys.stdout.flush()
+                    else:
+                        os.write(self._host_fd, bytes((char_val,)))
                 except Exception:
                     pass
                 if self.tx_was_full and len(self.tx_fifo) < self.tx_capacity:

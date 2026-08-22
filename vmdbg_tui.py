@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from assembler import Assembler
+from device.console import ConsoleDevice
 from vmp import CPU
 
 
@@ -149,13 +150,11 @@ class KM32TUI:
     ]
 
     LISTING_ADDR_RE = re.compile(r"^0x([0-9A-Fa-f]{8})\s+(.*)$")
-    USER_CODE_START = 0x00043000
-    USER_CODE_END = 0x00044000
-
-    def __init__(self, cpu, trace=False, lst_path=None, user_lst_path=None, key_probe=False):
+    def __init__(self, cpu, trace=False, lst_path=None, user_lst_path=None, key_probe=False, io_window=False):
         self.cpu = cpu
         self.trace = trace
         self.key_probe = key_probe
+        self.io_console = None
         self.status = "Ready"
         self.cmd_history = []
         self.history_index = None
@@ -180,6 +179,10 @@ class KM32TUI:
         self.user_listing = self._load_listing(self.user_lst_path)
         if self.user_lst_path:
             self.active_execve_path = str(self.user_lst_path)
+        if io_window:
+            self.io_console = ConsoleDevice(dedicated_window=True)
+            if self.io_console.master_fd is not None:
+                self.cpu.uart.attach_host_fd(self.io_console.master_fd)
         self.prev_info_state = None
         # do not override CPU trace_output/quiet here; main() controls them
 
@@ -256,9 +259,17 @@ class KM32TUI:
         return listing
 
     def _active_listing(self):
-        if self.USER_CODE_START <= self.cpu.pc < self.USER_CODE_END and self.user_listing["lines"]:
+        if self._listing_contains_pc(self.user_listing):
+            return self.user_listing
+        if self._listing_contains_pc(self.kernel_listing):
+            return self.kernel_listing
+        if self.cpu.mode == 1 and self.user_listing["lines"]:
             return self.user_listing
         return self.kernel_listing
+
+    def _listing_contains_pc(self, listing):
+        addrs = listing["addrs"]
+        return bool(addrs) and addrs[0] <= self.cpu.pc <= addrs[-1]
 
     def _sync_execve_listing(self):
         exec_path = getattr(self.cpu, "last_execve_path", None)
@@ -846,6 +857,8 @@ class KM32TUI:
                 return False
             if op in ("restart", "reset"):
                 self.cpu.reset()
+                if self.io_console is not None and self.io_console.master_fd is not None:
+                    self.cpu.uart.attach_host_fd(self.io_console.master_fd)
                 self.active_execve_path = None
                 self.user_listing = self._load_listing(self.user_lst_path)
                 self.status = f"restarted debug session, PC=0x{self.cpu.pc:08X}"
@@ -1101,6 +1114,7 @@ def main():
     parser.add_argument("--traceint", action="store_true", help="trace trap/interrupt delivery")
     parser.add_argument("--tracefault", action="store_true", help="trace fault details")
     parser.add_argument("--run", action="store_true", help="run immediately until breakpoint/halt before starting TUI")
+    parser.add_argument("--io-window", action="store_true", help="open a dedicated Terminal window for guest UART input/output")
     args = parser.parse_args()
 
     image_path = Path(args.image)
@@ -1146,7 +1160,7 @@ def main():
         if not user_lst_path:
             user_lst_path = program_listing_path(getattr(cpu, "last_execve_path", None))
 
-    ui = KM32TUI(cpu, trace=args.trace, lst_path=lst_path, user_lst_path=user_lst_path)
+    ui = KM32TUI(cpu, trace=args.trace, lst_path=lst_path, user_lst_path=user_lst_path, io_window=args.io_window)
     ui.start()
 
 

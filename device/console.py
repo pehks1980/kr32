@@ -6,6 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tty
 
 
 class ConsoleDevice:
@@ -145,13 +146,6 @@ class ConsoleDevice:
         cpu.check_physical_mem(paddr, length)
         data = bytes(cpu.physical_memory[paddr:paddr + length])
         if self.dedicated_window:
-            # Log the exact bytes we will write to the PTY master for diagnosis
-            try:
-                hexpart = " ".join(f"{b:02x}" for b in data[:64])
-                preview = data[:64].decode("utf-8", errors="replace")
-                print(f"[CONSOLE MASTER WRITE] len={len(data)} data={hexpart} preview={preview!r}")
-            except Exception:
-                pass
             total = 0
             L = len(data)
             while total < L:
@@ -182,6 +176,7 @@ def _run_pty_bridge(slave_name):
         return
 
     try:
+        tty.setraw(slave_fd)
         while True:
             rlist, _, _ = select.select([sys.stdin.fileno(), slave_fd], [], [])
             if sys.stdin.fileno() in rlist:

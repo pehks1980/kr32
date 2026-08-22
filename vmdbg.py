@@ -379,6 +379,7 @@ def main():
     parser.add_argument("--key-probe", action="store_true", help="start the TUI in key probe mode")
     parser.add_argument("--lst", nargs="?", const=True, help="show listing file beside CPU disassembly in TUI mode")
     parser.add_argument("--lst-user", metavar="PATH", help="userland listing to show while PC is in the exec page")
+    parser.add_argument("--io-window", action="store_true", help="open a dedicated Terminal window for guest UART input/output")
     args = parser.parse_args()
 
     image_path = Path(args.image)
@@ -414,7 +415,7 @@ def main():
     if args.tui:
         if KM32TUI is None:
             raise SystemExit("TUI support is unavailable. Make sure vmdbg_tui.py is present.")
-        ui = KM32TUI(cpu, trace=args.trace, lst_path=lst_path, user_lst_path=user_lst_path, key_probe=args.key_probe)
+        ui = KM32TUI(cpu, trace=args.trace, lst_path=lst_path, user_lst_path=user_lst_path, key_probe=args.key_probe, io_window=args.io_window)
         if args.run:
             cpu.stop_reason = None
             cpu.stop_info = None
