@@ -83,3 +83,9 @@ The machine should be understandable by the person building it, debugging it, po
 That gives the whole thing a very clear identity:
 
 simple principles, explicit mechanisms, replaceable implementations, no unnecessary historical baggage, and complete visibility from idea to machine.
+
+KR32 is not obligated to reproduce an existing operating system. Existing systems provide principles, experience, and proven solutions — not boundaries.
+
+No deadline. No final chapter. Just principles, interfaces, experiments, understanding — and the next thing to discover.
+
+Start with a virtual world in software. Add mechanisms as the world needs them. Eventually some mechanisms become hardware.
