@@ -72,7 +72,7 @@ _start:
     SVC SYS_EXIT
 
 ;==============================================================================
-; puts - Write null-terminated string to stdout with newline
+; puts - Write null-terminated string to stdout
 ; IN:  R1 = string pointer
 ; OUT: R1 = bytes written or error code
 ;==============================================================================
@@ -87,8 +87,8 @@ puts:
     MOV R2 R8            ; Buffer = string
     MOV R3 R9            ; Count = length
     SVC SYS_WRITE
-    LI  R1 10             ; Newline character
-    BL  putchar           ; Write newline
+    ;LI  R1 10             ; Newline character
+    ;BL  putchar           ; Write newline
     POP R9
     POP R8
     POP LR
@@ -1477,6 +1477,7 @@ printf_hex:
 
 printf_char:
     CALL _fetch_arg_r1
+    LDb R1 [R1]         ;get char by its ptr
     ADD R9 R9 1
     CALL putchar
     B   printf_continue
@@ -1499,7 +1500,7 @@ printf_oct:
     MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
     CALL atoi
     MOV R2 R1
-    
+
     ADD R9 R9 1
     MOV R1 R11
     CALL _print_oct
