@@ -153,31 +153,7 @@ B KERNEL_START
 ;======================================================================================================
 idle_task:
     LI R1 0
-    ;------------------------------------------------------
-    ; bmi_call
-    ;
-    ; R1 = opcode
-    ; R2 = payload pointer
-    ; R3 = payload length
-    ; R4 = namespace
-    MOV R1 NS_CREATE
-    LI R2 0x00000000
-    mov r3 r2
-    mov r4 r2
-    call bmi_call
-
-    MOV R1 FILE_CREATE
-    LI R2 cr_file
-    LI R3 13
-    LI R4 0
-    call bmi_call
-
-    MOV R1 FILE_DELETE
-    LI R2 cr_file
-    LI R3 13
-    LI R4 0
-    call bmi_call
-
+    CALL nsfs_bmi_demo
     ENABLEINT
 
 idle_loop:
@@ -187,8 +163,60 @@ idle_loop:
     ;DEBUG 10
     B idle_loop
 
+nsfs_bmi_demo:
+    PUSH LR
+    ;------------------------------------------------------
+    ; NSFS/BMI demo sequence from system task 0.
+    ; Recreates namespace 0, creates a file, appends bytes, then deletes it.
+    ;
+    ; R1 = opcode
+    ; R2 = payload pointer
+    ; R3 = payload length
+    ; R4 = namespace
+
+    MOV R1 NS_DELETE
+    LI R2 0x00000000
+    MOV R3 R2
+    MOV R4 R2
+    CALL bmi_call
+
+    MOV R1 NS_CREATE
+    LI R2 0x00000000
+    MOV R3 R2
+    MOV R4 R2
+    CALL bmi_call
+
+    MOV R1 FILE_CREATE
+    LI R2 cr_file
+    LI R3 13
+    LI R4 0
+    CALL bmi_call
+
+    MOV R1 FILE_APPEND
+    LI R2 cr_file_append_payload
+    LI R3 21
+    LI R4 0
+    CALL bmi_call
+
+    MOV R1 FILE_DELETE
+    LI R2 cr_file
+    LI R3 13
+    LI R4 0
+    CALL bmi_call
+
+    POP LR
+    RET
+
 cr_file:
     .asciiz "etc/crash.txt"
+
+cr_file_append_payload:
+    .WORD 0x0000000D    ; path length = 13
+    .WORD 0x2F637465    ; "etc/"
+    .WORD 0x73617263    ; "cras"
+    .WORD 0x78742E68    ; "h.tx"
+    .WORD 0x43424174    ; "tABC"
+    .WORD 0x0000000A    ; "\n"
 
 .org 0x2000
 
@@ -211,6 +239,12 @@ func KERNEL_START
 
         ; Initialize MMIO devices (PIC, PIT, UART)
         call init_mmio_devices
+
+        ; Run the NSFS/BMI demo once during boot so the host log shows it
+        ; even when user init starts before the idle task gets scheduled.
+        call nsfs_bmi_demo
+        LI R1 NSFS_DEFAULT_NS
+        call nsfs_refresh_index
 
         ;init console mutex
         call init_console_mutex 
@@ -2344,15 +2378,180 @@ nsfs_node_free:
     STW R7 [R6]
     RET
 
+; nsfs_refresh_index
+; in:  R1 = namespace
+; out: R1 = 0 on success, BMI/errno status on failure
+nsfs_refresh_index:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R12 R1
+
+    MOV R1 NSFS_INDEX
+    LI R2 0
+    LI R3 0
+    MOV R4 R12
+    CALL bmi_call
+
+    CMP R1 0
+    BNE nsfs_refresh_done
+
+    LI R1 nsfs_index_count
+    LI R2 0
+    STW R2 [R1]
+    LI R1 nsfs_index_path_next
+    LI R2 nsfs_index_path_pool
+    STW R2 [R1]
+
+    LI R8 BMI_BUF_READ
+    ADD R8 R8 BMI_HDR_SIZEOF       ; R8 = reply payload cursor
+    LDW R9 [R8]                    ; R9 = entry_count
+    ADD R8 R8 4
+    LI R10 0                       ; R10 = parsed count
+
+nsfs_refresh_loop:
+    CMP R10 R9
+    BGE nsfs_refresh_success
+    CMP R10 NSFS_INDEX_MAX_ENTRIES
+    BGE nsfs_refresh_success
+
+    ; R11 = &nsfs_index_table[R10]
+    LI R11 NSFS_INDEX_ENTRY_SIZEOF
+    MUL R11 R10 R11
+    LI R6 nsfs_index_table
+    ADD R11 R6 R11
+
+    LDW R1 [R8 + NSFS_WIRE_TYPE]
+    STW R1 [R11 + NSFS_INDEX_TYPE]
+    LDW R1 [R8 + NSFS_WIRE_SIZE]
+    STW R1 [R11 + NSFS_INDEX_SIZE]
+    LDW R1 [R8 + NSFS_WIRE_VERSION]
+    STW R1 [R11 + NSFS_INDEX_VERSION]
+    LDW R5 [R8 + NSFS_WIRE_PATH_LEN]
+    STW R5 [R11 + NSFS_INDEX_PATH_LEN]
+    ADD R8 R8 NSFS_WIRE_HDR_SIZEOF
+
+    ; Copy path bytes to path pool and append a NUL for strcmp.
+    LI R6 nsfs_index_path_next
+    LDW R1 [R6]
+    STW R1 [R11 + NSFS_INDEX_PATH]
+    MOV R2 R8
+    MOV R3 R5
+    BL memcpy
+    LI R2 0
+    STB R2 [R1]
+    ADD R1 R1 1
+    LI R6 nsfs_index_path_next
+    STW R1 [R6]
+
+    ; Advance wire cursor by path_len rounded up to 4 bytes.
+    ADD R8 R8 R5
+    ADD R8 R8 3
+    LI R6 0xFFFFFFFC
+    AND R8 R8 R6
+
+    ADD R10 R10 1
+    B nsfs_refresh_loop
+
+nsfs_refresh_success:
+    LI R1 nsfs_index_count
+    STW R10 [R1]
+    LI R1 0
+
+nsfs_refresh_done:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
 ; nsfs_lookup
 ; in:  R1 = pathname
 ; out: R1 = inode ptr if present in NSFS overlay, or 0 if not found
 nsfs_lookup:
-    ; TODO:
-    ; 1. BMI lookup/read metadata for ns:<default_ns>:path:<pathname>.
-    ; 2. Allocate nsfs_node and copy/cache path metadata.
-    ; 3. Allocate inode and init with nsfs_ops, nsfs_node, type, size.
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R1                       ; pathname
+    LI R9 nsfs_index_table
+    LI R10 nsfs_index_count
+    LDW R10 [R10]
+
+nsfs_lookup_loop:
+    CMP R10 0
+    BEQ nsfs_lookup_fail
+
+    MOV R1 R8
+    LDW R2 [R9 + NSFS_INDEX_PATH]
+    BL strcmp
+    CMP R1 1
+    BEQ nsfs_lookup_found
+
+    ADD R9 R9 NSFS_INDEX_ENTRY_SIZEOF
+    SUB R10 R10 1
+    B nsfs_lookup_loop
+
+nsfs_lookup_found:
+    BL nsfs_node_alloc
+    CMP R1 0
+    BEQ nsfs_lookup_fail
+    MOV R11 R1                      ; nsfs node
+
+    LI R1 NSFS_DEFAULT_NS
+    STW R1 [R11 + NSFS_NODE_NAMESPACE]
+    LDW R1 [R9 + NSFS_INDEX_PATH]
+    STW R1 [R11 + NSFS_NODE_PATH]
+    LDW R1 [R9 + NSFS_INDEX_TYPE]
+    CMP R1 NSFS_TYPE_DIR
+    BEQ nsfs_lookup_type_dir
+    LI R12 INODE_REG
+    B nsfs_lookup_type_done
+nsfs_lookup_type_dir:
+    LI R12 INODE_DIR
+nsfs_lookup_type_done:
+    STW R12 [R11 + NSFS_NODE_TYPE]
+    LDW R5 [R9 + NSFS_INDEX_SIZE]
+    STW R5 [R11 + NSFS_NODE_SIZE]
     LI R1 0
+    STW R1 [R11 + NSFS_NODE_FLAGS]
+
+    BL inode_alloc
+    CMP R1 0
+    BEQ nsfs_lookup_free_node
+
+    MOV R10 R1                      ; inode
+    LI R2 nsfs_ops
+    MOV R3 R11
+    MOV R4 R12
+    ; R5 already holds file size.
+    BL inode_init
+    MOV R1 R10
+    B nsfs_lookup_done
+
+nsfs_lookup_free_node:
+    MOV R1 R11
+    BL nsfs_node_free
+
+nsfs_lookup_fail:
+    LI R1 0
+
+nsfs_lookup_done:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
     RET
 
 ; nsfs_open
@@ -4741,6 +4940,24 @@ devfs_ops:
 .EQU NSFS_DEFAULT_NS,     0
 .EQU NSFS_MAX_NODES,     64
 
+.EQU NSFS_TYPE_FILE,      1
+.EQU NSFS_TYPE_DIR,       2
+
+.EQU NSFS_WIRE_TYPE,      0
+.EQU NSFS_WIRE_SIZE,      4
+.EQU NSFS_WIRE_VERSION,   8
+.EQU NSFS_WIRE_PATH_LEN, 12
+.EQU NSFS_WIRE_HDR_SIZEOF, 16
+
+.EQU NSFS_INDEX_TYPE,     0
+.EQU NSFS_INDEX_SIZE,     4
+.EQU NSFS_INDEX_VERSION,  8
+.EQU NSFS_INDEX_PATH,    12
+.EQU NSFS_INDEX_PATH_LEN, 16
+.EQU NSFS_INDEX_ENTRY_SIZEOF, 20
+.EQU NSFS_INDEX_MAX_ENTRIES, 64
+.EQU NSFS_INDEX_PATH_POOL_SIZE, 2048
+
 nsfs_ops:
     .WORD nsfs_open
     .WORD nsfs_read
@@ -4775,6 +4992,18 @@ nsfs_node_pool:
 
 nsfs_node_used:
     .SPACE NSFS_MAX_NODES * 4
+
+nsfs_index_count:
+    .WORD 0
+
+nsfs_index_table:
+    .SPACE NSFS_INDEX_MAX_ENTRIES * NSFS_INDEX_ENTRY_SIZEOF
+
+nsfs_index_path_next:
+    .WORD nsfs_index_path_pool
+
+nsfs_index_path_pool:
+    .SPACE NSFS_INDEX_PATH_POOL_SIZE
 
 ; special con uart related
 ;con_ops:
@@ -8531,8 +8760,10 @@ bmi_call_error:
 .EQU NS_DELETE,   0x02
 .EQU FILE_CREATE, 0x10
 .EQU FILE_DELETE, 0x11
+.EQU FILE_APPEND, 0x12
 .EQU DIR_CREATE,  0x20
 .EQU DIR_DELETE,  0x21
+.EQU NSFS_INDEX,  0x30
 
 
 ; ==================================================

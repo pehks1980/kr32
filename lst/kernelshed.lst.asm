@@ -228,42 +228,70 @@
 ;======================================================================================================
 idle_task:
 0x00001000       LI R1 0
+0x00001008   CALL nsfs_bmi_demo
+0x00001010       ENABLEINT
+
+idle_loop:
+0x00001014       ADD R1 R1 1
+
+
+    ;DEBUG 10
+0x00001018       B idle_loop
+
+nsfs_bmi_demo:
+0x00001020       PUSH LR
     ;------------------------------------------------------
-    ; bmi_call
+    ; NSFS/BMI demo sequence from system task 0.
+    ; Recreates namespace 0, creates a file, appends bytes, then deletes it.
     ;
     ; R1 = opcode
     ; R2 = payload pointer
     ; R3 = payload length
     ; R4 = namespace
-0x00001008       MOV R1 NS_CREATE
-0x0000100C       LI R2 0x00000000
-0x00001014       mov r3 r2
-0x00001018       mov r4 r2
-0x0000101C   CALL bmi_call
 
-0x00001024       MOV R1 FILE_CREATE
-0x00001028       LI R2 cr_file
-0x00001030       LI R3 13
-0x00001038       LI R4 0
-0x00001040   CALL bmi_call
+0x00001024       MOV R1 NS_DELETE
+0x00001028       LI R2 0x00000000
+0x00001030       MOV R3 R2
+0x00001034       MOV R4 R2
+0x00001038   CALL bmi_call
 
-0x00001048       MOV R1 FILE_DELETE
-0x0000104C       LI R2 cr_file
-0x00001054       LI R3 13
-0x0000105C       LI R4 0
-0x00001064   CALL bmi_call
+0x00001040       MOV R1 NS_CREATE
+0x00001044       LI R2 0x00000000
+0x0000104C       MOV R3 R2
+0x00001050       MOV R4 R2
+0x00001054   CALL bmi_call
 
-0x0000106C       ENABLEINT
+0x0000105C       MOV R1 FILE_CREATE
+0x00001060       LI R2 cr_file
+0x00001068       LI R3 13
+0x00001070       LI R4 0
+0x00001078   CALL bmi_call
 
-idle_loop:
-0x00001070       ADD R1 R1 1
+0x00001080       MOV R1 FILE_APPEND
+0x00001084       LI R2 cr_file_append_payload
+0x0000108C       LI R3 21
+0x00001094       LI R4 0
+0x0000109C   CALL bmi_call
 
+0x000010A4       MOV R1 FILE_DELETE
+0x000010A8       LI R2 cr_file
+0x000010B0       LI R3 13
+0x000010B8       LI R4 0
+0x000010C0   CALL bmi_call
 
-    ;DEBUG 10
-0x00001074       B idle_loop
+0x000010C8       POP LR
+0x000010CC       RET
 
 cr_file:
     .asciiz "etc/crash.txt"
+
+cr_file_append_payload:
+    .WORD 0x0000000D    ; path length = 13
+    .WORD 0x2F637465    ; "etc/"
+    .WORD 0x73617263    ; "cras"
+    .WORD 0x78742E68    ; "h.tx"
+    .WORD 0x43424174    ; "tABC"
+    .WORD 0x0000000A    ; "\n"
 
 .org 0x2000
 
@@ -288,71 +316,77 @@ KERNEL_START:
         ; Initialize MMIO devices (PIC, PIT, UART)
 0x00002030   CALL init_mmio_devices
 
+        ; Run the NSFS/BMI demo once during boot so the host log shows it
+        ; even when user init starts before the idle task gets scheduled.
+0x00002038   CALL nsfs_bmi_demo
+0x00002040           LI R1 NSFS_DEFAULT_NS
+0x00002048   CALL nsfs_refresh_index
+
         ;init console mutex
-0x00002038   CALL init_console_mutex
+0x00002050   CALL init_console_mutex
 
         ; Mount the built-in read-only TAR archive and show its index.
-0x00002040           LI R1 tarfs_start
-0x00002048           LI R2 tarfs_end
-0x00002050           SUB R2 R2 R1
-0x00002054   CALL tarfs_init
-0x0000205C   CALL tarfs_dump_index
+0x00002058           LI R1 tarfs_start
+0x00002060           LI R2 tarfs_end
+0x00002068           SUB R2 R2 R1
+0x0000206C   CALL tarfs_init
+0x00002074   CALL tarfs_dump_index
 
 
         ;test read dirs from tarfs probably needs to be removed later
-0x00002064           LI R1 etc_path
-0x0000206C   CALL tarfs_readdir1
+0x0000207C           LI R1 etc_path
+0x00002084   CALL tarfs_readdir1
 
-0x00002074           LI R1 bin_path
-0x0000207C   CALL tarfs_readdir1
+0x0000208C           LI R1 bin_path
+0x00002094   CALL tarfs_readdir1
 
         ; Activate the first dynamically created address space before
         ; enabling translation and restoring its initial trapframe.
-0x00002084           LI R1 tasks
-0x0000208C           LDW R2 [R1 + TASK_PTBR]
-0x00002090           SETPTBR R2
-0x00002094           LDW SP [R1 + TASK_KSP]
+0x0000209C           LI R1 tasks
+0x000020A4           LDW R2 [R1 + TASK_PTBR]
+0x000020A8           SETPTBR R2
+0x000020AC           LDW SP [R1 + TASK_KSP]
 
         ; Enable MMU and interrupts
-0x00002098   CALL enable_vm
+0x000020B0   CALL enable_vm
 
         ; Start first task through the same trapframe restore path used
         ; by preemptive switches.
         ; jump to task0 entry point (0x5000) through the same trap restore
-0x000020A0           B trap_restore
+0x000020B8           B trap_restore
 
 ; ================================================================
 ; Initialize console mutex at boot time
 ; ================================================================
 
 init_console_mutex:
-0x000020A8       PUSH LR
-0x000020AC       LI R1 console_mutex
-0x000020B4       BL mutex_init
-0x000020BC       POP LR
-0x000020C0       RET
+0x000020C0       PUSH LR
+0x000020C4       LI R1 console_mutex
+0x000020CC       BL mutex_init
+0x000020D4       POP LR
+0x000020D8       RET
 
 ; ================================================================
 ; Initialize IDT - ALL TRAPS GO TO ONE ENTRY
 ; ================================================================
 
 init_idt:
-0x000020C4       LI R1 0x00200000           ; IDT base physical address
+0x000020DC       LI R1 0x00200000           ; IDT base physical address
 
     ; Only entry 0 matters - all traps go here
-0x000020CC       LI R2 trap_entry
-0x000020D4       STW R2 [R1]                ; IDT[0] = trap_entry
+0x000020E4       LI R2 trap_entry
+0x000020EC       STW R2 [R1]                ; IDT[0] = trap_entry
 
     ; Optional: fill other entries with same handler for safety
-0x000020D8       LI R2 trap_entry
-0x000020E0       STW R2 [R1+4]                ; IDT[1]
-0x000020E4       STW R2 [R1+8]                ; IDT[2]
-0x000020E8       STW R2 [R1+12]               ; IDT[3]
-0x000020EC       STW R2 [R1+24]               ; IDT[6]
-0x000020F0       STW R2 [R1+64]               ; IDT[16]
+0x000020F0       LI R2 trap_entry
+0x000020F8       STW R2 [R1+4]                ; IDT[1]
+0x000020FC       STW R2 [R1+8]                ; IDT[2]
+0x00002100       STW R2 [R1+12]               ; IDT[3]
+0x00002104       STW R2 [R1+24]               ; IDT[6]
+0x00002108       STW R2 [R1+64]               ; IDT[16]
     ; set IDT root register
-0x000020F4       SETIDTR R1
-0x000020F8       RET
+0x0000210C       SETIDTR R1
+0x00002110       RET
 
 
 ; ================================================================
@@ -360,170 +394,170 @@ init_idt:
 ; ================================================================
 
 init_page_tables0:
-0x000020FC       PUSH LR
+0x00002114       PUSH LR
 
     ; Page tables are created by task_create. Boot only initializes the
     ; physical-page allocator before the scheduler starts allocating tasks.
-0x00002100       LI R1 page_bitmap
-0x00002108       LI R3 16
-0x00002110       BL mem_zero
+0x00002118       LI R1 page_bitmap
+0x00002120       LI R3 16
+0x00002128       BL mem_zero
 
-0x00002118       POP LR
-0x0000211C       RET
+0x00002130       POP LR
+0x00002134       RET
 
 init_page_tables:
-0x00002120       PUSH LR
+0x00002138       PUSH LR
 
     ; Clear the refcount array
-0x00002124       LI R1 page_refcounts
-0x0000212C       LI R3 MAX_PHYS_PAGES          ; 128 bytes = 128 pages: 1 byte for ea page (4k)
-0x00002134       BL mem_zero                   ; 0 - free, 1 - allocated
+0x0000213C       LI R1 page_refcounts
+0x00002144       LI R3 MAX_PHYS_PAGES          ; 128 bytes = 128 pages: 1 byte for ea page (4k)
+0x0000214C       BL mem_zero                   ; 0 - free, 1 - allocated
 
     ; Reserve the TAR image page (physical 0xA0000)
     ; index = (0xA0000 - PAGE_ALLOC_BASE) / 4096
     ; PAGE_ALLOC_BASE = 0x50000
     ; (0xA0000 - 0x50000) = 0x50000 = 327680
     ; 327680 / 4096 = 80
-0x0000213C       LI R2 80
-0x00002144       LI R1 page_refcounts
-0x0000214C       ADD R1 R1 R2
-0x00002150       LI R3 1
-0x00002158       STB R3 [R1]     ;1 = allocated (80 pages for tar image
+0x00002154       LI R2 80
+0x0000215C       LI R1 page_refcounts
+0x00002164       ADD R1 R1 R2
+0x00002168       LI R3 1
+0x00002170       STB R3 [R1]     ;1 = allocated (80 pages for tar image
 
-0x0000215C       POP LR
-0x00002160       RET
+0x00002174       POP LR
+0x00002178       RET
 
 ; ================================================================
 ; Map common kernel pages into the given page table (PTBR in R1)
 ; ================================================================
 
 map_common_kernel:
-0x00002164       PUSH LR
-0x00002168       PUSH R12
+0x0000217C       PUSH LR
+0x00002180       PUSH R12
 
     ; Boot page, kernel/trap code, static kernel data, and MMIO are
     ; identity-mapped into every address space.
-0x0000216C       LI R2 0x00000000      ;page 0 - boot (0000)
-0x00002174       LI R3 0x00000000
-0x0000217C       LI R4 KERNEL_FLAGS
-0x00002184       bl map_page
+0x00002184       LI R2 0x00000000      ;page 0 - boot (0000)
+0x0000218C       LI R3 0x00000000
+0x00002194       LI R4 KERNEL_FLAGS
+0x0000219C       bl map_page
 
     ; Kernel-only helpers: copy routines and page-table inspection
-0x0000218C       LI R2 0x00001000      ; page for kernel buffers
-0x00002194       LI R3 0x00001000
-0x0000219C       LI R4 KERNEL_FLAGS
-0x000021A4       BL map_page
+0x000021A4       LI R2 0x00001000      ; page for kernel buffers
+0x000021AC       LI R3 0x00001000
+0x000021B4       LI R4 KERNEL_FLAGS
+0x000021BC       BL map_page
 
-0x000021AC       LI R2 0x00002000      ;page 1,2,3 = kernel code (2000,3000,4000)
-0x000021B4       LI R3 0x00002000
-0x000021BC       LI R4 KERNEL_FLAGS
-0x000021C4       BL map_page
+0x000021C4       LI R2 0x00002000      ;page 1,2,3 = kernel code (2000,3000,4000)
+0x000021CC       LI R3 0x00002000
+0x000021D4       LI R4 KERNEL_FLAGS
+0x000021DC       BL map_page
 
-0x000021CC       LI R2 0x00003000
-0x000021D4       LI R3 0x00003000
-0x000021DC       LI R4 KERNEL_FLAGS
-0x000021E4       BL map_page
+0x000021E4       LI R2 0x00003000
+0x000021EC       LI R3 0x00003000
+0x000021F4       LI R4 KERNEL_FLAGS
+0x000021FC       BL map_page
 
-0x000021EC       LI R2 0x00004000
-0x000021F4       LI R3 0x00004000
-0x000021FC       LI R4 KERNEL_FLAGS
-0x00002204       BL map_page
+0x00002204       LI R2 0x00004000
+0x0000220C       LI R3 0x00004000
+0x00002214       LI R4 KERNEL_FLAGS
+0x0000221C       BL map_page
 
-0x0000220C       LI R2 0x00005000
-0x00002214       LI R3 0x00005000
-0x0000221C       LI R4 KERNEL_FLAGS
-0x00002224       BL map_page
+0x00002224       LI R2 0x00005000
+0x0000222C       LI R3 0x00005000
+0x00002234       LI R4 KERNEL_FLAGS
+0x0000223C       BL map_page
 
-0x0000222C       LI R2 0x00006000
-0x00002234       LI R3 0x00006000
-0x0000223C       LI R4 KERNEL_FLAGS
-0x00002244       BL map_page
+0x00002244       LI R2 0x00006000
+0x0000224C       LI R3 0x00006000
+0x00002254       LI R4 KERNEL_FLAGS
+0x0000225C       BL map_page
 
-0x0000224C       LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
-0x00002254       LI R3 0x00007000
-0x0000225C       LI R4 KERNEL_FLAGS
-0x00002264       BL map_page
+0x00002264       LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
+0x0000226C       LI R3 0x00007000
+0x00002274       LI R4 KERNEL_FLAGS
+0x0000227C       BL map_page
 
-0x0000226C       LI R2 0x00008000      ; page 4 (number is page table entry one) tasks data
-0x00002274       LI R3 0x00008000
-0x0000227C       LI R4 KERNEL_FLAGS
-0x00002284       BL map_page
+0x00002284       LI R2 0x00008000      ; page 4 (number is page table entry one) tasks data
+0x0000228C       LI R3 0x00008000
+0x00002294       LI R4 KERNEL_FLAGS
+0x0000229C       BL map_page
 
-0x0000228C       LI R2 0x00009000      ; add page (number is page table entry one) tasks data
-0x00002294       LI R3 0x00009000
-0x0000229C       LI R4 KERNEL_FLAGS
-0x000022A4       BL map_page
+0x000022A4       LI R2 0x00009000      ; add page (number is page table entry one) tasks data
+0x000022AC       LI R3 0x00009000
+0x000022B4       LI R4 KERNEL_FLAGS
+0x000022BC       BL map_page
 
-0x000022AC       LI R2 0x0000A000      ; add page (number is page table entry one) tasks data
-0x000022B4       LI R3 0x0000A000
-0x000022BC       LI R4 KERNEL_FLAGS
-0x000022C4       BL map_page
+0x000022C4       LI R2 0x0000A000      ; add page (number is page table entry one) tasks data
+0x000022CC       LI R3 0x0000A000
+0x000022D4       LI R4 KERNEL_FLAGS
+0x000022DC       BL map_page
 
-0x000022CC       LI R2 0x0000B000      ; add page (number is page table entry one) tasks data
-0x000022D4       LI R3 0x0000B000
-0x000022DC       LI R4 KERNEL_FLAGS
-0x000022E4       BL map_page
+0x000022E4       LI R2 0x0000B000      ; add page (number is page table entry one) tasks data
+0x000022EC       LI R3 0x0000B000
+0x000022F4       LI R4 KERNEL_FLAGS
+0x000022FC       BL map_page
 
-0x000022EC       LI R2 0x0000C000      ; add page (number is page table entry one) tasks data
-0x000022F4       LI R3 0x0000C000
-0x000022FC       LI R4 KERNEL_FLAGS
-0x00002304       BL map_page
+0x00002304       LI R2 0x0000C000      ; add page (number is page table entry one) tasks data
+0x0000230C       LI R3 0x0000C000
+0x00002314       LI R4 KERNEL_FLAGS
+0x0000231C       BL map_page
 
-0x0000230C       LI R2 0x00015000      ; page for BMI buffers for NSFS (write) - 4K each
-0x00002314       LI R3 0x00015000
-0x0000231C       LI R4 KERNEL_FLAGS
-0x00002324       BL map_page
+0x00002324       LI R2 0x00015000      ; page for BMI buffers for NSFS (write) - 4K each
+0x0000232C       LI R3 0x00015000
+0x00002334       LI R4 KERNEL_FLAGS
+0x0000233C       BL map_page
 
-0x0000232C       LI R2 0x00016000      ; page for BMI buffers for NSFS (read) - 4K each
-0x00002334       LI R3 0x00016000
-0x0000233C       LI R4 KERNEL_FLAGS
-0x00002344       BL map_page
+0x00002344       LI R2 0x00016000      ; page for BMI buffers for NSFS (read) - 4K each
+0x0000234C       LI R3 0x00016000
+0x00002354       LI R4 KERNEL_FLAGS
+0x0000235C       BL map_page
 
-0x0000234C       LI R2 0x00017000      ; page for BMI buffers for NSFS (read) - 4K each
-0x00002354       LI R3 0x00017000
-0x0000235C       LI R4 KERNEL_FLAGS
-0x00002364       BL map_page
+0x00002364       LI R2 0x00017000      ; page for BMI buffers for NSFS (read) - 4K each
+0x0000236C       LI R3 0x00017000
+0x00002374       LI R4 KERNEL_FLAGS
+0x0000237C       BL map_page
 
 
 
 
     ; Map MMIO pages (UART, Timer/PIT, and PIC) into kernel address space
-0x0000236C       LI R2 0x00100000      ; UART physical and virtual base
-0x00002374       LI R3 0x00100000
-0x0000237C       LI R4 KERNEL_FLAGS
-0x00002384       BL map_page
+0x00002384       LI R2 0x00100000      ; UART physical and virtual base
+0x0000238C       LI R3 0x00100000
+0x00002394       LI R4 KERNEL_FLAGS
+0x0000239C       BL map_page
 
-0x0000238C       LI R2 0x00101000      ; PIT physical and virtual base
-0x00002394       LI R3 0x00101000
-0x0000239C       LI R4 KERNEL_FLAGS
-0x000023A4       BL map_page
+0x000023A4       LI R2 0x00101000      ; PIT physical and virtual base
+0x000023AC       LI R3 0x00101000
+0x000023B4       LI R4 KERNEL_FLAGS
+0x000023BC       BL map_page
 
-0x000023AC       LI R2 0x00102000      ; PIC physical and virtual base
-0x000023B4       LI R3 0x00102000
-0x000023BC       LI R4 KERNEL_FLAGS
-0x000023C4       BL map_page
+0x000023C4       LI R2 0x00102000      ; PIC physical and virtual base
+0x000023CC       LI R3 0x00102000
+0x000023D4       LI R4 KERNEL_FLAGS
+0x000023DC       BL map_page
 
     ; Dynamically allocated page tables, kernel stacks, fd tables and
     ; kernel buffers are addressed by their physical address in kernel
     ; code. Keep the complete allocator pool identity-mapped and
     ; supervisor-only in every address space.
-0x000023CC       LI R12 PAGE_ALLOC_BASE
-0x000023D4       LI R7 PAGE_ALLOC_END
+0x000023E4       LI R12 PAGE_ALLOC_BASE
+0x000023EC       LI R7 PAGE_ALLOC_END
 map_common_dynamic_loop:
-0x000023DC       CMP R12 R7
-0x000023E0       BGE map_common_dynamic_done
-0x000023E8       MOV R2 R12
-0x000023EC       MOV R3 R12
-0x000023F0       LI R4 KERNEL_FLAGS
-0x000023F8       BL map_page
-0x00002400       LI R6 PAGE_SIZE
-0x00002408       ADD R12 R12 R6
-0x0000240C       B map_common_dynamic_loop
+0x000023F4       CMP R12 R7
+0x000023F8       BGE map_common_dynamic_done
+0x00002400       MOV R2 R12
+0x00002404       MOV R3 R12
+0x00002408       LI R4 KERNEL_FLAGS
+0x00002410       BL map_page
+0x00002418       LI R6 PAGE_SIZE
+0x00002420       ADD R12 R12 R6
+0x00002424       B map_common_dynamic_loop
 map_common_dynamic_done:
 
-0x00002414       POP R12
-0x00002418       POP LR
-0x0000241C       RET
+0x0000242C       POP R12
+0x00002430       POP LR
+0x00002434       RET
 
 ;================================================================
 ; Map a single page: VA in R2, PA in R3, flags in R4
@@ -532,29 +566,29 @@ map_common_dynamic_done:
 map_page:
     ; R1=PTBR, R2=VA, R3=PA, R4=flags. The PTE format stores the physical
     ; page base in bits [31:12] and KR32 permission bits in [11:0].
-0x00002420       PUSH R5
-0x00002424       PUSH R6
-0x00002428       SHR R5 R2 12               ; VPN
-0x0000242C       SHL R5 R5 2                ; page-table byte offset
-0x00002430       OR R6 R3 R4                ; PTE = PA page base | flags
-0x00002434       STW R6 [R1 + R5]
-0x00002438       POP R6
-0x0000243C       POP R5
-0x00002440       RET
+0x00002438       PUSH R5
+0x0000243C       PUSH R6
+0x00002440       SHR R5 R2 12               ; VPN
+0x00002444       SHL R5 R5 2                ; page-table byte offset
+0x00002448       OR R6 R3 R4                ; PTE = PA page base | flags
+0x0000244C       STW R6 [R1 + R5]
+0x00002450       POP R6
+0x00002454       POP R5
+0x00002458       RET
 
 map_page_rt:
     ; Runtime page-table update. Same ABI as map_page, but also invalidates
     ; the cached translation for R2 so permission changes take effect now.
-0x00002444       PUSH R5
-0x00002448       PUSH R6
-0x0000244C       SHR R5 R2 12               ; VPN
-0x00002450       SHL R5 R5 2                ; page-table byte offset
-0x00002454       OR R6 R3 R4                ; PTE = PA page base | flags
-0x00002458       STW R6 [R1 + R5]
-0x0000245C       INVLPG R2
-0x00002460       POP R6
-0x00002464       POP R5
-0x00002468       RET
+0x0000245C       PUSH R5
+0x00002460       PUSH R6
+0x00002464       SHR R5 R2 12               ; VPN
+0x00002468       SHL R5 R5 2                ; page-table byte offset
+0x0000246C       OR R6 R3 R4                ; PTE = PA page base | flags
+0x00002470       STW R6 [R1 + R5]
+0x00002474       INVLPG R2
+0x00002478       POP R6
+0x0000247C       POP R5
+0x00002480       RET
 
 ; ================================================================
 ; Initialize MMIO devices (PIC, PIT, UART)
@@ -564,39 +598,39 @@ init_mmio_devices:
     ; ----------------------------------------------------
     ; Setup MMIO PIC: Enable IRQ 0 (timer) and IRQ 1 (uart)
     ; ----------------------------------------------------
-0x0000246C       LI R1 0x00102000
-0x00002474       LI R2 3                 ; IRQ 0 = bit 0, IRQ 1 = bit 1, so mask = 0b11 = 3 to enable both
-0x0000247C       STW R2 [R1 + 0]         ; PIC_MASK = 3 (INT 0 & 1 enabled)
+0x00002484       LI R1 0x00102000
+0x0000248C       LI R2 3                 ; IRQ 0 = bit 0, IRQ 1 = bit 1, so mask = 0b11 = 3 to enable both
+0x00002494       STW R2 [R1 + 0]         ; PIC_MASK = 3 (INT 0 & 1 enabled)
 
     ; ----------------------------------------------------
     ; Setup MMIO PIT: Set period to 2000 ms and enable ticks
     ; ----------------------------------------------------
-0x00002480       LI R1 0x00101000
-0x00002488       LI R2 2000
-0x00002490       STW R2 [R1 + 0]         ; PIT_PERIOD = 2000 ms
-0x00002494       LI R2 3                 ; PIT_ENABLE = bit 0, INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
-0x0000249C       STW R2 [R1 + 4]         ; PIT_CTRL = 3 (PIT_ENABLE | INT_ENABLE)
+0x00002498       LI R1 0x00101000
+0x000024A0       LI R2 2000
+0x000024A8       STW R2 [R1 + 0]         ; PIT_PERIOD = 2000 ms
+0x000024AC       LI R2 3                 ; PIT_ENABLE = bit 0, INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
+0x000024B4       STW R2 [R1 + 4]         ; PIT_CTRL = 3 (PIT_ENABLE | INT_ENABLE)
 
     ; ----------------------------------------------------
     ; Setup MMIO UART: Enable RX/TX interrupts
     ; ----------------------------------------------------
-0x000024A0       LI R1 0x00100000
-0x000024A8       LI R2 3                 ; UART_RX_INT_ENABLE = bit 0, UART_TX_INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
-0x000024B0       STW R2 [R1 + 8]         ; UART_CTRL = 3 (RX_INT_ENABLE | TX_INT_ENABLE)
+0x000024B8       LI R1 0x00100000
+0x000024C0       LI R2 3                 ; UART_RX_INT_ENABLE = bit 0, UART_TX_INT_ENABLE = bit 1, so mask = 0b11 = 3 to enable both
+0x000024C8       STW R2 [R1 + 8]         ; UART_CTRL = 3 (RX_INT_ENABLE | TX_INT_ENABLE)
 
-0x000024B4       RET
+0x000024CC       RET
 
 ; ================================================================
 ; Enable MMU and Interrupts
 ; ================================================================
 enable_vm:
-0x000024B8       ENABLEMMU               ;enable MMU with current PTBR (set in init_page_tables)
+0x000024D0       ENABLEMMU               ;enable MMU with current PTBR (set in init_page_tables)
     ; Interrupts are enabled by SRET from the first task trapframe.
     ; Keeping them disabled during boot avoids taking an IRQ before
     ; SSCRATCH contains a valid per-task kernel stack pointer.
     ;ENABLEINT
     ;DEBUG
-0x000024BC       RET
+0x000024D4       RET
 
 
 ; ================================================================
@@ -608,80 +642,80 @@ trap_entry:
     ; After:  SP=kernel stack, SSCRATCH=interrupted task SP.
     ; so sp = u-sp, sscratch=k-sp => sp=k-sp, scratch=u-sp
     ;
-0x000024C0       CSRRW SP SSCRATCH SP
+0x000024D8       CSRRW SP SSCRATCH SP
 
     ; Save interrupted GPR state on the kernel stack. SP itself is
     ; saved explicitly below from SSCRATCH, because SP now points to
     ; the kernel trapframe rather than the interrupted task stack.
-0x000024C4       PUSH R1
-0x000024C8       PUSH R2
-0x000024CC       PUSH R3
-0x000024D0       PUSH R4
-0x000024D4       PUSH R5
-0x000024D8       PUSH R6
-0x000024DC       PUSH R7
-0x000024E0       PUSH R8
-0x000024E4       PUSH R9
-0x000024E8       PUSH R10
-0x000024EC       PUSH R11
-0x000024F0       PUSH R12
-0x000024F4       PUSH R14
-0x000024F8       PUSH R15
+0x000024DC       PUSH R1
+0x000024E0       PUSH R2
+0x000024E4       PUSH R3
+0x000024E8       PUSH R4
+0x000024EC       PUSH R5
+0x000024F0       PUSH R6
+0x000024F4       PUSH R7
+0x000024F8       PUSH R8
+0x000024FC       PUSH R9
+0x00002500       PUSH R10
+0x00002504       PUSH R11
+0x00002508       PUSH R12
+0x0000250C       PUSH R14
+0x00002510       PUSH R15
 
     ; Save interrupted task SP plus privileged trap state.
-0x000024FC       CSRR R1 SSCRATCH
-0x00002500       PUSH R1
-0x00002504       CSRR R1 SEPC
-0x00002508       PUSH R1
-0x0000250C       CSRR R1 SFLAGS
-0x00002510       PUSH R1
-0x00002514       CSRR R1 SSTATUS
+0x00002514       CSRR R1 SSCRATCH
 0x00002518       PUSH R1
-0x0000251C       CSRR R1 SCAUSE
+0x0000251C       CSRR R1 SEPC
 0x00002520       PUSH R1
-0x00002524       CSRR R1 STVAL
+0x00002524       CSRR R1 SFLAGS
 0x00002528       PUSH R1
+0x0000252C       CSRR R1 SSTATUS
+0x00002530       PUSH R1
+0x00002534       CSRR R1 SCAUSE
+0x00002538       PUSH R1
+0x0000253C       CSRR R1 STVAL
+0x00002540       PUSH R1
 
     ; Dispatch based on scause.
-0x0000252C       CSRR R1 SCAUSE
-0x00002530       CMP R1 0
-0x00002534       BEQ handle_divide_zero
+0x00002544       CSRR R1 SCAUSE
+0x00002548       CMP R1 0
+0x0000254C       BEQ handle_divide_zero
 
-0x0000253C       CMP R1 1
-0x00002540       BEQ handle_invalid_instr
+0x00002554       CMP R1 1
+0x00002558       BEQ handle_invalid_instr
 
-0x00002548       CMP R1 2
-0x0000254C       BEQ handle_page_fault
+0x00002560       CMP R1 2
+0x00002564       BEQ handle_page_fault
 
-0x00002554       CMP R1 3
-0x00002558       BEQ handle_syscall
+0x0000256C       CMP R1 3
+0x00002570       BEQ handle_syscall
 
-0x00002560       CMP R1 6
-0x00002564       BEQ handle_debug
+0x00002578       CMP R1 6
+0x0000257C       BEQ handle_debug
 
-0x0000256C       CMP R1 16
-0x00002570       BEQ handle_irq
+0x00002584       CMP R1 16
+0x00002588       BEQ handle_irq
 
     ; Unknown cause - halt
-0x00002578       HLT
+0x00002590       HLT
 
 handle_divide_zero:
     ; TODO: handle divide by zero
 
-0x0000257C       DEBUG 1
-0x00002580       B trap_restore
+0x00002594       DEBUG 1
+0x00002598       B trap_restore
 
 handle_invalid_instr:
     ; TODO: handle invalid instruction
 
-0x00002588       B trap_restore
+0x000025A0       B trap_restore
 
 handle_page_fault:
     ; R2 contains fault address
     ; TODO: handle page fault
-0x00002590       HLT
+0x000025A8       HLT
 
-0x00002594       B trap_restore
+0x000025AC       B trap_restore
 
 handle_syscall:
     ;=================================================================
@@ -692,24 +726,24 @@ handle_syscall:
     ; so SVC is a special BL to OS call -)
     ;=================================================================
 
-0x0000259C       CSRR R2 STVAL
+0x000025B4       CSRR R2 STVAL
 
-0x000025A0       CMP R2 SYS_COUNT
-0x000025A4       BGE syscall_unknown
+0x000025B8       CMP R2 SYS_COUNT
+0x000025BC       BGE syscall_unknown
 
-0x000025AC       LI R3 syscall_table         ;compute entry by SVC x number and execute call function call on address on R5
-0x000025B4       SHL R4 R2 2
-0x000025B8       LDW R5 [R3 + R4]
-0x000025BC       JR R5
+0x000025C4       LI R3 syscall_table         ;compute entry by SVC x number and execute call function call on address on R5
+0x000025CC       SHL R4 R2 2
+0x000025D0       LDW R5 [R3 + R4]
+0x000025D4       JR R5
 
 syscall_unknown:
 ;================================================================
 ; For unknown syscalls, return an errno in R1 and restore.
 ;================================================================
 
-0x000025C0       LI R1 ERR_NOSYS
-0x000025C8       STW R1 [SP + TF_R1]
-0x000025CC       B trap_restore
+0x000025D8       LI R1 ERR_NOSYS
+0x000025E0       STW R1 [SP + TF_R1]
+0x000025E4       B trap_restore
 
 ;================================================================
 ; SYSCALL HANDLERS
@@ -757,123 +791,123 @@ syscall_execve1:
     ; errno in R1 through the normal trap_restore path.
     ;================================================================
 
-0x00002618       LDW R8 [SP + TF_R1]        ; user path pointer
+0x00002630       LDW R8 [SP + TF_R1]        ; user path pointer
 
-0x0000261C       LDW R9 [SP + TF_R2]        ; user argv pointer
-0x00002620       PUSH R9
+0x00002634       LDW R9 [SP + TF_R2]        ; user argv pointer
+0x00002638       PUSH R9
 
-0x00002624       MOV R1 R8
-0x00002628       BL copy_path_from_user
-0x00002630       CMP R1 0
-0x00002634       BEQ execve_badfault
+0x0000263C       MOV R1 R8
+0x00002640       BL copy_path_from_user
+0x00002648       CMP R1 0
+0x0000264C       BEQ execve_badfault
 
-0x0000263C       MOV R12 R1                ; kernel pointer to copied pathname
+0x00002654       MOV R12 R1                ; kernel pointer to copied pathname
 
-0x00002640       MOV R1 R12
-0x00002644       BL vfs_lookup             ; lookup inode for the file
-0x0000264C       CMP R1 0
-0x00002650       BEQ execve_noent
+0x00002658       MOV R1 R12
+0x0000265C       BL vfs_lookup             ; lookup inode for the file
+0x00002664       CMP R1 0
+0x00002668       BEQ execve_noent
 
-0x00002658       MOV R9 R1                 ; inode*
-0x0000265C       LDW R1 [R9 + INODE_TYPE]
-0x00002660       LI R2 INODE_DIR
-0x00002668       CMP R1 R2
-0x0000266C       BEQ execve_noexec           ; if the inode is a directory, we cannot execute it
+0x00002670       MOV R9 R1                 ; inode*
+0x00002674       LDW R1 [R9 + INODE_TYPE]
+0x00002678       LI R2 INODE_DIR
+0x00002680       CMP R1 R2
+0x00002684       BEQ execve_noexec           ; if the inode is a directory, we cannot execute it
 
-0x00002674       LDW R3 [R9 + INODE_SIZE]
-0x00002678       LI R4 PAGE_SIZE         ; 4096 bytes
-0x00002680       CMP R3 R4
-0x00002684       BGT execve_noexec       ; if the inode size is greater than a page, we cannot execute it
+0x0000268C       LDW R3 [R9 + INODE_SIZE]
+0x00002690       LI R4 PAGE_SIZE         ; 4096 bytes
+0x00002698       CMP R3 R4
+0x0000269C       BGT execve_noexec       ; if the inode size is greater than a page, we cannot execute it
 
-0x0000268C       BL file_alloc
-0x00002694       CMP R1 0
-0x00002698       BEQ execve_nomem         ; if we cannot allocate a file for this inode, return error
+0x000026A4       BL file_alloc
+0x000026AC       CMP R1 0
+0x000026B0       BEQ execve_nomem         ; if we cannot allocate a file for this inode, return error
 
-0x000026A0       MOV R10 R1                ; file*
-0x000026A4       MOV R1 R10
-0x000026A8       MOV R2 R9
-0x000026AC       LI R3 FD_FLAG_READ
-0x000026B4       BL file_init            ; initialize the file structure for reading the executable
+0x000026B8       MOV R10 R1                ; file*
+0x000026BC       MOV R1 R10
+0x000026C0       MOV R2 R9
+0x000026C4       LI R3 FD_FLAG_READ
+0x000026CC       BL file_init            ; initialize the file structure for reading the executable
 
-0x000026BC       BL page_alloc           ; allocate a new page for the executable code of execve program
-0x000026C4       CMP R1 0
-0x000026C8       BEQ execve_noexec_file
+0x000026D4       BL page_alloc           ; allocate a new page for the executable code of execve program
+0x000026DC       CMP R1 0
+0x000026E0       BEQ execve_noexec_file
 
-0x000026D0       MOV R11 R1                ; new code page PA for execve program
+0x000026E8       MOV R11 R1                ; new code page PA for execve program
 
 ; macro: GET_CURR_TASK_IDX R4    ; get current task index
-0x000026D4   LI R1 CURRENT_TASK
-0x000026DC   LDW R4 [R1]
+0x000026EC   LI R1 CURRENT_TASK
+0x000026F4   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x000026E0   LI R1 TASK_SIZE
-0x000026E8   MUL R3 R4 R1
-0x000026EC   LI R5 tasks
-0x000026F4   ADD R5 R5 R3
+0x000026F8   LI R1 TASK_SIZE
+0x00002700   MUL R3 R4 R1
+0x00002704   LI R5 tasks
+0x0000270C   ADD R5 R5 R3
 
 ; macro: TASK_GET_CODE_PAGE R12, R5 ; preserve old exec code page PA for rollback / cleanup
-0x000026F8   LDW R12 [R5 + TASK_CODE_PAGE]
+0x00002710   LDW R12 [R5 + TASK_CODE_PAGE]
 ; macro: TASK_GET_PTBR R1, R5       ; R1 = PTBR of current task
-0x000026FC   LDW R1 [R5 + TASK_PTBR]
-0x00002700       LI R2 USER_CODE_VA         ; R2 = code page VA for execve program
-0x00002708       MOV R3 R11                 ; R3 = code page PA for execve program
-0x0000270C       LI R4 USER_RW              ; R4 = temporary RW permissions so we can load the page
-0x00002714       BL map_page_rt             ; runtime map executable page RW at USER_CODE_VA for loading
+0x00002714   LDW R1 [R5 + TASK_PTBR]
+0x00002718       LI R2 USER_CODE_VA         ; R2 = code page VA for execve program
+0x00002720       MOV R3 R11                 ; R3 = code page PA for execve program
+0x00002724       LI R4 USER_RW              ; R4 = temporary RW permissions so we can load the page
+0x0000272C       BL map_page_rt             ; runtime map executable page RW at USER_CODE_VA for loading
 
 ; macro: TASK_GET_DATA_PAGE R1, R5  ; get data page PA for current task
-0x0000271C   LDW R1 [R5 + TASK_DATA_PAGE]
-0x00002720       CMP R1 0
-0x00002724       BEQ execve_data_ok         ; if the task has no data page, skip clearing it
-0x0000272C       LI R3 PAGE_SIZE
-0x00002734       BL mem_zero                ; zero the current task data page before execve starts
+0x00002734   LDW R1 [R5 + TASK_DATA_PAGE]
+0x00002738       CMP R1 0
+0x0000273C       BEQ execve_data_ok         ; if the task has no data page, skip clearing it
+0x00002744       LI R3 PAGE_SIZE
+0x0000274C       BL mem_zero                ; zero the current task data page before execve starts
 
 execve_data_ok:
 
-0x0000273C       MOV R1 R10              ; file* of execve program
-0x00002740       LI R2 USER_CODE_VA      ; VA of code page for execve program
-0x00002748       LI R3 PAGE_SIZE         ; size of code page for execve program
-0x00002750       BL file_read            ; load executable into USER_CODE_VA
-0x00002758       CMP R1 0
-0x0000275C       BLT execve_read_fail    ; if read fails, restore old exec code page and return error
+0x00002754       MOV R1 R10              ; file* of execve program
+0x00002758       LI R2 USER_CODE_VA      ; VA of code page for execve program
+0x00002760       LI R3 PAGE_SIZE         ; size of code page for execve program
+0x00002768       BL file_read            ; load executable into USER_CODE_VA
+0x00002770       CMP R1 0
+0x00002774       BLT execve_read_fail    ; if read fails, restore old exec code page and return error
 
-0x00002764       MOV R1 R10              ; file* of execve program
-0x00002768       BL file_put             ; release file resources after successful load
+0x0000277C       MOV R1 R10              ; file* of execve program
+0x00002780       BL file_put             ; release file resources after successful load
 
 ; macro: GET_CURR_TASK_IDX R4    ; this was real mistake here! I forgot to retore current task ptr
-0x00002770   LI R1 CURRENT_TASK
-0x00002778   LDW R4 [R1]
+0x00002788   LI R1 CURRENT_TASK
+0x00002790   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4     ; reload task ptr after calls that may clobber caller-saved R5
-0x0000277C   LI R1 TASK_SIZE
-0x00002784   MUL R3 R4 R1
-0x00002788   LI R5 tasks
-0x00002790   ADD R5 R5 R3
+0x00002794   LI R1 TASK_SIZE
+0x0000279C   MUL R3 R4 R1
+0x000027A0   LI R5 tasks
+0x000027A8   ADD R5 R5 R3
                             ; we also added INVLPG - for good! - history comments
     ; commit new exec state after successful file load
-0x00002794       LI R1 USER_CODE_VA
+0x000027AC       LI R1 USER_CODE_VA
 ; macro: TASK_SET_PC R5, R1              ; start execution at USER_CODE_VA
-0x0000279C   STW R1 [R5 + TASK_PC]
+0x000027B4   STW R1 [R5 + TASK_PC]
 ; macro: TASK_SET_CODE_PAGE R5, R11      ; remember physical page backing this user code
-0x000027A0   STW R11 [R5 + TASK_CODE_PAGE]
-0x000027A4       LI R1 USER_STACK_TOP
+0x000027B8   STW R11 [R5 + TASK_CODE_PAGE]
+0x000027BC       LI R1 USER_STACK_TOP
 ; macro: TASK_SET_USP R5, R1             ; reset user stack pointer
-0x000027AC   STW R1 [R5 + TASK_USP]
-0x000027B0       LI R1 HEAP_START
+0x000027C4   STW R1 [R5 + TASK_USP]
+0x000027C8       LI R1 HEAP_START
 ; macro: TASK_SET_BREAK R5, R1           ; reset program break into the task's data page
-0x000027B8   STW R1 [R5 + TASK_BREAK]
+0x000027D0   STW R1 [R5 + TASK_BREAK]
 
     ; Remap the new code page read-only before handing control over
 ; macro: TASK_GET_PTBR R1, R5            ; get PTBR of current task
-0x000027BC   LDW R1 [R5 + TASK_PTBR]
-0x000027C0       LI R2 USER_CODE_VA              ; VA of code page for execve program
-0x000027C8       MOV R3 R11                      ; PA of code page for execve program
-0x000027CC       LI R4 KERNEL_USER_ALL
-0x000027D4       BL map_page_rt                  ; switch the new code page from RW to RX
+0x000027D4   LDW R1 [R5 + TASK_PTBR]
+0x000027D8       LI R2 USER_CODE_VA              ; VA of code page for execve program
+0x000027E0       MOV R3 R11                      ; PA of code page for execve program
+0x000027E4       LI R4 KERNEL_USER_ALL
+0x000027EC       BL map_page_rt                  ; switch the new code page from RW to RX
 
    ; DEBUG 2
 
-0x000027DC       CMP R12 0                       ; R12 = old code page PA for execve program from task metadata
-0x000027E0       BEQ execve_commit_done          ; if no previous code page, skip freeing it
-0x000027E8       MOV R1 R12
-0x000027EC       BL page_put                    ; free the old exec code page now that the new one is committed
+0x000027F4       CMP R12 0                       ; R12 = old code page PA for execve program from task metadata
+0x000027F8       BEQ execve_commit_done          ; if no previous code page, skip freeing it
+0x00002800       MOV R1 R12
+0x00002804       BL page_put                    ; free the old exec code page now that the new one is committed
 
 execve_commit_done:
     ; Build a fresh Unix-style initial stack:
@@ -881,24 +915,24 @@ execve_commit_done:
     ; The new program can read argc/argv from the stack, and we also mirror
     ; argc/argv into R1/R2 for convenience.
 
-0x000027F4       POP R4                         ; remember argv ptr from start of syscall_execve
-0x000027F8       LI R6 0                        ; R6 = argc counter
+0x0000280C       POP R4                         ; remember argv ptr from start of syscall_execve
+0x00002810       LI R6 0                        ; R6 = argc counter
 
     ; Step 1: Count argc - walk on argv ptrs count argc till  we find NULL check above
-0x00002800       MOV R7 R4
+0x00002818       MOV R7 R4
 execve_argv_count_loop:
-0x00002804       CMP R7 0
-0x00002808       BEQ execve_argv_count_done
-0x00002810       LDW R8 [R7]
-0x00002814       CMP R8 0
-0x00002818       BEQ execve_argv_count_done
+0x0000281C       CMP R7 0
+0x00002820       BEQ execve_argv_count_done
+0x00002828       LDW R8 [R7]
+0x0000282C       CMP R8 0
+0x00002830       BEQ execve_argv_count_done
 
-0x00002820       CMP R6 16                      ;MAX argc count
-0x00002824       BGE execve_badfault
+0x00002838       CMP R6 16                      ;MAX argc count
+0x0000283C       BGE execve_badfault
 
-0x0000282C       ADD R6 R6 1
-0x00002830       ADD R7 R7 4
-0x00002834       B execve_argv_count_loop
+0x00002844       ADD R6 R6 1
+0x00002848       ADD R7 R7 4
+0x0000284C       B execve_argv_count_loop
 
 execve_argv_count_done:
     ; Now we know argc = R6, argv = R4
@@ -933,73 +967,73 @@ execve_argv_count_done:
     ; Start copying strings from top of user stack downward.
     ; R5 = current string cursor
     ;-------------------------------------------------------------
-0x0000283C       LI  R5 USER_STACK_TOP
+0x00002854       LI  R5 USER_STACK_TOP
 
     ;-------------------------------------------------------------
     ; Temporary kernel array for argv pointers.
     ; argv_tmp[16]
     ;-------------------------------------------------------------
-0x00002844       LI  R11 execve_tmp_argv
+0x0000285C       LI  R11 execve_tmp_argv
 
     ;-------------------------------------------------------------
     ; Copy strings in reverse order so they naturally pack downward.
     ;-------------------------------------------------------------
-0x0000284C       MOV R7 R6
-0x00002850       SUB R7 R7 1             ; [argc]-1
+0x00002864       MOV R7 R6
+0x00002868       SUB R7 R7 1             ; [argc]-1
 
 execve_copy_reverse:        ; R7(i) = (argc-1 ... 0)
-0x00002854       LI  R8 -1
-0x0000285C       CMP R7 R8
-0x00002860       BEQ execve_strings_done
+0x0000286C       LI  R8 -1
+0x00002874       CMP R7 R8
+0x00002878       BEQ execve_strings_done
 
     ; source string = argv[i] starting from last arg string
-0x00002868       MOV R8 R7
-0x0000286C       SHL R8 R8 2             ;R7(i)*4+argv ptr => R9(&argv[i])
-0x00002870       ADD R9 R4 R8
-0x00002874       LDW R10 [R9]            ;get string ptr from last argv[argc-1] (in first iteration)
+0x00002880       MOV R8 R7
+0x00002884       SHL R8 R8 2             ;R7(i)*4+argv ptr => R9(&argv[i])
+0x00002888       ADD R9 R4 R8
+0x0000288C       LDW R10 [R9]            ;get string ptr from last argv[argc-1] (in first iteration)
 
     ;-------------------------------------------------------------
     ; strlen()
     ; R12 = length including terminating NUL
     ;-------------------------------------------------------------
-0x00002878       LI R12 0                ;str len ctr - compute this argv string len (+ 0)
+0x00002890       LI R12 0                ;str len ctr - compute this argv string len (+ 0)
 
 execve_strlen:
 
-0x00002880       LDB R2 [R10 + R12]
-0x00002884       ADD R12 R12 1
-0x00002888       CMP R2 0
-0x0000288C       BNE execve_strlen
+0x00002898       LDB R2 [R10 + R12]
+0x0000289C       ADD R12 R12 1
+0x000028A0       CMP R2 0
+0x000028A4       BNE execve_strlen
 
     ; reserve space - on user stack top this argv string destination
 
-0x00002894       SUB R5 R5 R12               ; R5 dest addres argv string copy to gets updated by lenght of each string
+0x000028AC       SUB R5 R5 R12               ; R5 dest addres argv string copy to gets updated by lenght of each string
                                 ; to be copied to tmp
 
     ; remember destination pointer
-0x00002898       MOV R8 R7
-0x0000289C       SHL R8 R8 2                 ;R7 argv string number in argv array
-0x000028A0       ADD R9 R11 R8               ;r9=&temp argv[i]  which is = R7(i)*4+&temp argv[] array storage
-0x000028A4       STW R5 [R9]                 ;R5->[R9] string pointer on user stack
+0x000028B0       MOV R8 R7
+0x000028B4       SHL R8 R8 2                 ;R7 argv string number in argv array
+0x000028B8       ADD R9 R11 R8               ;r9=&temp argv[i]  which is = R7(i)*4+&temp argv[] array storage
+0x000028BC       STW R5 [R9]                 ;R5->[R9] string pointer on user stack
 
     ; memcpy()
-0x000028A8       LI R8 0
+0x000028C0       LI R8 0
 
 execve_copy_string:             ; first copy strings ptrs from (argv array) to temp storage
                                 ; from last string to first - opposite order
-0x000028B0       LDB R2 [R10 + R8]           ; R10 execv argv &string[i]  (last to first)
-0x000028B4       STB R2 [R5 + R8]            ; R5 same in tmp
+0x000028C8       LDB R2 [R10 + R8]           ; R10 execv argv &string[i]  (last to first)
+0x000028CC       STB R2 [R5 + R8]            ; R5 same in tmp
 
-0x000028B8       CMP R2 0
-0x000028BC       BEQ execve_copy_done
+0x000028D0       CMP R2 0
+0x000028D4       BEQ execve_copy_done
 
-0x000028C4       ADD R8 R8 1                 ; to next char in string
-0x000028C8       B execve_copy_string
+0x000028DC       ADD R8 R8 1                 ; to next char in string
+0x000028E0       B execve_copy_string
 
 execve_copy_done:
 
-0x000028D0       SUB R7 R7 1                 ; to copy next string
-0x000028D4       B execve_copy_reverse
+0x000028E8       SUB R7 R7 1                 ; to copy next string
+0x000028EC       B execve_copy_reverse
 
 execve_strings_done:            ;copy argv strings array to temp storage in opposite order is done
 
@@ -1012,168 +1046,168 @@ execve_strings_done:            ;copy argv strings array to temp storage in oppo
     ;
     ; stack_words = argc + 2
     ;-------------------------------------------------------------
-0x000028DC       MOV R7 R6
-0x000028E0       ADD R7 R7 2
+0x000028F4       MOV R7 R6
+0x000028F8       ADD R7 R7 2
 
-0x000028E4       MOV R8 R7
-0x000028E8       SHL R8 R8 2
+0x000028FC       MOV R8 R7
+0x00002900       SHL R8 R8 2
 
-0x000028EC       SUB R5 R5 R8            ;update R5 by stack words
+0x00002904       SUB R5 R5 R8            ;update R5 by stack words
 
     ;-------------------------------------------------------------
     ; R5 now becomes initial user stack pointer.
     ;-------------------------------------------------------------
 
-0x000028F0       STW R6 [R5]             ; put argc to user stack see picture above (Reserve space for:)
+0x00002908       STW R6 [R5]             ; put argc to user stack see picture above (Reserve space for:)
 
-0x000028F4       ADD R9 R5 4             ; R9 - move 'writing head' to next element argv in user stack
+0x0000290C       ADD R9 R5 4             ; R9 - move 'writing head' to next element argv in user stack
                             ; R5 - initial user stack pointer
     ;-------------------------------------------------------------
     ; argv data copied. now - Copy argv pointers
     ;-------------------------------------------------------------
-0x000028F8       LI R7 0
+0x00002910       LI R7 0
 
 execve_copy_argv:
 
-0x00002900       CMP R7 R6
-0x00002904       BEQ execve_copy_argv_done
+0x00002918       CMP R7 R6
+0x0000291C       BEQ execve_copy_argv_done
 
-0x0000290C       MOV R8 R7
-0x00002910       SHL R8 R8 2              ; R7 argv index
+0x00002924       MOV R8 R7
+0x00002928       SHL R8 R8 2              ; R7 argv index
 
-0x00002914       LDW R12 [R11 + R8]       ; we copy stings pointers here (not actual strings!)
+0x0000292C       LDW R12 [R11 + R8]       ; we copy stings pointers here (not actual strings!)
                              ; R11 - &execve_tmp_argv
-0x00002918       STW R12 [R9 + R8]        ; R9 - write head on user stack
+0x00002930       STW R12 [R9 + R8]        ; R9 - write head on user stack
 
-0x0000291C       ADD R7 R7 1
-0x00002920       B execve_copy_argv
+0x00002934       ADD R7 R7 1
+0x00002938       B execve_copy_argv
 
 execve_copy_argv_done:
 
     ; argv[argc] = NULL
-0x00002928       MOV R8 R6
-0x0000292C       SHL R8 R8 2
-0x00002930       ADD R10 R9 R8
+0x00002940       MOV R8 R6
+0x00002944       SHL R8 R8 2
+0x00002948       ADD R10 R9 R8
 
-0x00002934       LI R12 0
-0x0000293C       STW R12 [R10]               ; write NuLL - finish form user stack frame (arguments part!)
+0x0000294C       LI R12 0
+0x00002954       STW R12 [R10]               ; write NuLL - finish form user stack frame (arguments part!)
 
     ;-------------------------------------------------------------
     ; Prepare trapframe for new process.
     ;-------------------------------------------------------------
 
-0x00002940       STW R6 [SP + TF_R1]      ; argc
+0x00002958       STW R6 [SP + TF_R1]      ; argc
 
-0x00002944       MOV R1 R9
-0x00002948       STW R1 [SP + TF_R2]      ; argv
+0x0000295C       MOV R1 R9
+0x00002960       STW R1 [SP + TF_R2]      ; argv
 
-0x0000294C       LI R1 0
-0x00002954       STW R1 [SP + TF_R3]      ; envp
+0x00002964       LI R1 0
+0x0000296C       STW R1 [SP + TF_R3]      ; envp
 
-0x00002958       STW R5 [SP + TF_USP]     ; initial user SP
+0x00002970       STW R5 [SP + TF_USP]     ; initial user SP
 
 
     ; Prepare a fresh user register state for the new program.
-0x0000295C       LI R1 0
-0x00002964       STW R1 [SP + TF_R4]
-0x00002968       STW R1 [SP + TF_R5]
-0x0000296C       STW R1 [SP + TF_R6]
-0x00002970       STW R1 [SP + TF_R7]
-0x00002974       STW R1 [SP + TF_R8]
-0x00002978       STW R1 [SP + TF_R9]
-0x0000297C       STW R1 [SP + TF_R10]
-0x00002980       STW R1 [SP + TF_R11]
-0x00002984       STW R1 [SP + TF_R12]
-0x00002988       LI R1   USER_CODE_VA               ; user execve program entry point
-0x00002990       STW R1 [SP + TF_SEPC]              ; set SEPC to the new program entry point
+0x00002974       LI R1 0
+0x0000297C       STW R1 [SP + TF_R4]
+0x00002980       STW R1 [SP + TF_R5]
+0x00002984       STW R1 [SP + TF_R6]
+0x00002988       STW R1 [SP + TF_R7]
+0x0000298C       STW R1 [SP + TF_R8]
+0x00002990       STW R1 [SP + TF_R9]
+0x00002994       STW R1 [SP + TF_R10]
+0x00002998       STW R1 [SP + TF_R11]
+0x0000299C       STW R1 [SP + TF_R12]
+0x000029A0       LI R1   USER_CODE_VA               ; user execve program entry point
+0x000029A8       STW R1 [SP + TF_SEPC]              ; set SEPC to the new program entry point
 
-0x00002994       B trap_restore                     ; restore kernel trapframe and start user execution at user_code_va
+0x000029AC       B trap_restore                     ; restore kernel trapframe and start user execution at user_code_va
 
 ; as it should be clear
 ; if fail occured we rollback depending at what stage fail occured and free used resources
 ; then we exit back to child process with fail exit code
 execve_read_fail:
-0x0000299C       MOV R1 R11
-0x000029A0       BL page_put                    ; put-free the failed new code page
+0x000029B4       MOV R1 R11
+0x000029B8       BL page_put                    ; put-free the failed new code page
 
 ; macro: GET_CURR_TASK_IDX R4
-0x000029A8   LI R1 CURRENT_TASK
-0x000029B0   LDW R4 [R1]
+0x000029C0   LI R1 CURRENT_TASK
+0x000029C8   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4           ; reload task ptr before restoring USER_CODE_VA mapping
-0x000029B4   LI R1 TASK_SIZE
-0x000029BC   MUL R3 R4 R1
-0x000029C0   LI R5 tasks
-0x000029C8   ADD R5 R5 R3
+0x000029CC   LI R1 TASK_SIZE
+0x000029D4   MUL R3 R4 R1
+0x000029D8   LI R5 tasks
+0x000029E0   ADD R5 R5 R3
 
-0x000029CC       CMP R12 0
-0x000029D0       BEQ execve_restore_no_prev
+0x000029E4       CMP R12 0
+0x000029E8       BEQ execve_restore_no_prev
 ; macro: TASK_GET_PTBR R1, R5
-0x000029D8   LDW R1 [R5 + TASK_PTBR]
-0x000029DC       LI R2 USER_CODE_VA
-0x000029E4       MOV R3 R12
-0x000029E8       LI R4 USER_RX
-0x000029F0       BL map_page_rt                ; restore previous exec page mapping at USER_CODE_VA
-0x000029F8       MOV R1 R12
+0x000029F0   LDW R1 [R5 + TASK_PTBR]
+0x000029F4       LI R2 USER_CODE_VA
+0x000029FC       MOV R3 R12
+0x00002A00       LI R4 USER_RX
+0x00002A08       BL map_page_rt                ; restore previous exec page mapping at USER_CODE_VA
+0x00002A10       MOV R1 R12
 ; macro: TASK_SET_CODE_PAGE R5, R12    ; restore previous exec code page pointer
-0x000029FC   STW R12 [R5 + TASK_CODE_PAGE]
-0x00002A00       B execve_restore_done
+0x00002A14   STW R12 [R5 + TASK_CODE_PAGE]
+0x00002A18       B execve_restore_done
 
 execve_restore_no_prev:
 ; macro: TASK_GET_PTBR R1, R5
-0x00002A08   LDW R1 [R5 + TASK_PTBR]
-0x00002A0C       LI R2 USER_CODE_VA
-0x00002A14       LI R3 0
-0x00002A1C       LI R4 0
-0x00002A24       BL map_page_rt                ; unmap USER_CODE_VA if there was no previous code page
-0x00002A2C       LI R1 0
+0x00002A20   LDW R1 [R5 + TASK_PTBR]
+0x00002A24       LI R2 USER_CODE_VA
+0x00002A2C       LI R3 0
+0x00002A34       LI R4 0
+0x00002A3C       BL map_page_rt                ; unmap USER_CODE_VA if there was no previous code page
+0x00002A44       LI R1 0
 ; macro: TASK_SET_CODE_PAGE R5, R1
-0x00002A34   STW R1 [R5 + TASK_CODE_PAGE]
+0x00002A4C   STW R1 [R5 + TASK_CODE_PAGE]
 
 execve_restore_done:
-0x00002A38       MOV R1 R10
-0x00002A3C       BL file_put
+0x00002A50       MOV R1 R10
+0x00002A54       BL file_put
 
-0x00002A44       POP R1                      ;save stack
-0x00002A48       LI R1 ERR_NOEXEC
-0x00002A50       STW R1 [SP + TF_R1]
-0x00002A54       B trap_restore
+0x00002A5C       POP R1                      ;save stack
+0x00002A60       LI R1 ERR_NOEXEC
+0x00002A68       STW R1 [SP + TF_R1]
+0x00002A6C       B trap_restore
 
 execve_nomem_file:
-0x00002A5C       MOV R1 R10
-0x00002A60       BL file_put
+0x00002A74       MOV R1 R10
+0x00002A78       BL file_put
 
-0x00002A68       POP R1
-0x00002A6C       LI R1 ERR_NOMEM
-0x00002A74       STW R1 [SP + TF_R1]
-0x00002A78       B trap_restore
-
-execve_nomem:
 0x00002A80       POP R1
 0x00002A84       LI R1 ERR_NOMEM
 0x00002A8C       STW R1 [SP + TF_R1]
 0x00002A90       B trap_restore
 
+execve_nomem:
+0x00002A98       POP R1
+0x00002A9C       LI R1 ERR_NOMEM
+0x00002AA4       STW R1 [SP + TF_R1]
+0x00002AA8       B trap_restore
+
 execve_noexec_file:
 
-0x00002A98       MOV R1 R10
-0x00002A9C       BL file_put
+0x00002AB0       MOV R1 R10
+0x00002AB4       BL file_put
 execve_noexec:
-0x00002AA4       POP R1
-0x00002AA8       LI R1 ERR_NOEXEC
-0x00002AB0       STW R1 [SP + TF_R1]
-0x00002AB4       B trap_restore
-
-execve_noent:
 0x00002ABC       POP R1
-0x00002AC0       LI R1 ERR_NOENT
+0x00002AC0       LI R1 ERR_NOEXEC
 0x00002AC8       STW R1 [SP + TF_R1]
 0x00002ACC       B trap_restore
 
-execve_badfault:
+execve_noent:
 0x00002AD4       POP R1
-0x00002AD8       LI R1 ERR_FAULT
+0x00002AD8       LI R1 ERR_NOENT
 0x00002AE0       STW R1 [SP + TF_R1]
 0x00002AE4       B trap_restore
+
+execve_badfault:
+0x00002AEC       POP R1
+0x00002AF0       LI R1 ERR_FAULT
+0x00002AF8       STW R1 [SP + TF_R1]
+0x00002AFC       B trap_restore
 
 ;-------------------------------------------------------------
 ; Temporary argv pointer storage during execve
@@ -1241,74 +1275,74 @@ syscall_execve:
     ; + added multipage code support
     ; overview and why its better then previous what serous obstacles it is able to overcome
 
-0x000031F8       LDW R8 [SP + TF_R1]        ; user path pointer
-0x000031FC       LDW R9 [SP + TF_R2]        ; user argv pointer
-0x00003200       MOV R11 R9                 ; save to R11
+0x00003210       LDW R8 [SP + TF_R1]        ; user path pointer
+0x00003214       LDW R9 [SP + TF_R2]        ; user argv pointer
+0x00003218       MOV R11 R9                 ; save to R11
 
-0x00003204       LI  R1 exec_path
-0x0000320C       MOV R2 R8
-0x00003210       LI  R3 EXEC_MAX_PATH
-0x00003218       BL copy_user_string        ;copy path string to ws
-0x00003220       CMP R1 0
-0x00003224       BEQ execve_badfault
+0x0000321C       LI  R1 exec_path
+0x00003224       MOV R2 R8
+0x00003228       LI  R3 EXEC_MAX_PATH
+0x00003230       BL copy_user_string        ;copy path string to ws
+0x00003238       CMP R1 0
+0x0000323C       BEQ execve_badfault
 
     ;init execve ws
-0x0000322C       LI R1 exec_argc
-0x00003234       LI R2 0
-0x0000323C       STW R2 [R1]
+0x00003244       LI R1 exec_argc
+0x0000324C       LI R2 0
+0x00003254       STW R2 [R1]
 
     ;count argc
 
-0x00003240       MOV R8 R9               ; user argv
-0x00003244       LI  R6 0                ; argc
+0x00003258       MOV R8 R9               ; user argv
+0x0000325C       LI  R6 0                ; argc
 ;count ptrs in array of ptrs argv till 0 -null end
 argc_loop:
-0x0000324C       CMP R8 0                ;if no argv 0-null
-0x00003250       BEQ argc_done
-0x00003258       LDW R3 [R8]
-0x0000325C       CMP R3 0                ;if end
-0x00003260       BEQ argc_done
-0x00003268       CMP R6 EXEC_MAX_ARGS    ;if too much MAX argc count
-0x0000326C       BGE exec_badfault
-0x00003274       ADD R6 R6 1
-0x00003278       ADD R8 R8 4
-0x0000327C       B argc_loop
+0x00003264       CMP R8 0                ;if no argv 0-null
+0x00003268       BEQ argc_done
+0x00003270       LDW R3 [R8]
+0x00003274       CMP R3 0                ;if end
+0x00003278       BEQ argc_done
+0x00003280       CMP R6 EXEC_MAX_ARGS    ;if too much MAX argc count
+0x00003284       BGE exec_badfault
+0x0000328C       ADD R6 R6 1
+0x00003290       ADD R8 R8 4
+0x00003294       B argc_loop
 argc_done:
-0x00003284       LI R1 exec_argc         ;store it to ws
-0x0000328C       STW R6 [R1]
+0x0000329C       LI R1 exec_argc         ;store it to ws
+0x000032A4       STW R6 [R1]
 
-0x00003290       MOV R9 R6               ;R9 argc R11 user argv pointer
-0x00003294       MOV R8 R11
-0x00003298       BL  copy_argv_strings   ;fill arrays in ws from argvs
-0x000032A0       CMP R1 0
-0x000032A4       BNE exec_fail
+0x000032A8       MOV R9 R6               ;R9 argc R11 user argv pointer
+0x000032AC       MOV R8 R11
+0x000032B0       BL  copy_argv_strings   ;fill arrays in ws from argvs
+0x000032B8       CMP R1 0
+0x000032BC       BNE exec_fail
 
-0x000032AC       LI R1 exec_path
+0x000032C4       LI R1 exec_path
     ; load exec image to allocted memory
     ; map_rt pages
-0x000032B4       BL exec_load_binary
-0x000032BC       CMP R1 0
-0x000032C0       BEQ exec_fail
+0x000032CC       BL exec_load_binary
+0x000032D4       CMP R1 0
+0x000032D8       BEQ exec_fail
 
-0x000032C8       MOV R11 R1        ; new code page
-0x000032CC       MOV R12 R2        ; old code page
-0x000032D0       BL exec_build_stack_image
-0x000032D8       CMP R1 0
-0x000032DC       BNE exec_rollback
+0x000032E0       MOV R11 R1        ; new code page
+0x000032E4       MOV R12 R2        ; old code page
+0x000032E8       BL exec_build_stack_image
+0x000032F0       CMP R1 0
+0x000032F4       BNE exec_rollback
 
-0x000032E4       MOV R1 R11
-0x000032E8       MOV R2 R12
+0x000032FC       MOV R1 R11
+0x00003300       MOV R2 R12
 
-0x000032EC       B exec_commit_image
+0x00003304       B exec_commit_image
 
 exec_badfault:
-0x000032F4       NOP
+0x0000330C       NOP
 exec_fail:
-0x000032F8       NOP
+0x00003310       NOP
 exec_rollback:
-0x000032FC       LI R1 ERR_FAULT
-0x00003304       STW R1 [SP + TF_R1]
-0x00003308       B trap_restore
+0x00003314       LI R1 ERR_FAULT
+0x0000331C       STW R1 [SP + TF_R1]
+0x00003320       B trap_restore
 ;=============================================================
 ; exec_commit_image
 ;
@@ -1335,54 +1369,54 @@ exec_commit_image:
   ;  PUSH R11
   ;  PUSH R12
 
-0x00003310       MOV R11 R1              ; new page
-0x00003314       MOV R12 R2              ; old page
+0x00003328       MOV R11 R1              ; new page
+0x0000332C       MOV R12 R2              ; old page
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00003318   LI R1 CURRENT_TASK
-0x00003320   LDW R4 [R1]
+0x00003330   LI R1 CURRENT_TASK
+0x00003338   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5,R4
-0x00003324   LI R1 TASK_SIZE
-0x0000332C   MUL R3 R4 R1
-0x00003330   LI R5 tasks
-0x00003338   ADD R5 R5 R3
+0x0000333C   LI R1 TASK_SIZE
+0x00003344   MUL R3 R4 R1
+0x00003348   LI R5 tasks
+0x00003350   ADD R5 R5 R3
 
-0x0000333C       LI  R1 exec_stack_used
-0x00003344       LDW R8 [R1]
-0x00003348       LI  R9 USER_STACK_TOP
-0x00003350       SUB R9 R9 R8            ; final user SP
-0x00003354       MOV R1 R9               ;  R2->R9 len R8 - cpy our image for stack
-0x00003358       LI  R2 exec_stack_image
-0x00003360       MOV R3 R8
-0x00003364       BL memcpy
+0x00003354       LI  R1 exec_stack_used
+0x0000335C       LDW R8 [R1]
+0x00003360       LI  R9 USER_STACK_TOP
+0x00003368       SUB R9 R9 R8            ; final user SP
+0x0000336C       MOV R1 R9               ;  R2->R9 len R8 - cpy our image for stack
+0x00003370       LI  R2 exec_stack_image
+0x00003378       MOV R3 R8
+0x0000337C       BL memcpy
 
-0x0000336C       LI R1 USER_CODE_VA      ; commit task state:
+0x00003384       LI R1 USER_CODE_VA      ; commit task state:
 ; macro: TASK_SET_PC R5,R1       ; PC starts to USER_CODE_VA
-0x00003374   STW R1 [R5 + TASK_PC]
+0x0000338C   STW R1 [R5 + TASK_PC]
 ; macro: TASK_SET_CODE_PAGE R5,R11 ; set new code page (tab+pages)
-0x00003378   STW R11 [R5 + TASK_CODE_PAGE]
-0x0000337C       MOV R1 R9
+0x00003390   STW R11 [R5 + TASK_CODE_PAGE]
+0x00003394       MOV R1 R9
 ; macro: TASK_SET_USP R5,R1        ; set USP
-0x00003380   STW R1 [R5 + TASK_USP]
-0x00003384       LI R1 HEAP_START
+0x00003398   STW R1 [R5 + TASK_USP]
+0x0000339C       LI R1 HEAP_START
 ; macro: TASK_SET_BREAK R5,R1      ; set BRK
-0x0000338C   STW R1 [R5 + TASK_BREAK]
+0x000033A4   STW R1 [R5 + TASK_BREAK]
 
     ; Make sure the task's fixed user stack page is still mapped RW before
     ; returning to user mode. execve rewrites the stack contents, but the
     ; page-table entry must remain valid even if the task was previously
     ; switched through another path.
 ; macro: TASK_GET_PTBR R2,R5
-0x00003390   LDW R2 [R5 + TASK_PTBR]
+0x000033A8   LDW R2 [R5 + TASK_PTBR]
 ; macro: TASK_GET_USTACK_PAGE R3,R5
-0x00003394   LDW R3 [R5 + TASK_USTACK_PAGE]
-0x00003398       CMP R3 0
-0x0000339C       BEQ exec_commit_skip_stack_map
+0x000033AC   LDW R3 [R5 + TASK_USTACK_PAGE]
+0x000033B0       CMP R3 0
+0x000033B4       BEQ exec_commit_skip_stack_map
     ; ---- remap new code pages to RW ---- don know why
-0x000033A4       MOV R1 R11
-0x000033A8       LI R3 USER_CODE_VA
-0x000033B0       LI R4 USER_RW
-0x000033B8       BL pages_map_table
+0x000033BC       MOV R1 R11
+0x000033C0       LI R3 USER_CODE_VA
+0x000033C8       LI R4 USER_RW
+0x000033D0       BL pages_map_table
 
   ;  LI R2 USER_STACK_VA
   ;  LI R4 USER_RW
@@ -1391,52 +1425,52 @@ exec_commit_image:
 exec_commit_skip_stack_map:
 
 ; macro: TASK_GET_PTBR R2,R5
-0x000033C0   LDW R2 [R5 + TASK_PTBR]
-0x000033C4       MOV R1 R11
-0x000033C8       LI R3 USER_CODE_VA
-0x000033D0       LI R4 KERNEL_USER_ALL
-0x000033D8       BL pages_map_table
+0x000033D8   LDW R2 [R5 + TASK_PTBR]
+0x000033DC       MOV R1 R11
+0x000033E0       LI R3 USER_CODE_VA
+0x000033E8       LI R4 KERNEL_USER_ALL
+0x000033F0       BL pages_map_table
 
 ;    LI R2 USER_CODE_VA
 ;    MOV R3 R11
 ;    LI R4 KERNEL_USER_ALL   ; map code page RX subject to permissions on X (now all X)
 ;    BL map_page_rt
 
-0x000033E0       CMP R12 0               ; free old pa page (R12) if have
-0x000033E4       BEQ no_old_page
+0x000033F8       CMP R12 0               ; free old pa page (R12) if have
+0x000033FC       BEQ no_old_page
 
-0x000033EC       MOV R1 R12
-0x000033F0       BL pages_free_table     ; ---- free old codepage (table and pages) ----
+0x00003404       MOV R1 R12
+0x00003408       BL pages_free_table     ; ---- free old codepage (table and pages) ----
 
    ; BL page_put             ; free page
 no_old_page:
 
-0x000033F8       LI  R1 exec_argc
-0x00003400       LDW R2 [R1]
-0x00003404       STW R2 [SP+TF_R1]
+0x00003410       LI  R1 exec_argc
+0x00003418       LDW R2 [R1]
+0x0000341C       STW R2 [SP+TF_R1]
 
-0x00003408       MOV R1 R9
-0x0000340C       ADD R1 R1 4
-0x00003410       STW R1 [SP+TF_R2]       ; user sp with image on top + 4 so it points to &argv image
+0x00003420       MOV R1 R9
+0x00003424       ADD R1 R1 4
+0x00003428       STW R1 [SP+TF_R2]       ; user sp with image on top + 4 so it points to &argv image
 
-0x00003414       LI R1 0                 ; envp
-0x0000341C       STW R1 [SP+TF_R3]
+0x0000342C       LI R1 0                 ; envp
+0x00003434       STW R1 [SP+TF_R3]
 
-0x00003420       STW R9 [SP+TF_USP]      ; user sp
+0x00003438       STW R9 [SP+TF_USP]      ; user sp
 
-0x00003424       LI R1 0
-0x0000342C       STW R1 [SP+TF_R4]
-0x00003430       STW R1 [SP+TF_R5]
-0x00003434       STW R1 [SP+TF_R6]
-0x00003438       STW R1 [SP+TF_R7]
-0x0000343C       STW R1 [SP+TF_R8]
-0x00003440       STW R1 [SP+TF_R9]
-0x00003444       STW R1 [SP+TF_R10]
-0x00003448       STW R1 [SP+TF_R11]
-0x0000344C       STW R1 [SP+TF_R12]
+0x0000343C       LI R1 0
+0x00003444       STW R1 [SP+TF_R4]
+0x00003448       STW R1 [SP+TF_R5]
+0x0000344C       STW R1 [SP+TF_R6]
+0x00003450       STW R1 [SP+TF_R7]
+0x00003454       STW R1 [SP+TF_R8]
+0x00003458       STW R1 [SP+TF_R9]
+0x0000345C       STW R1 [SP+TF_R10]
+0x00003460       STW R1 [SP+TF_R11]
+0x00003464       STW R1 [SP+TF_R12]
 
-0x00003450       LI R1 USER_CODE_VA
-0x00003458       STW R1 [SP+TF_SEPC]
+0x00003468       LI R1 USER_CODE_VA
+0x00003470       STW R1 [SP+TF_SEPC]
 
   ;  POP R12
   ;  POP R11
@@ -1445,7 +1479,7 @@ no_old_page:
   ;  POP R8
   ;  POP LR
 
-0x0000345C       B trap_restore
+0x00003474       B trap_restore
 
 
 
@@ -1481,98 +1515,98 @@ no_old_page:
 ;====================================================================
 
 exec_build_stack_image:
-0x00003464       PUSH LR
-0x00003468       PUSH R8
-0x0000346C       PUSH R9
-0x00003470       PUSH R10
-0x00003474       PUSH R11
-0x00003478       PUSH R12
+0x0000347C       PUSH LR
+0x00003480       PUSH R8
+0x00003484       PUSH R9
+0x00003488       PUSH R10
+0x0000348C       PUSH R11
+0x00003490       PUSH R12
 
-0x0000347C       LI   R1 exec_argc   ;argc
-0x00003484       LDW  R6 [R1]
+0x00003494       LI   R1 exec_argc   ;argc
+0x0000349C       LDW  R6 [R1]
 
-0x00003488       MOV  R7 R6          ;pointer_bytes = (argc+2)*4
-0x0000348C       ADD  R7 R7 2
-0x00003490       SHL  R7 R7 2
+0x000034A0       MOV  R7 R6          ;pointer_bytes = (argc+2)*4
+0x000034A4       ADD  R7 R7 2
+0x000034A8       SHL  R7 R7 2
 
-0x00003494       LI   R1 exec_strings_used   ; strings blob len
-0x0000349C       LDW  R8 [R1]
+0x000034AC       LI   R1 exec_strings_used   ; strings blob len
+0x000034B4       LDW  R8 [R1]
 
     ;----------------------------------------------------------
     ; total = pointer_bytes(len argv ptr array + 4b argc) + string_bytes(len string blobs)
     ;----------------------------------------------------------
 
-0x000034A0       ADD  R9 R7 R8
+0x000034B8       ADD  R9 R7 R8
     ; check for MAX
-0x000034A4       LI   R1 EXEC_STACK_SIZE
-0x000034AC       CMP  R9 R1
-0x000034B0       BGT  exec_stack_nomem
+0x000034BC       LI   R1 EXEC_STACK_SIZE
+0x000034C4       CMP  R9 R1
+0x000034C8       BGT  exec_stack_nomem
 
-0x000034B8       LI   R1 exec_stack_used     ; save used size
-0x000034C0       STW  R9 [R1]
+0x000034D0       LI   R1 exec_stack_used     ; save used size
+0x000034D8       STW  R9 [R1]
 
-0x000034C4       LI   R10 exec_stack_image   ;stack base for image
+0x000034DC       LI   R10 exec_stack_image   ;stack base for image
     ; building image for stack as on picture
-0x000034CC       STW  R6 [R10]   ;argc
+0x000034E4       STW  R6 [R10]   ;argc
 
     ; copy string blob
-0x000034D0       MOV  R1 R10
-0x000034D4       ADD  R1 R1 R7   ; skip room for pointer_bytes see picture
-0x000034D8       LI   R2 exec_strings
-0x000034E0       MOV  R3 R8      ; blob len
-0x000034E4       BL   memcpy
+0x000034E8       MOV  R1 R10
+0x000034EC       ADD  R1 R1 R7   ; skip room for pointer_bytes see picture
+0x000034F0       LI   R2 exec_strings
+0x000034F8       MOV  R3 R8      ; blob len
+0x000034FC       BL   memcpy
 
     ;----------------------------------------------------------
     ; future user addresses
     ;----------------------------------------------------------
 
-0x000034EC       LI   R11 USER_STACK_TOP
-0x000034F4       SUB  R11 R11 R9             ; r9 total image len, R11 start address image in the user stack
-0x000034F8       MOV  R12 R11
-0x000034FC       ADD  R12 R12 R7             ; r12 pointer bytes ptr in image in stack - start of string blob
+0x00003504       LI   R11 USER_STACK_TOP
+0x0000350C       SUB  R11 R11 R9             ; r9 total image len, R11 start address image in the user stack
+0x00003510       MOV  R12 R11
+0x00003514       ADD  R12 R12 R7             ; r12 pointer bytes ptr in image in stack - start of string blob
 
     ;----------------------------------------------------------
     ; argv table build
     ;----------------------------------------------------------
 
-0x00003500       ADD  R10 R10 4              ; argv[0] starts after argc
-0x00003504       LI   R4 exec_argv_offsets   ; args offsetss array
-0x0000350C       LI   R5 0
+0x00003518       ADD  R10 R10 4              ; argv[0] starts after argc
+0x0000351C       LI   R4 exec_argv_offsets   ; args offsetss array
+0x00003524       LI   R5 0
 argv_loop:
-0x00003514       CMP  R5 R6                  ; argc
-0x00003518       BEQ  argv_done              ; if finished
-0x00003520       MOV  R1 R5
-0x00003524       SHL  R1 R1 2
-0x00003528       LDW  R2 [R4+R1]             ; get arg[i] offset
-0x0000352C       ADD  R2 R2 R12              ; compute R2 - blobs string adress for this arg[i]
-0x00003530       STW  R2 [R10+R1]            ; store this address to argv array in image
-0x00003534       ADD  R5 R5 1
-0x00003538       B    argv_loop
+0x0000352C       CMP  R5 R6                  ; argc
+0x00003530       BEQ  argv_done              ; if finished
+0x00003538       MOV  R1 R5
+0x0000353C       SHL  R1 R1 2
+0x00003540       LDW  R2 [R4+R1]             ; get arg[i] offset
+0x00003544       ADD  R2 R2 R12              ; compute R2 - blobs string adress for this arg[i]
+0x00003548       STW  R2 [R10+R1]            ; store this address to argv array in image
+0x0000354C       ADD  R5 R5 1
+0x00003550       B    argv_loop
 argv_done:
-0x00003540       MOV  R1 R6
-0x00003544       SHL  R1 R1 2
+0x00003558       MOV  R1 R6
+0x0000355C       SHL  R1 R1 2
 
-0x00003548       LI   R2 0
-0x00003550       STW  R2 [R10+R1]            ; put null here: argv[argc] = NULL
+0x00003560       LI   R2 0
+0x00003568       STW  R2 [R10+R1]            ; put null here: argv[argc] = NULL
     ;success
-0x00003554       LI   R1 0
-0x0000355C       POP  R12
-0x00003560       POP  R11
-0x00003564       POP  R10
-0x00003568       POP  R9
-0x0000356C       POP  R8
-0x00003570       POP  LR
-0x00003574       RET
+0x0000356C       LI   R1 0
+0x00003574       POP  R12
+0x00003578       POP  R11
+0x0000357C       POP  R10
+0x00003580       POP  R9
+0x00003584       POP  R8
+0x00003588       POP  LR
+0x0000358C       RET
 
 exec_stack_nomem:
-0x00003578       LI   R1 ERR_NOMEM
-0x00003580       POP  R12
-0x00003584       POP  R11
-0x00003588       POP  R10
-0x0000358C       POP  R9
-0x00003590       POP  R8
-0x00003594       POP  LR
-0x00003598       RET
+0x00003590       LI   R1 ERR_NOMEM
+0x00003598       POP  R12
+0x0000359C       POP  R11
+0x000035A0       POP  R10
+0x000035A4       POP  R9
+0x000035A8       POP  R8
+0x000035AC       POP  LR
+0x000035B0       RET
 
 ;=============================================================
 ; exec_load_binary
@@ -1591,60 +1625,60 @@ exec_stack_nomem:
 ;
 ;=============================================================
 exec_load_binary:
-0x0000359C       PUSH LR
-0x000035A0       PUSH R7
-0x000035A4       PUSH R8
-0x000035A8       PUSH R9
-0x000035AC       PUSH R10
-0x000035B0       PUSH R11
-0x000035B4       PUSH R12
+0x000035B4       PUSH LR
+0x000035B8       PUSH R7
+0x000035BC       PUSH R8
+0x000035C0       PUSH R9
+0x000035C4       PUSH R10
+0x000035C8       PUSH R11
+0x000035CC       PUSH R12
 
-0x000035B8       BL vfs_lookup   ; lookup inode for the file
-0x000035C0       CMP R1 0
-0x000035C4       BEQ load_noent
-0x000035CC       MOV R9 R1
+0x000035D0       BL vfs_lookup   ; lookup inode for the file
+0x000035D8       CMP R1 0
+0x000035DC       BEQ load_noent
+0x000035E4       MOV R9 R1
 
-0x000035D0       LDW R1 [R9 + INODE_TYPE]    ;check inode type/size
-0x000035D4       LI R2 INODE_DIR
-0x000035DC       CMP R1 R2
-0x000035E0       BEQ load_noexec
-0x000035E8       LDW R3 [R9 + INODE_SIZE]
-0x000035EC       LI R4 MAX_APP_SIZE
-0x000035F4       CMP R3 R4
-0x000035F8       BGT load_noexec
+0x000035E8       LDW R1 [R9 + INODE_TYPE]    ;check inode type/size
+0x000035EC       LI R2 INODE_DIR
+0x000035F4       CMP R1 R2
+0x000035F8       BEQ load_noexec
+0x00003600       LDW R3 [R9 + INODE_SIZE]
+0x00003604       LI R4 MAX_APP_SIZE
+0x0000360C       CMP R3 R4
+0x00003610       BGT load_noexec
 
-0x00003600       BL file_alloc               ;allocate file
-0x00003608       CMP R1 0
-0x0000360C       BEQ load_nomem
-0x00003614       MOV R10 R1                  ; savr file ptr R10
-0x00003618       MOV R1 R10
-0x0000361C       MOV R2 R9
-0x00003620       LI R3 FD_FLAG_READ
-0x00003628       BL file_init
+0x00003618       BL file_alloc               ;allocate file
+0x00003620       CMP R1 0
+0x00003624       BEQ load_nomem
+0x0000362C       MOV R10 R1                  ; savr file ptr R10
+0x00003630       MOV R1 R10
+0x00003634       MOV R2 R9
+0x00003638       LI R3 FD_FLAG_READ
+0x00003640       BL file_init
 
     ; ---- allocate table and code pages ----
     ; makes table page and few pages up on file size
-0x00003630       LDW R1 [R9 + INODE_SIZE]
+0x00003648       LDW R1 [R9 + INODE_SIZE]
     ;MOV R1 R6                  ; file size
-0x00003634       BL pages_allocate_table
-0x0000363C       CMP R1 0
-0x00003640       BEQ load_file_fail
+0x0000364C       BL pages_allocate_table
+0x00003654       CMP R1 0
+0x00003658       BEQ load_file_fail
 
-0x00003648       MOV R11 R1                 ; new table PA
-0x0000364C       MOV R12 R2                 ; count (not needed further)
+0x00003660       MOV R11 R1                 ; new table PA
+0x00003664       MOV R12 R2                 ; count (not needed further)
 
     ; ---- map pages RW ----
 ; macro: GET_CURR_TASK_IDX R4        ;current task
-0x00003650   LI R1 CURRENT_TASK
-0x00003658   LDW R4 [R1]
+0x00003668   LI R1 CURRENT_TASK
+0x00003670   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5,R4
-0x0000365C   LI R1 TASK_SIZE
-0x00003664   MUL R3 R4 R1
-0x00003668   LI R5 tasks
-0x00003670   ADD R5 R5 R3
+0x00003674   LI R1 TASK_SIZE
+0x0000367C   MUL R3 R4 R1
+0x00003680   LI R5 tasks
+0x00003688   ADD R5 R5 R3
 
 ; macro: TASK_GET_CODE_PAGE R12,R5   ; save old pa code page from this task to R12
-0x00003674   LDW R12 [R5 + TASK_CODE_PAGE]
+0x0000368C   LDW R12 [R5 + TASK_CODE_PAGE]
 
    ; TASK_GET_PTBR R1,R5
    ; LI R2 USER_CODE_VA
@@ -1653,78 +1687,78 @@ exec_load_binary:
    ; BL map_page_rt             ;map it for loading to USER_CODE_VA
 
 ; macro: TASK_GET_PTBR R2, R5        ; PTBR
-0x00003678   LDW R2 [R5 + TASK_PTBR]
-0x0000367C       LI R3 USER_CODE_VA          ; starting new code page VA
-0x00003684       LI R4 USER_RW               ; mapping flAGS
-0x0000368C       MOV R1 R11                  ; new table PA (with pa pages)
-0x00003690       BL pages_map_table
+0x00003690   LDW R2 [R5 + TASK_PTBR]
+0x00003694       LI R3 USER_CODE_VA          ; starting new code page VA
+0x0000369C       LI R4 USER_RW               ; mapping flAGS
+0x000036A4       MOV R1 R11                  ; new table PA (with pa pages)
+0x000036A8       BL pages_map_table
 
     ; ---- zero data page ----
 ; macro: TASK_GET_DATA_PAGE R1,R5    ; tasks va data_page
-0x00003698   LDW R1 [R5 + TASK_DATA_PAGE]
-0x0000369C       CMP R1 0
-0x000036A0       BEQ load_read
-0x000036A8       LI R3 PAGE_SIZE
-0x000036B0       BL mem_zero                 ; clean task data_page
+0x000036B0   LDW R1 [R5 + TASK_DATA_PAGE]
+0x000036B4       CMP R1 0
+0x000036B8       BEQ load_read
+0x000036C0       LI R3 PAGE_SIZE
+0x000036C8       BL mem_zero                 ; clean task data_page
 
 load_read:
-0x000036B8       MOV R1 R10                  ; file* with program
-0x000036BC       LI  R2 USER_CODE_VA
-0x000036C4       LDW R3 [R9 + INODE_SIZE]    ; file size
-0x000036C8       BL file_read
-0x000036D0       CMP R1 0
-0x000036D4       BLT load_read_fail
+0x000036D0       MOV R1 R10                  ; file* with program
+0x000036D4       LI  R2 USER_CODE_VA
+0x000036DC       LDW R3 [R9 + INODE_SIZE]    ; file size
+0x000036E0       BL file_read
+0x000036E8       CMP R1 0
+0x000036EC       BLT load_read_fail
 
-0x000036DC       MOV R1 R10                  ;loaded release file*
-0x000036E0       BL file_put
+0x000036F4       MOV R1 R10                  ;loaded release file*
+0x000036F8       BL file_put
     ; all loaedd R1 - new code page pa tab, R2 - old code page pa tab
-0x000036E8       MOV R1 R11
-0x000036EC       MOV R2 R12
+0x00003700       MOV R1 R11
+0x00003704       MOV R2 R12
 
 exec_lb_exit:                   ;common! exit!
-0x000036F0       POP R12
-0x000036F4       POP R11
-0x000036F8       POP R10
-0x000036FC       POP R9
-0x00003700       POP R8
-0x00003704       POP R7
-0x00003708       POP LR
-0x0000370C       RET
+0x00003708       POP R12
+0x0000370C       POP R11
+0x00003710       POP R10
+0x00003714       POP R9
+0x00003718       POP R8
+0x0000371C       POP R7
+0x00003720       POP LR
+0x00003724       RET
 ; in error generally depending on state rollback allocated resources
 load_read_fail:
     ; in this case release file and pa code page
-0x00003710       MOV R1 R10
-0x00003714       BL file_put
-0x0000371C       MOV R1 R11
-0x00003720       BL page_put        ;free page
-0x00003728       LI R1 0
-0x00003730       LI R2 ERR_IO
-0x00003738       B  exec_lb_exit
+0x00003728       MOV R1 R10
+0x0000372C       BL file_put
+0x00003734       MOV R1 R11
+0x00003738       BL page_put        ;free page
+0x00003740       LI R1 0
+0x00003748       LI R2 ERR_IO
+0x00003750       B  exec_lb_exit
 
 load_file_fail:
-0x00003740       MOV R1 R10
-0x00003744       BL file_put
+0x00003758       MOV R1 R10
+0x0000375C       BL file_put
 
 load_nomem:
-0x0000374C       LI R1 0
-0x00003754       LI R2 ERR_NOMEM
-0x0000375C       B  exec_lb_exit
+0x00003764       LI R1 0
+0x0000376C       LI R2 ERR_NOMEM
+0x00003774       B  exec_lb_exit
 
 load_noexec:
-0x00003764       MOV R1 R10
-0x00003768       CMP R1 0
-0x0000376C       BEQ noexec_skip
-0x00003774       BL file_put
+0x0000377C       MOV R1 R10
+0x00003780       CMP R1 0
+0x00003784       BEQ noexec_skip
+0x0000378C       BL file_put
 
 noexec_skip:
-0x0000377C       LI R1 0
-0x00003784       LI R2 ERR_NOEXEC
-0x0000378C       B  exec_lb_exit
+0x00003794       LI R1 0
+0x0000379C       LI R2 ERR_NOEXEC
+0x000037A4       B  exec_lb_exit
 
 load_noent:
-0x00003794       LI R1 0
-0x0000379C       LI R2 ERR_NOENT
-0x000037A4       B  exec_lb_exit
+0x000037AC       LI R1 0
+0x000037B4       LI R2 ERR_NOENT
+0x000037BC       B  exec_lb_exit
 
 ;=============================================================
 ; Copy argv strings into kernel workspace
@@ -1743,88 +1777,88 @@ load_noent:
 ;=============================================================
 copy_argv_strings:
 
-0x000037AC       PUSH LR
-0x000037B0       PUSH R7
-0x000037B4       PUSH R8
-0x000037B8       PUSH R9
-0x000037BC       PUSH R10
-0x000037C0       PUSH R11
-0x000037C4       PUSH R12
+0x000037C4       PUSH LR
+0x000037C8       PUSH R7
+0x000037CC       PUSH R8
+0x000037D0       PUSH R9
+0x000037D4       PUSH R10
+0x000037D8       PUSH R11
+0x000037DC       PUSH R12
     ;init this at first
-0x000037C8       LI R1 exec_strings_used
-0x000037D0       LI R2 0
-0x000037D8       STW R2 [R1]
+0x000037E0       LI R1 exec_strings_used
+0x000037E8       LI R2 0
+0x000037F0       STW R2 [R1]
 
-0x000037DC       LI   R11 exec_strings      ; destination blob
-0x000037E4       LI   R12 0                 ; current offset
-0x000037EC       LI   R7 0                  ; argv index
+0x000037F4       LI   R11 exec_strings      ; destination blob
+0x000037FC       LI   R12 0                 ; current offset
+0x00003804       LI   R7 0                  ; argv index
                                ;  R8 = user argv[]
                                ;  R9 = argc
 exec_capture_next_arg:
     ; finished?
-0x000037F4       CMP  R7 R9
-0x000037F8       BEQ  exec_capture_done     ; if all agvs processed
+0x0000380C       CMP  R7 R9
+0x00003810       BEQ  exec_capture_done     ; if all agvs processed
 
     ;---------------------------------------------
     ; load argv[i] (ptr to string)
     ;---------------------------------------------
-0x00003800       LDW  R10 [R8]
+0x00003818       LDW  R10 [R8]
 
-0x00003804       CMP  R10 0
-0x00003808       BEQ  exec_capture_fault     ;if argv[i]==null
+0x0000381C       CMP  R10 0
+0x00003820       BEQ  exec_capture_fault     ;if argv[i]==null
 
     ;---------------------------------------------
     ; save offset
     ;
     ; exec_argv_offsets[i]=current_offset (in R12)
     ;---------------------------------------------
-0x00003810       LI   R1 exec_argv_offsets
-0x00003818       MOV  R2 R7  ;i
-0x0000381C       SHL  R2 R2 2
-0x00003820       ADD  R1 R1 R2
-0x00003824       STW  R12 [R1]
+0x00003828       LI   R1 exec_argv_offsets
+0x00003830       MOV  R2 R7  ;i
+0x00003834       SHL  R2 R2 2
+0x00003838       ADD  R1 R1 R2
+0x0000383C       STW  R12 [R1]
 
 exec_copy_string:
     ;---------------------------------------------
     ; copy one character r10 argv[i] (ptr to string) R11 ptr to exec strings
     ;---------------------------------------------
-0x00003828       LDB  R3 [R10]
-0x0000382C       STB  R3 [R11]
-0x00003830       ADD  R10 R10 1
-0x00003834       ADD  R11 R11 1
-0x00003838       ADD  R12 R12 1
+0x00003840       LDB  R3 [R10]
+0x00003844       STB  R3 [R11]
+0x00003848       ADD  R10 R10 1
+0x0000384C       ADD  R11 R11 1
+0x00003850       ADD  R12 R12 1
     ; blob overflow?
-0x0000383C       LI   R1 EXEC_MAX_STRINGS
-0x00003844       CMP  R12 R1
-0x00003848       BGT  exec_capture_fault
-0x00003850       CMP  R3 0
-0x00003854       BNE  exec_copy_string           ; end of string?
-0x0000385C       ADD  R8 R8 4    ;to next argv[] string
-0x00003860       ADD  R7 R7 1    ;i=i+1
-0x00003864       B    exec_capture_next_arg
+0x00003854       LI   R1 EXEC_MAX_STRINGS
+0x0000385C       CMP  R12 R1
+0x00003860       BGT  exec_capture_fault
+0x00003868       CMP  R3 0
+0x0000386C       BNE  exec_copy_string           ; end of string?
+0x00003874       ADD  R8 R8 4    ;to next argv[] string
+0x00003878       ADD  R7 R7 1    ;i=i+1
+0x0000387C       B    exec_capture_next_arg
 
 exec_capture_done:
-0x0000386C       LI   R1 exec_strings_used
-0x00003874       STW  R12 [R1]           ; current offset after last string
-0x00003878       LI  R1 0
-0x00003880       POP R12
-0x00003884       POP R11
-0x00003888       POP R10
-0x0000388C       POP R9
-0x00003890       POP R8
-0x00003894       POP R7
-0x00003898       POP LR
-0x0000389C       RET
+0x00003884       LI   R1 exec_strings_used
+0x0000388C       STW  R12 [R1]           ; current offset after last string
+0x00003890       LI  R1 0
+0x00003898       POP R12
+0x0000389C       POP R11
+0x000038A0       POP R10
+0x000038A4       POP R9
+0x000038A8       POP R8
+0x000038AC       POP R7
+0x000038B0       POP LR
+0x000038B4       RET
 exec_capture_fault:
-0x000038A0       LI   R1 ERR_FAULT
-0x000038A8       POP R12
-0x000038AC       POP R11
-0x000038B0       POP R10
-0x000038B4       POP R9
-0x000038B8       POP R8
-0x000038BC       POP R7
-0x000038C0       POP LR
-0x000038C4       RET
+0x000038B8       LI   R1 ERR_FAULT
+0x000038C0       POP R12
+0x000038C4       POP R11
+0x000038C8       POP R10
+0x000038CC       POP R9
+0x000038D0       POP R8
+0x000038D4       POP R7
+0x000038D8       POP LR
+0x000038DC       RET
 
 syscall_fork:
     ;================================================================
@@ -1834,20 +1868,20 @@ syscall_fork:
     ; user-writable state while preserving a new independent child thread.
     ;================================================================
 
-0x000038C8       BL task_clone_current
-0x000038D0       CMP R1 0
-0x000038D4       BEQ fork_fail
+0x000038E0       BL task_clone_current
+0x000038E8       CMP R1 0
+0x000038EC       BEQ fork_fail
 
     ; We return child PID to the parent via the trapframe.
 ; macro: TASK_GET_PID R2, R1
-0x000038DC   LDW R2 [R1 + TASK_PID]
-0x000038E0       STW R2 [SP + TF_R1]
-0x000038E4       B trap_restore
+0x000038F4   LDW R2 [R1 + TASK_PID]
+0x000038F8       STW R2 [SP + TF_R1]
+0x000038FC       B trap_restore
 
 fork_fail:
-0x000038EC       LI R1 ERR_NOMEM
-0x000038F4       STW R1 [SP + TF_R1]
-0x000038F8       B trap_restore
+0x00003904       LI R1 ERR_NOMEM
+0x0000390C       STW R1 [SP + TF_R1]
+0x00003910       B trap_restore
 
 syscall_yield:
 ;================================================================
@@ -1855,12 +1889,12 @@ syscall_yield:
 ; The scheduler will pick the next runnable task and switch to it.
 ;================================================================
 
-0x00003900       LI R1 0
-0x00003908       STW R1 [SP + TF_R1]         ; r1=0 - success
+0x00003918       LI R1 0
+0x00003920       STW R1 [SP + TF_R1]         ; r1=0 - success
     ; Voluntary reschedule. The return value must be written before
     ; switching, while SP still points at the yielding task's trapframe.
 
-0x0000390C       B schedule_and_switch
+0x00003924       B schedule_and_switch
 ;================================================================
 ; syscall_exit: - finish user process
 ; in R1 - exit code
@@ -1882,73 +1916,73 @@ syscall_yield:
 ;================================================================
 syscall_exit:
     ; Get exit code from R1
-0x00003914       LDW R8 [SP + TF_R1]        ; R8 = exit code
+0x0000392C       LDW R8 [SP + TF_R1]        ; R8 = exit code
 
 ; macro: GET_CURR_TASK_IDX R2
-0x00003918   LI R1 CURRENT_TASK
-0x00003920   LDW R2 [R1]
+0x00003930   LI R1 CURRENT_TASK
+0x00003938   LDW R2 [R1]
 ; macro: GET_TASK_PTR R5, R2
-0x00003924   LI R1 TASK_SIZE
-0x0000392C   MUL R3 R2 R1
-0x00003930   LI R5 tasks
-0x00003938   ADD R5 R5 R3
+0x0000393C   LI R1 TASK_SIZE
+0x00003944   MUL R3 R2 R1
+0x00003948   LI R5 tasks
+0x00003950   ADD R5 R5 R3
 
     ; Store exit code in child task struct for parent to collect in waitforpid
 ; macro: TASK_SET_EXIT_CODE R5, R8  ; Save exit code
-0x0000393C   STW R8 [R5 + TASK_EXIT_CODE]
+0x00003954   STW R8 [R5 + TASK_EXIT_CODE]
 
-0x00003940       PUSH R5
-0x00003944       MOV R1 R5
-0x00003948       BL task_close_fds          ; close all open file descriptors of this task (if any) to free file_pool resources
-0x00003950       POP R5
+0x00003958       PUSH R5
+0x0000395C       MOV R1 R5
+0x00003960       BL task_close_fds          ; close all open file descriptors of this task (if any) to free file_pool resources
+0x00003968       POP R5
 
     ; Mark this child as zombie (still exists but not runnable)
 ; macro: TASK_SET_STATE R5, TASK_ZOMBIE
-0x00003954   LI R1 TASK_ZOMBIE
-0x0000395C   STW R1 [R5 + TASK_STATE]
+0x0000396C   LI R1 TASK_ZOMBIE
+0x00003974   STW R1 [R5 + TASK_STATE]
 ; macro: TASK_SET_WAIT R5, WAIT_NONE
-0x00003960   LI R1 WAIT_NONE
-0x00003968   STW R1 [R5 + TASK_WAIT]
+0x00003978   LI R1 WAIT_NONE
+0x00003980   STW R1 [R5 + TASK_WAIT]
 
     ; Wake parent if it's waiting
 ; macro: TASK_GET_PPID R6, R5       ; R6 = parent PID
-0x0000396C   LDW R6 [R5 + TASK_PPID]
+0x00003984   LDW R6 [R5 + TASK_PPID]
 
     ; find parent task by PPID
-0x00003970       MOV R1 R6
-0x00003974       LI R2 0                    ; Search by PID (parent's PID)
-0x0000397C       BL task_find               ; R1 = found parent task*
-0x00003984       CMP R1 0
-0x00003988       BEQ no_parent_waiting
-0x00003990       MOV R7 R1                  ; R7 = parent task*
-0x00003994       MOV R11 R2                 ; save parent task index for bitmask
+0x00003988       MOV R1 R6
+0x0000398C       LI R2 0                    ; Search by PID (parent's PID)
+0x00003994       BL task_find               ; R1 = found parent task*
+0x0000399C       CMP R1 0
+0x000039A0       BEQ no_parent_waiting
+0x000039A8       MOV R7 R1                  ; R7 = parent task*
+0x000039AC       MOV R11 R2                 ; save parent task index for bitmask
 
     ;Check if parent is waiting for this child
 ; macro: TASK_GET_WAIT_CHILD R8, R7 ; Child PID that parent R7 ptr is waiting for
-0x00003998   LDW R8 [R7 + TASK_WAIT_CHILD]
+0x000039B0   LDW R8 [R7 + TASK_WAIT_CHILD]
 ; macro: TASK_GET_PID R9, R5        ; This child's R5 ptr PID
-0x0000399C   LDW R9 [R5 + TASK_PID]
+0x000039B4   LDW R9 [R5 + TASK_PID]
 
-0x000039A0       LI R10 -1
-0x000039A8       CMP R8 R10                 ; if parent is waiting for any child (-1), then wake it up
-0x000039AC       BEQ wake_parent            ;
+0x000039B8       LI R10 -1
+0x000039C0       CMP R8 R10                 ; if parent is waiting for any child (-1), then wake it up
+0x000039C4       BEQ wake_parent            ;
 
-0x000039B4       CMP R8 R9
-0x000039B8       BNE no_parent_waiting      ; parent is waiting for a different child, do not wake it up
+0x000039CC       CMP R8 R9
+0x000039D0       BNE no_parent_waiting      ; parent is waiting for a different child, do not wake it up
 
 wake_parent:
     ; Find parent's task index for bitmask
     ; we already have parent task in R11
 
-0x000039C0       LI R9 1
-0x000039C8       SHL R9 R9 R11               ; bit for parent task
+0x000039D8       LI R9 1
+0x000039E0       SHL R9 R9 R11               ; bit for parent task
 
-0x000039CC       LI R1 child_waitq
-0x000039D4       MOV R2 R9
-0x000039D8       BL waitq_wake_bitmask       ;unblock parent task waiting for this child
+0x000039E4       LI R1 child_waitq
+0x000039EC       MOV R2 R9
+0x000039F0       BL waitq_wake_bitmask       ;unblock parent task waiting for this child
 
 no_parent_waiting:
-0x000039E0       B schedule_and_switch
+0x000039F8       B schedule_and_switch
 
 ;=================================================================
 ; syscall_waitpid - wait for a child process
@@ -1961,114 +1995,114 @@ no_parent_waiting:
 ;=================================================================
 
 syscall_waitpid:
-0x000039E8       LDW R8 [SP + TF_R1]        ; R8 = pid to wait for
-0x000039EC       LDW R9 [SP + TF_R2]        ; R9 = status pointer
+0x00003A00       LDW R8 [SP + TF_R1]        ; R8 = pid to wait for
+0x00003A04       LDW R9 [SP + TF_R2]        ; R9 = status pointer
 
     ; Validate status pointer
-0x000039F0       CMP R9 0
-0x000039F4       BEQ waitpid_validate_done
-0x000039FC       MOV R1 R9
-0x00003A00       LI R2 4
-0x00003A08       LI R3 1
-0x00003A10       BL user_buffer_valid_range
-0x00003A18       CMP R1 1
-0x00003A1C       BNE waitpid_badptr
+0x00003A08       CMP R9 0
+0x00003A0C       BEQ waitpid_validate_done
+0x00003A14       MOV R1 R9
+0x00003A18       LI R2 4
+0x00003A20       LI R3 1
+0x00003A28       BL user_buffer_valid_range
+0x00003A30       CMP R1 1
+0x00003A34       BNE waitpid_badptr
 
 waitpid_validate_done:
 ; macro: GET_CURR_TASK_IDX R4
-0x00003A24   LI R1 CURRENT_TASK
-0x00003A2C   LDW R4 [R1]
+0x00003A3C   LI R1 CURRENT_TASK
+0x00003A44   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00003A30   LI R1 TASK_SIZE
-0x00003A38   MUL R3 R4 R1
-0x00003A3C   LI R5 tasks
-0x00003A44   ADD R5 R5 R3
+0x00003A48   LI R1 TASK_SIZE
+0x00003A50   MUL R3 R4 R1
+0x00003A54   LI R5 tasks
+0x00003A5C   ADD R5 R5 R3
 ; macro: TASK_GET_PID R10, R5       ; R10 = current (parent proc) PID
-0x00003A48   LDW R10 [R5 + TASK_PID]
+0x00003A60   LDW R10 [R5 + TASK_PID]
 
     ; if search for any child
-0x00003A4C       LI  R2 -1
-0x00003A54       CMP R8 R2
-0x00003A58       BNE find_child_by_pid
+0x00003A64       LI  R2 -1
+0x00003A6C       CMP R8 R2
+0x00003A70       BNE find_child_by_pid
     ; set task_find to search for any child of this parent
-0x00003A60       MOV R1 R10                  ; R1 = parent PID (PPID in child task)
-0x00003A64       LI  R2 1                    ; search by PPID
-0x00003A6C       BL task_find               ; R1 = found child task*
-0x00003A74       CMP R1 0
-0x00003A78       BEQ waitpid_no_child        ; No any child with PPID = this parent PID found
+0x00003A78       MOV R1 R10                  ; R1 = parent PID (PPID in child task)
+0x00003A7C       LI  R2 1                    ; search by PPID
+0x00003A84       BL task_find               ; R1 = found child task*
+0x00003A8C       CMP R1 0
+0x00003A90       BEQ waitpid_no_child        ; No any child with PPID = this parent PID found
     ;R1 child task* found
-0x00003A80       B find_any_child_found
+0x00003A98       B find_any_child_found
 find_child_by_pid:
     ; Search for child task by PID
-0x00003A88       MOV R1 R8                  ; R1 = child PID to search for
-0x00003A8C       LI R2 0                    ; Search by PID
-0x00003A94       BL task_find               ; R1 = found child task*
-0x00003A9C       CMP R1 0
-0x00003AA0       BEQ waitpid_no_child        ; No such child
+0x00003AA0       MOV R1 R8                  ; R1 = child PID to search for
+0x00003AA4       LI R2 0                    ; Search by PID
+0x00003AAC       BL task_find               ; R1 = found child task*
+0x00003AB4       CMP R1 0
+0x00003AB8       BEQ waitpid_no_child        ; No such child
 
 find_any_child_found:
 
-0x00003AA8       MOV R7 R1                   ; R7 = child task*
+0x00003AC0       MOV R7 R1                   ; R7 = child task*
 
     ; Verify it's actually our child by its PPID fld
 ; macro: TASK_GET_PPID R1, R7
-0x00003AAC   LDW R1 [R7 + TASK_PPID]
-0x00003AB0       CMP R1 R10
-0x00003AB4       BNE waitpid_no_child
+0x00003AC4   LDW R1 [R7 + TASK_PPID]
+0x00003AC8       CMP R1 R10
+0x00003ACC       BNE waitpid_no_child
     ; R7 = child task*
     ; check its state, if ZOMBIE, we can reap it and return its exit code
 ; macro: TASK_GET_STATE R1, R7
-0x00003ABC   LDW R1 [R7 + TASK_STATE]
-0x00003AC0       CMP R1 TASK_ZOMBIE
-0x00003AC4       BEQ waitpid_reap_child
+0x00003AD4   LDW R1 [R7 + TASK_STATE]
+0x00003AD8       CMP R1 TASK_ZOMBIE
+0x00003ADC       BEQ waitpid_reap_child
 
     ; Child running - block parent
 ; macro: TASK_GET_PID R1, R7
-0x00003ACC   LDW R1 [R7 + TASK_PID]
+0x00003AE4   LDW R1 [R7 + TASK_PID]
 ; macro: TASK_SET_WAIT_CHILD R5, R1
-0x00003AD0   STW R1 [R5 + TASK_WAIT_CHILD]
+0x00003AE8   STW R1 [R5 + TASK_WAIT_CHILD]
 
-0x00003AD4       LI R1 child_waitq           ; child_waitq ptr
-0x00003ADC       LI R2 WAIT_CHILD            ; reason
-0x00003AE4       LI R3 TASK_SLEEPING         ; state to set for current task
-0x00003AEC       BL waitq_prepare_sleep
+0x00003AEC       LI R1 child_waitq           ; child_waitq ptr
+0x00003AF4       LI R2 WAIT_CHILD            ; reason
+0x00003AFC       LI R3 TASK_SLEEPING         ; state to set for current task
+0x00003B04       BL waitq_prepare_sleep
 
-0x00003AF4       BL waitq_sleep_current     ; freeze the current task
+0x00003B0C       BL waitq_sleep_current     ; freeze the current task
 
     ; will resume here when child exits and wakes us up
 
 waitpid_reap_child:
     ; Get exit code from child task
 ; macro: TASK_GET_EXIT_CODE R2, R7
-0x00003AFC   LDW R2 [R7 + TASK_EXIT_CODE]
+0x00003B14   LDW R2 [R7 + TASK_EXIT_CODE]
 
     ; If status pointer is not NULL, write exit code to user space
-0x00003B00       CMP R9 0
-0x00003B04       BEQ waitpid_reap_done
+0x00003B18       CMP R9 0
+0x00003B1C       BEQ waitpid_reap_done
 
-0x00003B0C       MOV R1 R9                  ; R1 = user status pointer
-0x00003B10       MOV R4 R2                  ; preserve exit code in kernel source register
-0x00003B14       LI  R2 4                   ; R2 = size of exit code
-0x00003B1C       BL copy_to_user            ; write exit code to user space
+0x00003B24       MOV R1 R9                  ; R1 = user status pointer
+0x00003B28       MOV R4 R2                  ; preserve exit code in kernel source register
+0x00003B2C       LI  R2 4                   ; R2 = size of exit code
+0x00003B34       BL copy_to_user            ; write exit code to user space
 
 waitpid_reap_done:
 ; macro: TASK_GET_PID R10, R7       ; get child's PID
-0x00003B24   LDW R10 [R7 + TASK_PID]
-0x00003B28       MOV R1 R7                  ; R1 = child task*
-0x00003B2C       BL task_destroy
+0x00003B3C   LDW R10 [R7 + TASK_PID]
+0x00003B40       MOV R1 R7                  ; R1 = child task*
+0x00003B44       BL task_destroy
 
-0x00003B34       STW R10 [SP + TF_R1]        ; save child's PID to trapframe for return
-0x00003B38       B trap_restore
+0x00003B4C       STW R10 [SP + TF_R1]        ; save child's PID to trapframe for return
+0x00003B50       B trap_restore
 
 waitpid_no_child:
-0x00003B40       LI R1 ERR_CHILD
-0x00003B48       STW R1 [SP + TF_R1]
-0x00003B4C       B trap_restore
+0x00003B58       LI R1 ERR_CHILD
+0x00003B60       STW R1 [SP + TF_R1]
+0x00003B64       B trap_restore
 
 waitpid_badptr:
-0x00003B54       LI R1 ERR_FAULT
-0x00003B5C       STW R1 [SP + TF_R1]
-0x00003B60       B trap_restore
+0x00003B6C       LI R1 ERR_FAULT
+0x00003B74       STW R1 [SP + TF_R1]
+0x00003B78       B trap_restore
 
 
 ;================================================================
@@ -2085,63 +2119,63 @@ waitpid_badptr:
 ;   R1 = 0 if not found
 ;================================================================
 task_find:
-0x00003B68       PUSH R5
-0x00003B6C       PUSH R6
-0x00003B70       PUSH R7
+0x00003B80       PUSH R5
+0x00003B84       PUSH R6
+0x00003B88       PUSH R7
 
-0x00003B74       MOV R5 R2                  ; Save search mode
-0x00003B78       MOV R7 R1                  ; Save PID/PPID
-0x00003B7C       LI R2 0                    ; Task index
+0x00003B8C       MOV R5 R2                  ; Save search mode
+0x00003B90       MOV R7 R1                  ; Save PID/PPID
+0x00003B94       LI R2 0                    ; Task index
 task_find_loop:
-0x00003B84       LI R3 MAX_TASKS
-0x00003B8C       CMP R2 R3
-0x00003B90       BGE task_find_not_found
+0x00003B9C       LI R3 MAX_TASKS
+0x00003BA4       CMP R2 R3
+0x00003BA8       BGE task_find_not_found
 
 ; macro: GET_TASK_PTR R4, R2
-0x00003B98   LI R1 TASK_SIZE
-0x00003BA0   MUL R3 R2 R1
-0x00003BA4   LI R4 tasks
-0x00003BAC   ADD R4 R4 R3
+0x00003BB0   LI R1 TASK_SIZE
+0x00003BB8   MUL R3 R2 R1
+0x00003BBC   LI R4 tasks
+0x00003BC4   ADD R4 R4 R3
 ; macro: TASK_GET_STATE R6, R4
-0x00003BB0   LDW R6 [R4 + TASK_STATE]
-0x00003BB4       CMP R6 TASK_DEAD
-0x00003BB8       BEQ task_find_next         ; Skip dead tasks
+0x00003BC8   LDW R6 [R4 + TASK_STATE]
+0x00003BCC       CMP R6 TASK_DEAD
+0x00003BD0       BEQ task_find_next         ; Skip dead tasks
 
     ; Search based on mode
-0x00003BC0       CMP R5 0
-0x00003BC4       BEQ task_find_by_pid
+0x00003BD8       CMP R5 0
+0x00003BDC       BEQ task_find_by_pid
 
     ; Search by PPID
 ; macro: TASK_GET_PPID R6, R4
-0x00003BCC   LDW R6 [R4 + TASK_PPID]
-0x00003BD0       CMP R6 R7
-0x00003BD4       BEQ task_find_found
-0x00003BDC       B task_find_next
+0x00003BE4   LDW R6 [R4 + TASK_PPID]
+0x00003BE8       CMP R6 R7
+0x00003BEC       BEQ task_find_found
+0x00003BF4       B task_find_next
 
 task_find_by_pid:
 ; macro: TASK_GET_PID R6, R4
-0x00003BE4   LDW R6 [R4 + TASK_PID]
-0x00003BE8       CMP R6 R7
-0x00003BEC       BEQ task_find_found
+0x00003BFC   LDW R6 [R4 + TASK_PID]
+0x00003C00       CMP R6 R7
+0x00003C04       BEQ task_find_found
 
 task_find_next:
-0x00003BF4       ADD R2 R2 1
-0x00003BF8       B task_find_loop
+0x00003C0C       ADD R2 R2 1
+0x00003C10       B task_find_loop
 
 task_find_found:
-0x00003C00       MOV R1 R4                  ; Return task pointer
-0x00003C04       MOV R2 R2                  ; Return task index
-0x00003C08       POP R7
-0x00003C0C       POP R6
-0x00003C10       POP R5
-0x00003C14       RET
-
-task_find_not_found:
-0x00003C18       LI R1 0
+0x00003C18       MOV R1 R4                  ; Return task pointer
+0x00003C1C       MOV R2 R2                  ; Return task index
 0x00003C20       POP R7
 0x00003C24       POP R6
 0x00003C28       POP R5
 0x00003C2C       RET
+
+task_find_not_found:
+0x00003C30       LI R1 0
+0x00003C38       POP R7
+0x00003C3C       POP R6
+0x00003C40       POP R5
+0x00003C44       RET
 
 syscall_getpid:
     ;================================================================
@@ -2149,19 +2183,19 @@ syscall_getpid:
     ;================================================================
 
 ; macro: GET_CURR_TASK_IDX R2
-0x00003C30   LI R1 CURRENT_TASK
-0x00003C38   LDW R2 [R1]
+0x00003C48   LI R1 CURRENT_TASK
+0x00003C50   LDW R2 [R1]
 ; macro: GET_TASK_PTR R5, R2
-0x00003C3C   LI R1 TASK_SIZE
-0x00003C44   MUL R3 R2 R1
-0x00003C48   LI R5 tasks
-0x00003C50   ADD R5 R5 R3
+0x00003C54   LI R1 TASK_SIZE
+0x00003C5C   MUL R3 R2 R1
+0x00003C60   LI R5 tasks
+0x00003C68   ADD R5 R5 R3
 ; macro: TASK_GET_PID R1, R5            ; get pid from task scheduler data
-0x00003C54   LDW R1 [R5 + TASK_PID]
+0x00003C6C   LDW R1 [R5 + TASK_PID]
 
-0x00003C58       STW R1 [SP + TF_R1]           ; save it to its trapframe which goes back when it s next time this task resumes
+0x00003C70       STW R1 [SP + TF_R1]           ; save it to its trapframe which goes back when it s next time this task resumes
                                   ; on resume r1 will have pid read after svc call
-0x00003C5C       B trap_restore
+0x00003C74       B trap_restore
 
 syscall_debug:
     ;================================================================
@@ -2169,10 +2203,10 @@ syscall_debug:
     ; This proves argument and return-value plumbing without nested traps.
     ;================================================================
 
-0x00003C64       LDW R1 [SP + TF_R1]
-0x00003C68       STW R1 [SP + TF_R1]
+0x00003C7C       LDW R1 [SP + TF_R1]
+0x00003C80       STW R1 [SP + TF_R1]
 
-0x00003C6C       B trap_restore
+0x00003C84       B trap_restore
 
 
 syscall_open:
@@ -2183,36 +2217,36 @@ syscall_open:
     ; out: R1 = fd / err -1
     ;================================================================
 
-0x00003C74       LDW R1 [SP + TF_R1]
-0x00003C78       LDW R2 [SP + TF_R2]
+0x00003C8C       LDW R1 [SP + TF_R1]
+0x00003C90       LDW R2 [SP + TF_R2]
 
-0x00003C7C       BL copy_path_from_user     ; macro inside destroys R11, copy pathname
+0x00003C94       BL copy_path_from_user     ; macro inside destroys R11, copy pathname
                                ; to tasks Kbuf_RD buffer
                                ; R1 - pathname str ptr in the bufer
-0x00003C84       CMP R1 0
-0x00003C88       BEQ open_fail_fault
+0x00003C9C       CMP R1 0
+0x00003CA0       BEQ open_fail_fault
 
     ; copy_path_from_user returned the current task's kernel read buffer.
 ; macro: GET_CURR_TASK_IDX R4
-0x00003C90   LI R1 CURRENT_TASK
-0x00003C98   LDW R4 [R1]
+0x00003CA8   LI R1 CURRENT_TASK
+0x00003CB0   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00003C9C   LI R1 TASK_SIZE
-0x00003CA4   MUL R3 R4 R1
-0x00003CA8   LI R5 tasks
-0x00003CB0   ADD R5 R5 R3
+0x00003CB4   LI R1 TASK_SIZE
+0x00003CBC   MUL R3 R4 R1
+0x00003CC0   LI R5 tasks
+0x00003CC8   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_RD R1, R5
-0x00003CB4   LDW R1 [R5 + TASK_KBUF_RD_PTR]
+0x00003CCC   LDW R1 [R5 + TASK_KBUF_RD_PTR]
 
-0x00003CB8       BL vfs_open
+0x00003CD0       BL vfs_open
 
-0x00003CC0       STW R1 [SP + TF_R1]     ;file opened if fd on exit!
-0x00003CC4       B trap_restore
+0x00003CD8       STW R1 [SP + TF_R1]     ;file opened if fd on exit!
+0x00003CDC       B trap_restore
 
 open_fail_fault:
-0x00003CCC       LI R1 ERR_FAULT
-0x00003CD4       STW R1 [SP + TF_R1]     ;file not opened ERR
-0x00003CD8       B trap_restore
+0x00003CE4       LI R1 ERR_FAULT
+0x00003CEC       STW R1 [SP + TF_R1]     ;file not opened ERR
+0x00003CF0       B trap_restore
 
 
 syscall_sleep:
@@ -2225,50 +2259,50 @@ syscall_sleep:
     ;   R1 = -1 on error (invalid time)
     ;================================================================
 
-0x00003CE0       LDW R8 [SP + TF_R1]        ; R8 = milliseconds
+0x00003CF8       LDW R8 [SP + TF_R1]        ; R8 = milliseconds
 
-0x00003CE4       CMP R8 0
-0x00003CE8       BLE sleep_invalid          ; must be positive
+0x00003CFC       CMP R8 0
+0x00003D00       BLE sleep_invalid          ; must be positive
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00003CF0   LI R1 CURRENT_TASK
-0x00003CF8   LDW R4 [R1]
+0x00003D08   LI R1 CURRENT_TASK
+0x00003D10   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00003CFC   LI R1 TASK_SIZE
-0x00003D04   MUL R3 R4 R1
-0x00003D08   LI R5 tasks
-0x00003D10   ADD R5 R5 R3
+0x00003D14   LI R1 TASK_SIZE
+0x00003D1C   MUL R3 R4 R1
+0x00003D20   LI R5 tasks
+0x00003D28   ADD R5 R5 R3
 
     ; Calculate wake time in PIT ticks (1 ms per tick).
-0x00003D14       LI R3 timer_ticks
-0x00003D1C       LDW R6 [R3]                ; current ticks (1ms per tick)
+0x00003D2C       LI R3 timer_ticks
+0x00003D34       LDW R6 [R3]                ; current ticks (1ms per tick)
 
     ; Convert ms to ticks: 1 tick = 1 ms
-0x00003D20       MOV R7 R8                  ; R7 = ticks to sleep
+0x00003D38       MOV R7 R8                  ; R7 = ticks to sleep
 
-0x00003D24       ADD R6 R6 R7               ; R6 = wake time in ticks
+0x00003D3C       ADD R6 R6 R7               ; R6 = wake time in ticks
 
     ; Store wake time in task struct
 ; macro: TASK_SET_WAKE_TIME R5, R6
-0x00003D28   STW R6 [R5 + TASK_WAKE_TIME]
+0x00003D40   STW R6 [R5 + TASK_WAKE_TIME]
 
     ; Use existing wait queue infrastructure
-0x00003D2C       LI R1 sleep_waitq           ; sleep_waitq ptr
-0x00003D34       LI R2 WAIT_SLEEP            ; reason
-0x00003D3C       LI R3 TASK_SLEEPING         ; new state (if other then blocked_io)
-0x00003D44       BL waitq_prepare_sleep     ; This marks task as TASK_SLEEP and adds it to the sleep_waitq
+0x00003D44       LI R1 sleep_waitq           ; sleep_waitq ptr
+0x00003D4C       LI R2 WAIT_SLEEP            ; reason
+0x00003D54       LI R3 TASK_SLEEPING         ; new state (if other then blocked_io)
+0x00003D5C       BL waitq_prepare_sleep     ; This marks task as TASK_SLEEP and adds it to the sleep_waitq
 
-0x00003D4C       BL waitq_sleep_current     ; freeze the current task in kernel side until it is woken up by the timer interrupt handler when the wake time is reached
+0x00003D64       BL waitq_sleep_current     ; freeze the current task in kernel side until it is woken up by the timer interrupt handler when the wake time is reached
 
     ; Return 0 (will be set when woken)
-0x00003D54       LI R1 0
-0x00003D5C       STW R1 [SP + TF_R1]
-0x00003D60       B trap_restore
+0x00003D6C       LI R1 0
+0x00003D74       STW R1 [SP + TF_R1]
+0x00003D78       B trap_restore
 
 sleep_invalid:
-0x00003D68       LI R1 ERR_FAULT
-0x00003D70       STW R1 [SP + TF_R1]
-0x00003D74       B trap_restore
+0x00003D80       LI R1 ERR_FAULT
+0x00003D88       STW R1 [SP + TF_R1]
+0x00003D8C       B trap_restore
 
 
 ;====================================================================
@@ -2285,62 +2319,62 @@ sleep_invalid:
 ;R1 = 0 fail
 ;====================================================================
 copy_path_from_user:
-0x00003D7C       PUSH LR
+0x00003D94       PUSH LR
 
-0x00003D80       MOV R8 R1                  ; current user source byte
+0x00003D98       MOV R8 R1                  ; current user source byte
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00003D84   LI R1 CURRENT_TASK
-0x00003D8C   LDW R4 [R1]
+0x00003D9C   LI R1 CURRENT_TASK
+0x00003DA4   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00003D90   LI R1 TASK_SIZE
-0x00003D98   MUL R3 R4 R1
-0x00003D9C   LI R5 tasks
-0x00003DA4   ADD R5 R5 R3
+0x00003DA8   LI R1 TASK_SIZE
+0x00003DB0   MUL R3 R4 R1
+0x00003DB4   LI R5 tasks
+0x00003DBC   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_RD R9, R5    ; destination kernel path buffer
-0x00003DA8   LDW R9 [R5 + TASK_KBUF_RD_PTR]
+0x00003DC0   LDW R9 [R5 + TASK_KBUF_RD_PTR]
 
-0x00003DAC       PUSH R9                    ; original destination returned on success
-0x00003DB0       LI R10 0                   ; bytes copied before NUL
+0x00003DC4       PUSH R9                    ; original destination returned on success
+0x00003DC8       LI R10 0                   ; bytes copied before NUL
 
 copy_path_loop:
-0x00003DB8       LI R11 KBUFFER_SIZE
-0x00003DC0       CMP R10 R11
-0x00003DC4       BGE copy_path_fail
+0x00003DD0       LI R11 KBUFFER_SIZE
+0x00003DD8       CMP R10 R11
+0x00003DDC       BGE copy_path_fail
 
-0x00003DCC       PUSH R8
-0x00003DD0       PUSH R9
-0x00003DD4       PUSH R10
-0x00003DD8       MOV R1 R8
-0x00003DDC       LI R2 1
-0x00003DE4       LI R3 0                    ; read access from user source
-0x00003DEC       BL user_buffer_valid_range
-0x00003DF4       POP R10
-0x00003DF8       POP R9
-0x00003DFC       POP R8
-0x00003E00       CMP R1 1
-0x00003E04       BNE copy_path_fail
+0x00003DE4       PUSH R8
+0x00003DE8       PUSH R9
+0x00003DEC       PUSH R10
+0x00003DF0       MOV R1 R8
+0x00003DF4       LI R2 1
+0x00003DFC       LI R3 0                    ; read access from user source
+0x00003E04       BL user_buffer_valid_range
+0x00003E0C       POP R10
+0x00003E10       POP R9
+0x00003E14       POP R8
+0x00003E18       CMP R1 1
+0x00003E1C       BNE copy_path_fail
 
-0x00003E0C       LDB R4 [R8]
-0x00003E10       STB R4 [R9]
-0x00003E14       CMP R4 0
-0x00003E18       BEQ copy_path_done
+0x00003E24       LDB R4 [R8]
+0x00003E28       STB R4 [R9]
+0x00003E2C       CMP R4 0
+0x00003E30       BEQ copy_path_done
 
-0x00003E20       ADD R8 R8 1
-0x00003E24       ADD R9 R9 1
-0x00003E28       ADD R10 R10 1
-0x00003E2C       B copy_path_loop
+0x00003E38       ADD R8 R8 1
+0x00003E3C       ADD R9 R9 1
+0x00003E40       ADD R10 R10 1
+0x00003E44       B copy_path_loop
 
 copy_path_done:
-0x00003E34       POP R1                     ; original kernel path pointer
-0x00003E38       POP LR
-0x00003E3C       RET
+0x00003E4C       POP R1                     ; original kernel path pointer
+0x00003E50       POP LR
+0x00003E54       RET
 
 copy_path_fail:
-0x00003E40       POP R1                     ; discard original kernel path pointer
-0x00003E44       LI R1 0
-0x00003E4C       POP LR
-0x00003E50       RET
+0x00003E58       POP R1                     ; discard original kernel path pointer
+0x00003E5C       LI R1 0
+0x00003E64       POP LR
+0x00003E68       RET
 
 ;====================================================================
 ; copy_user_string
@@ -2362,65 +2396,65 @@ copy_path_fail:
 
 copy_user_string:
 
-0x00003E54       PUSH LR
-0x00003E58       PUSH R8
-0x00003E5C       PUSH R9
-0x00003E60       PUSH R10
-0x00003E64       PUSH R11
+0x00003E6C       PUSH LR
+0x00003E70       PUSH R8
+0x00003E74       PUSH R9
+0x00003E78       PUSH R10
+0x00003E7C       PUSH R11
 
-0x00003E68       MOV R8 R1          ; kernel dst
-0x00003E6C       MOV R9 R2          ; user src
-0x00003E70       MOV R10 R3         ; max length
-0x00003E74       LI  R11 0          ; bytes copied
+0x00003E80       MOV R8 R1          ; kernel dst
+0x00003E84       MOV R9 R2          ; user src
+0x00003E88       MOV R10 R3         ; max length
+0x00003E8C       LI  R11 0          ; bytes copied
 
 copy_user_loop:
     ; reached max?
-0x00003E7C       CMP R11 R10
-0x00003E80       BGE copy_user_fail
+0x00003E94       CMP R11 R10
+0x00003E98       BGE copy_user_fail
 
     ; validate one byte
-0x00003E88       PUSH R8
-0x00003E8C       PUSH R9
-0x00003E90       PUSH R10
-0x00003E94       PUSH R11
-0x00003E98       MOV R1 R9
-0x00003E9C       LI  R2 1
-0x00003EA4       LI  R3 0           ; read access
-0x00003EAC       BL user_buffer_valid_range
-0x00003EB4       POP R11
-0x00003EB8       POP R10
-0x00003EBC       POP R9
-0x00003EC0       POP R8
-0x00003EC4       CMP R1 1
-0x00003EC8       BNE copy_user_fail
+0x00003EA0       PUSH R8
+0x00003EA4       PUSH R9
+0x00003EA8       PUSH R10
+0x00003EAC       PUSH R11
+0x00003EB0       MOV R1 R9
+0x00003EB4       LI  R2 1
+0x00003EBC       LI  R3 0           ; read access
+0x00003EC4       BL user_buffer_valid_range
+0x00003ECC       POP R11
+0x00003ED0       POP R10
+0x00003ED4       POP R9
+0x00003ED8       POP R8
+0x00003EDC       CMP R1 1
+0x00003EE0       BNE copy_user_fail
 
     ; copy byte
-0x00003ED0       LDB R4 [R9]
-0x00003ED4       STB R4 [R8]
+0x00003EE8       LDB R4 [R9]
+0x00003EEC       STB R4 [R8]
     ;cpy ctr
-0x00003ED8       ADD R11 R11 1
-0x00003EDC       CMP R4 0    ;if string ends (null)
-0x00003EE0       BEQ copy_user_done
+0x00003EF0       ADD R11 R11 1
+0x00003EF4       CMP R4 0    ;if string ends (null)
+0x00003EF8       BEQ copy_user_done
 
-0x00003EE8       ADD R8 R8 1 ;advance
-0x00003EEC       ADD R9 R9 1
-0x00003EF0       B copy_user_loop
+0x00003F00       ADD R8 R8 1 ;advance
+0x00003F04       ADD R9 R9 1
+0x00003F08       B copy_user_loop
 copy_user_done:
-0x00003EF8       MOV R1 R11
-0x00003EFC       POP R11
-0x00003F00       POP R10
-0x00003F04       POP R9
-0x00003F08       POP R8
-0x00003F0C       POP LR
-0x00003F10       RET
+0x00003F10       MOV R1 R11
+0x00003F14       POP R11
+0x00003F18       POP R10
+0x00003F1C       POP R9
+0x00003F20       POP R8
+0x00003F24       POP LR
+0x00003F28       RET
 copy_user_fail:
-0x00003F14       LI  R1 0
-0x00003F1C       POP R11
-0x00003F20       POP R10
-0x00003F24       POP R9
-0x00003F28       POP R8
-0x00003F2C       POP LR
-0x00003F30       RET
+0x00003F2C       LI  R1 0
+0x00003F34       POP R11
+0x00003F38       POP R10
+0x00003F3C       POP R9
+0x00003F40       POP R8
+0x00003F44       POP LR
+0x00003F48       RET
 
 ;====================================================================
 ; devfs_lookup - lookup device files registry
@@ -2434,49 +2468,49 @@ copy_user_fail:
 ;====================================================================
 
 devfs_lookup:
-0x00003F34       PUSH LR
-0x00003F38       MOV R8 R1                  ; save pathname ptr
+0x00003F4C       PUSH LR
+0x00003F50       MOV R8 R1                  ; save pathname ptr
 
-0x00003F3C       LI R7 device_table
-0x00003F44       LI R9 DEVICE_COUNT
+0x00003F54       LI R7 device_table
+0x00003F5C       LI R9 DEVICE_COUNT
 
 devfs_loop:
-0x00003F4C       CMP R9 0
-0x00003F50       BEQ lookup_fail
+0x00003F64       CMP R9 0
+0x00003F68       BEQ lookup_fail
 
     ; compare pathname with device name
-0x00003F58       MOV R1 R8
-0x00003F5C       LDW R2 [R7 + DEV_NAME]
-0x00003F60       BL strcmp
-0x00003F68       CMP R1 1
-0x00003F6C       BEQ devfs_found
+0x00003F70       MOV R1 R8
+0x00003F74       LDW R2 [R7 + DEV_NAME]
+0x00003F78       BL strcmp
+0x00003F80       CMP R1 1
+0x00003F84       BEQ devfs_found
 
-0x00003F74       ADD R7 R7 DEV_SIZE
-0x00003F78       SUB R9 R9 1
-0x00003F7C       B devfs_loop
+0x00003F8C       ADD R7 R7 DEV_SIZE
+0x00003F90       SUB R9 R9 1
+0x00003F94       B devfs_loop
 
 devfs_found:
     ; 1 allocate inode
-0x00003F84       BL inode_alloc
-0x00003F8C       CMP R1 0
-0x00003F90       BEQ devfs_fail
+0x00003F9C       BL inode_alloc
+0x00003FA4       CMP R1 0
+0x00003FA8       BEQ devfs_fail
 
-0x00003F98       MOV R10 R1         ; inode
+0x00003FB0       MOV R10 R1         ; inode
     ; 2 init inode
-0x00003F9C       LDW R2 [R7 + DEV_OPS]
-0x00003FA0       LDW R3 [R7 + DEV_PRIVATE]
-0x00003FA4       LI  R4 INODE_CHAR       ; inode type for dev - char
-0x00003FAC       LI  R5 0                ; size =0
-0x00003FB4       BL inode_init
+0x00003FB4       LDW R2 [R7 + DEV_OPS]
+0x00003FB8       LDW R3 [R7 + DEV_PRIVATE]
+0x00003FBC       LI  R4 INODE_CHAR       ; inode type for dev - char
+0x00003FC4       LI  R5 0                ; size =0
+0x00003FCC       BL inode_init
 
-0x00003FBC       MOV R1 R10         ; 3 return new inited inode ptr for this dev
-0x00003FC0       POP LR
-0x00003FC4       RET
+0x00003FD4       MOV R1 R10         ; 3 return new inited inode ptr for this dev
+0x00003FD8       POP LR
+0x00003FDC       RET
 
 devfs_fail:
-0x00003FC8       LI R1 0
-0x00003FD0       POP LR
-0x00003FD4       RET
+0x00003FE0       LI R1 0
+0x00003FE8       POP LR
+0x00003FEC       RET
 
 ;====================================================================
 ; NSFS VFS driver skeleton
@@ -2489,129 +2523,294 @@ devfs_fail:
 ;====================================================================
 
 nsfs_node_alloc:
-0x00003FD8       LI R2 0
+0x00003FF0       LI R2 0
 
 nsfs_node_alloc_loop:
-0x00003FE0       CMP R2 NSFS_MAX_NODES
-0x00003FE4       BGE nsfs_node_alloc_fail
+0x00003FF8       CMP R2 NSFS_MAX_NODES
+0x00003FFC       BGE nsfs_node_alloc_fail
 
-0x00003FEC       SHL R3 R2 2
-0x00003FF0       LI R4 nsfs_node_used
-0x00003FF8       ADD R4 R4 R3
+0x00004004       SHL R3 R2 2
+0x00004008       LI R4 nsfs_node_used
+0x00004010       ADD R4 R4 R3
 
-0x00003FFC       LDW R5 [R4]
-0x00004000       CMP R5 0
-0x00004004       BEQ nsfs_node_alloc_found
+0x00004014       LDW R5 [R4]
+0x00004018       CMP R5 0
+0x0000401C       BEQ nsfs_node_alloc_found
 
-0x0000400C       ADD R2 R2 1
-0x00004010       B nsfs_node_alloc_loop
+0x00004024       ADD R2 R2 1
+0x00004028       B nsfs_node_alloc_loop
 
 nsfs_node_alloc_found:
-0x00004018       LI R5 1
-0x00004020       STW R5 [R4]
+0x00004030       LI R5 1
+0x00004038       STW R5 [R4]
 
-0x00004024       LI R3 NSFS_NODE_SIZEOF
-0x0000402C       MUL R6 R2 R3
-0x00004030       LI R1 nsfs_node_pool
-0x00004038       ADD R1 R1 R6
-0x0000403C       RET
+0x0000403C       LI R3 NSFS_NODE_SIZEOF
+0x00004044       MUL R6 R2 R3
+0x00004048       LI R1 nsfs_node_pool
+0x00004050       ADD R1 R1 R6
+0x00004054       RET
 
 nsfs_node_alloc_fail:
-0x00004040       LI R1 0
-0x00004048       RET
+0x00004058       LI R1 0
+0x00004060       RET
 
 nsfs_node_free:
-0x0000404C       LI R2 nsfs_node_pool
-0x00004054       SUB R3 R1 R2
+0x00004064       LI R2 nsfs_node_pool
+0x0000406C       SUB R3 R1 R2
 
-0x00004058       LI R4 NSFS_NODE_SIZEOF
-0x00004060       DIV R5 R3 R4
+0x00004070       LI R4 NSFS_NODE_SIZEOF
+0x00004078       DIV R5 R3 R4
 
-0x00004064       SHL R5 R5 2
-0x00004068       LI R6 nsfs_node_used
-0x00004070       ADD R6 R6 R5
+0x0000407C       SHL R5 R5 2
+0x00004080       LI R6 nsfs_node_used
+0x00004088       ADD R6 R6 R5
 
-0x00004074       LI R7 0
-0x0000407C       STW R7 [R6]
-0x00004080       RET
+0x0000408C       LI R7 0
+0x00004094       STW R7 [R6]
+0x00004098       RET
+
+; nsfs_refresh_index
+; in:  R1 = namespace
+; out: R1 = 0 on success, BMI/errno status on failure
+nsfs_refresh_index:
+0x0000409C       PUSH LR
+0x000040A0       PUSH R8
+0x000040A4       PUSH R9
+0x000040A8       PUSH R10
+0x000040AC       PUSH R11
+0x000040B0       PUSH R12
+
+0x000040B4       MOV R12 R1
+
+0x000040B8       MOV R1 NSFS_INDEX
+0x000040BC       LI R2 0
+0x000040C4       LI R3 0
+0x000040CC       MOV R4 R12
+0x000040D0   CALL bmi_call
+
+0x000040D8       CMP R1 0
+0x000040DC       BNE nsfs_refresh_done
+
+0x000040E4       LI R1 nsfs_index_count
+0x000040EC       LI R2 0
+0x000040F4       STW R2 [R1]
+0x000040F8       LI R1 nsfs_index_path_next
+0x00004100       LI R2 nsfs_index_path_pool
+0x00004108       STW R2 [R1]
+
+0x0000410C       LI R8 BMI_BUF_READ
+0x00004114       ADD R8 R8 BMI_HDR_SIZEOF       ; R8 = reply payload cursor
+0x00004118       LDW R9 [R8]                    ; R9 = entry_count
+0x0000411C       ADD R8 R8 4
+0x00004120       LI R10 0                       ; R10 = parsed count
+
+nsfs_refresh_loop:
+0x00004128       CMP R10 R9
+0x0000412C       BGE nsfs_refresh_success
+0x00004134       CMP R10 NSFS_INDEX_MAX_ENTRIES
+0x00004138       BGE nsfs_refresh_success
+
+    ; R11 = &nsfs_index_table[R10]
+0x00004140       LI R11 NSFS_INDEX_ENTRY_SIZEOF
+0x00004148       MUL R11 R10 R11
+0x0000414C       LI R6 nsfs_index_table
+0x00004154       ADD R11 R6 R11
+
+0x00004158       LDW R1 [R8 + NSFS_WIRE_TYPE]
+0x0000415C       STW R1 [R11 + NSFS_INDEX_TYPE]
+0x00004160       LDW R1 [R8 + NSFS_WIRE_SIZE]
+0x00004164       STW R1 [R11 + NSFS_INDEX_SIZE]
+0x00004168       LDW R1 [R8 + NSFS_WIRE_VERSION]
+0x0000416C       STW R1 [R11 + NSFS_INDEX_VERSION]
+0x00004170       LDW R5 [R8 + NSFS_WIRE_PATH_LEN]
+0x00004174       STW R5 [R11 + NSFS_INDEX_PATH_LEN]
+0x00004178       ADD R8 R8 NSFS_WIRE_HDR_SIZEOF
+
+    ; Copy path bytes to path pool and append a NUL for strcmp.
+0x0000417C       LI R6 nsfs_index_path_next
+0x00004184       LDW R1 [R6]
+0x00004188       STW R1 [R11 + NSFS_INDEX_PATH]
+0x0000418C       MOV R2 R8
+0x00004190       MOV R3 R5
+0x00004194       BL memcpy
+0x0000419C       LI R2 0
+0x000041A4       STB R2 [R1]
+0x000041A8       ADD R1 R1 1
+0x000041AC       LI R6 nsfs_index_path_next
+0x000041B4       STW R1 [R6]
+
+    ; Advance wire cursor by path_len rounded up to 4 bytes.
+0x000041B8       ADD R8 R8 R5
+0x000041BC       ADD R8 R8 3
+0x000041C0       LI R6 0xFFFFFFFC
+0x000041C8       AND R8 R8 R6
+
+0x000041CC       ADD R10 R10 1
+0x000041D0       B nsfs_refresh_loop
+
+nsfs_refresh_success:
+0x000041D8       LI R1 nsfs_index_count
+0x000041E0       STW R10 [R1]
+0x000041E4       LI R1 0
+
+nsfs_refresh_done:
+0x000041EC       POP R12
+0x000041F0       POP R11
+0x000041F4       POP R10
+0x000041F8       POP R9
+0x000041FC       POP R8
+0x00004200       POP LR
+0x00004204       RET
 
 ; nsfs_lookup
 ; in:  R1 = pathname
 ; out: R1 = inode ptr if present in NSFS overlay, or 0 if not found
 nsfs_lookup:
-    ; TODO:
-    ; 1. BMI lookup/read metadata for ns:<default_ns>:path:<pathname>.
-    ; 2. Allocate nsfs_node and copy/cache path metadata.
-    ; 3. Allocate inode and init with nsfs_ops, nsfs_node, type, size.
-0x00004084       LI R1 0
-0x0000408C       RET
+0x00004208       PUSH LR
+0x0000420C       PUSH R8
+0x00004210       PUSH R9
+0x00004214       PUSH R10
+0x00004218       PUSH R11
+0x0000421C       PUSH R12
+
+0x00004220       MOV R8 R1                       ; pathname
+0x00004224       LI R9 nsfs_index_table
+0x0000422C       LI R10 nsfs_index_count
+0x00004234       LDW R10 [R10]
+
+nsfs_lookup_loop:
+0x00004238       CMP R10 0
+0x0000423C       BEQ nsfs_lookup_fail
+
+0x00004244       MOV R1 R8
+0x00004248       LDW R2 [R9 + NSFS_INDEX_PATH]
+0x0000424C       BL strcmp
+0x00004254       CMP R1 1
+0x00004258       BEQ nsfs_lookup_found
+
+0x00004260       ADD R9 R9 NSFS_INDEX_ENTRY_SIZEOF
+0x00004264       SUB R10 R10 1
+0x00004268       B nsfs_lookup_loop
+
+nsfs_lookup_found:
+0x00004270       BL nsfs_node_alloc
+0x00004278       CMP R1 0
+0x0000427C       BEQ nsfs_lookup_fail
+0x00004284       MOV R11 R1                      ; nsfs node
+
+0x00004288       LI R1 NSFS_DEFAULT_NS
+0x00004290       STW R1 [R11 + NSFS_NODE_NAMESPACE]
+0x00004294       LDW R1 [R9 + NSFS_INDEX_PATH]
+0x00004298       STW R1 [R11 + NSFS_NODE_PATH]
+0x0000429C       LDW R1 [R9 + NSFS_INDEX_TYPE]
+0x000042A0       CMP R1 NSFS_TYPE_DIR
+0x000042A4       BEQ nsfs_lookup_type_dir
+0x000042AC       LI R12 INODE_REG
+0x000042B4       B nsfs_lookup_type_done
+nsfs_lookup_type_dir:
+0x000042BC       LI R12 INODE_DIR
+nsfs_lookup_type_done:
+0x000042C4       STW R12 [R11 + NSFS_NODE_TYPE]
+0x000042C8       LDW R5 [R9 + NSFS_INDEX_SIZE]
+0x000042CC       STW R5 [R11 + NSFS_NODE_SIZE]
+0x000042D0       LI R1 0
+0x000042D8       STW R1 [R11 + NSFS_NODE_FLAGS]
+
+0x000042DC       BL inode_alloc
+0x000042E4       CMP R1 0
+0x000042E8       BEQ nsfs_lookup_free_node
+
+0x000042F0       MOV R10 R1                      ; inode
+0x000042F4       LI R2 nsfs_ops
+0x000042FC       MOV R3 R11
+0x00004300       MOV R4 R12
+    ; R5 already holds file size.
+0x00004304       BL inode_init
+0x0000430C       MOV R1 R10
+0x00004310       B nsfs_lookup_done
+
+nsfs_lookup_free_node:
+0x00004318       MOV R1 R11
+0x0000431C       BL nsfs_node_free
+
+nsfs_lookup_fail:
+0x00004324       LI R1 0
+
+nsfs_lookup_done:
+0x0000432C       POP R12
+0x00004330       POP R11
+0x00004334       POP R10
+0x00004338       POP R9
+0x0000433C       POP R8
+0x00004340       POP LR
+0x00004344       RET
 
 ; nsfs_open
 ; in:  R1 = file ptr
 ; out: R1 = 0
 nsfs_open:
-0x00004090       LI R1 0
-0x00004098       RET
+0x00004348       LI R1 0
+0x00004350       RET
 
 ; nsfs_close
 ; in:  R1 = file ptr
 ; out: R1 = 0
 nsfs_close:
-0x0000409C       LI R1 0
-0x000040A4       RET
+0x00004354       LI R1 0
+0x0000435C       RET
 
 ; nsfs_read
 ; in:  R1 = file ptr, R2 = user buffer, R3 = length
 ; out: R1 = bytes read or errno
 nsfs_read:
-0x000040A8       LI R1 ERR_NOENT
-0x000040B0       RET
+0x00004360       LI R1 ERR_NOENT
+0x00004368       RET
 
 ; nsfs_write
 ; in:  R1 = file ptr, R2 = user buffer, R3 = length
 ; out: R1 = bytes written or errno
 nsfs_write:
-0x000040B4       LI R1 ERR_NOENT
-0x000040BC       RET
+0x0000436C       LI R1 ERR_NOENT
+0x00004374       RET
 
 ; nsfs_readdir
 ; in:  R1 = file ptr, R2 = userspace dirent buffer
 ; out: R1 = 1 entry, 0 EOF, or errno
 nsfs_readdir:
-0x000040C0       LI R1 0
-0x000040C8       RET
+0x00004378       LI R1 0
+0x00004380       RET
 
 ; nsfs_create
 ; in:  R1 = pathname, R2 = mode/type flags
 ; out: R1 = 0 or errno
 nsfs_create:
     ; TODO: FILE_CREATE over BMI, then nsfs_lookup can materialize inode.
-0x000040CC       LI R1 ERR_NOENT
-0x000040D4       RET
+0x00004384       LI R1 ERR_NOENT
+0x0000438C       RET
 
 ; nsfs_unlink
 ; in:  R1 = pathname
 ; out: R1 = 0 or errno
 nsfs_unlink:
     ; TODO: FILE_DELETE over BMI and create whiteout when shadowing tarfs.
-0x000040D8       LI R1 ERR_NOENT
-0x000040E0       RET
+0x00004390       LI R1 ERR_NOENT
+0x00004398       RET
 
 ; nsfs_mkdir
 ; in:  R1 = pathname, R2 = mode
 ; out: R1 = 0 or errno
 nsfs_mkdir:
     ; TODO: DIR_CREATE over BMI.
-0x000040E4       LI R1 ERR_NOENT
-0x000040EC       RET
+0x0000439C       LI R1 ERR_NOENT
+0x000043A4       RET
 
 ; nsfs_rmdir
 ; in:  R1 = pathname
 ; out: R1 = 0 or errno
 nsfs_rmdir:
     ; TODO: DIR_DELETE over BMI.
-0x000040F0       LI R1 ERR_NOENT
-0x000040F8       RET
+0x000043A8       LI R1 ERR_NOENT
+0x000043B0       RET
 
 ;====================================================================
 ; lookup_device in device_table - obsolete replaced by devfs_lookup
@@ -2624,44 +2823,44 @@ nsfs_rmdir:
 ;====================================================================
 lookup_device:
 
-0x000040FC       PUSH LR
+0x000043B4       PUSH LR
 
-0x00004100       MOV R8 R1                  ; save pathname ptr
+0x000043B8       MOV R8 R1                  ; save pathname ptr
 
-0x00004104       LI R7 device_table
-0x0000410C       LI R9 DEVICE_COUNT
+0x000043BC       LI R7 device_table
+0x000043C4       LI R9 DEVICE_COUNT
 
 lookup_loop:
-0x00004114       CMP R9 0
-0x00004118       BEQ lookup_fail
+0x000043CC       CMP R9 0
+0x000043D0       BEQ lookup_fail
 
     ; compare pathname with device name
 
-0x00004120       MOV R1 R8
-0x00004124       LDW R2 [R7 + DEV_NAME]
+0x000043D8       MOV R1 R8
+0x000043DC       LDW R2 [R7 + DEV_NAME]
 
-0x00004128       BL strcmp
+0x000043E0       BL strcmp
 
-0x00004130       CMP R1 1
-0x00004134       BEQ lookup_found
+0x000043E8       CMP R1 1
+0x000043EC       BEQ lookup_found
 
-0x0000413C       ADD R7 R7 DEV_SIZE
-0x00004140       SUB R9 R9 1
-0x00004144       B lookup_loop
+0x000043F4       ADD R7 R7 DEV_SIZE
+0x000043F8       SUB R9 R9 1
+0x000043FC       B lookup_loop
 
 lookup_found:
 
-0x0000414C       MOV R1 R7                  ; return device descriptor ptr
+0x00004404       MOV R1 R7                  ; return device descriptor ptr
 
-0x00004150       POP LR
-0x00004154       RET
+0x00004408       POP LR
+0x0000440C       RET
 
 lookup_fail:
 
-0x00004158       LI R1 0
+0x00004410       LI R1 0
 
-0x00004160       POP LR
-0x00004164       RET
+0x00004418       POP LR
+0x0000441C       RET
 
 ;================
 ; string helpers lib
@@ -2678,26 +2877,26 @@ lookup_fail:
 strcmp:
 
 str_loop:
-0x00004168       LDB R3 [R1]
-0x0000416C       LDB R4 [R2]
+0x00004420       LDB R3 [R1]
+0x00004424       LDB R4 [R2]
 
-0x00004170       CMP R3 R4
-0x00004174       BNE str_not_equal
+0x00004428       CMP R3 R4
+0x0000442C       BNE str_not_equal
 
-0x0000417C       CMP R3 0
-0x00004180       BEQ str_equal
+0x00004434       CMP R3 0
+0x00004438       BEQ str_equal
 
-0x00004188       ADD R1 R1 1
-0x0000418C       ADD R2 R2 1
-0x00004190       B str_loop
+0x00004440       ADD R1 R1 1
+0x00004444       ADD R2 R2 1
+0x00004448       B str_loop
 
 str_equal:
-0x00004198       LI R1 1
-0x000041A0       RET
+0x00004450       LI R1 1
+0x00004458       RET
 
 str_not_equal:
-0x000041A4       LI R1 0
-0x000041AC       RET
+0x0000445C       LI R1 0
+0x00004464       RET
 
 ; --------------------------------------------------
 ; str_prefix
@@ -2715,31 +2914,31 @@ str_not_equal:
 ; --------------------------------------------------
 
 str_prefix:
-0x000041B0       PUSH R3
-0x000041B4       PUSH R4
+0x00004468       PUSH R3
+0x0000446C       PUSH R4
     ;assume match ! unless first unequal
 sp_loop:
-0x000041B8       LDB R3 [R2]            ; prefix char
-0x000041BC       CMP R3 0
-0x000041C0       BEQ sp_match           ; reached end of prefix?
+0x00004470       LDB R3 [R2]            ; prefix char
+0x00004474       CMP R3 0
+0x00004478       BEQ sp_match           ; reached end of prefix?
 
-0x000041C8       LDB R4 [R1]            ; string char
-0x000041CC       CMP R4 R3
-0x000041D0       BNE sp_nomatch
+0x00004480       LDB R4 [R1]            ; string char
+0x00004484       CMP R4 R3
+0x00004488       BNE sp_nomatch
 
-0x000041D8       ADD R1 R1 1
-0x000041DC       ADD R2 R2 1
-0x000041E0       B sp_loop
+0x00004490       ADD R1 R1 1
+0x00004494       ADD R2 R2 1
+0x00004498       B sp_loop
 sp_match:
-0x000041E8       LI R1 1                 ;prefix ok
-0x000041F0       POP R4
-0x000041F4       POP R3
-0x000041F8       RET
+0x000044A0       LI R1 1                 ;prefix ok
+0x000044A8       POP R4
+0x000044AC       POP R3
+0x000044B0       RET
 sp_nomatch:
-0x000041FC       LI R1 0                 ; not ok
-0x00004204       POP R4
-0x00004208       POP R3
-0x0000420C       RET
+0x000044B4       LI R1 0                 ; not ok
+0x000044BC       POP R4
+0x000044C0       POP R3
+0x000044C4       RET
 
 ; --------------------------------------------------
 ; skip_prefix
@@ -2753,30 +2952,30 @@ sp_nomatch:
 ; --------------------------------------------------
 
 skip_prefix:
-0x00004210       PUSH R3
-0x00004214       PUSH R4
+0x000044C8       PUSH R3
+0x000044CC       PUSH R4
 sk_loop:
-0x00004218       LDB R3 [R2]            ; prefix char
-0x0000421C       CMP R3 0
-0x00004220       BEQ sk_match           ; reached end of prefix
-0x00004228       LDB R4 [R1]            ; string char
-0x0000422C       CMP R4 R3
-0x00004230       BNE sk_nomatch
-0x00004238       ADD R1 R1 1
-0x0000423C       ADD R2 R2 1
-0x00004240       B sk_loop
+0x000044D0       LDB R3 [R2]            ; prefix char
+0x000044D4       CMP R3 0
+0x000044D8       BEQ sk_match           ; reached end of prefix
+0x000044E0       LDB R4 [R1]            ; string char
+0x000044E4       CMP R4 R3
+0x000044E8       BNE sk_nomatch
+0x000044F0       ADD R1 R1 1
+0x000044F4       ADD R2 R2 1
+0x000044F8       B sk_loop
 
 sk_match:
     ; R1 already points past prefix
-0x00004248       POP R4
-0x0000424C       POP R3
-0x00004250       RET
+0x00004500       POP R4
+0x00004504       POP R3
+0x00004508       RET
 
 sk_nomatch:
-0x00004254       LI R1 0                 ; no prefix/or prefix not matching with that in src string
-0x0000425C       POP R4
-0x00004260       POP R3
-0x00004264       RET
+0x0000450C       LI R1 0                 ; no prefix/or prefix not matching with that in src string
+0x00004514       POP R4
+0x00004518       POP R3
+0x0000451C       RET
 
 ; --------------------------------------------------
 ; path_component_len
@@ -2789,24 +2988,24 @@ sk_nomatch:
 ; --------------------------------------------------
 
 path_component_len:
-0x00004268       PUSH R2
-0x0000426C       PUSH R3
-0x00004270       LI R2 0                ; length
+0x00004520       PUSH R2
+0x00004524       PUSH R3
+0x00004528       LI R2 0                ; length
 pcl_loop:
-0x00004278       LDB R3 [R1]
-0x0000427C       CMP R3 0
-0x00004280       BEQ pcl_done
-0x00004288       LI R4 47               ; '/'
-0x00004290       CMP R3 R4
-0x00004294       BEQ pcl_done
-0x0000429C       ADD R2 R2 1
-0x000042A0       ADD R1 R1 1
-0x000042A4       B pcl_loop
+0x00004530       LDB R3 [R1]
+0x00004534       CMP R3 0
+0x00004538       BEQ pcl_done
+0x00004540       LI R4 47               ; '/'
+0x00004548       CMP R3 R4
+0x0000454C       BEQ pcl_done
+0x00004554       ADD R2 R2 1
+0x00004558       ADD R1 R1 1
+0x0000455C       B pcl_loop
 pcl_done:
-0x000042AC       MOV R1 R2
-0x000042B0       POP R3
-0x000042B4       POP R2
-0x000042B8       RET
+0x00004564       MOV R1 R2
+0x00004568       POP R3
+0x0000456C       POP R2
+0x00004570       RET
 
 ;====================================================================
 ; file_init using inode
@@ -2817,16 +3016,16 @@ pcl_done:
 ;====================================================================
 file_init:
     ; file->inode = inode
-0x000042BC       STW R2 [R1 + FILE_INODE]
+0x00004574       STW R2 [R1 + FILE_INODE]
     ; file->offset = 0
-0x000042C0       LI R4 0
-0x000042C8       STW R4 [R1 + FILE_OFFSET]
+0x00004578       LI R4 0
+0x00004580       STW R4 [R1 + FILE_OFFSET]
     ; file->flags = O_RDONLY etc
-0x000042CC       STW R3 [R1 + FILE_FLAGS]
+0x00004584       STW R3 [R1 + FILE_FLAGS]
      ; file->refcnt = 1
-0x000042D0       LI R4 1
-0x000042D8       STW R4 [R1 + FILE_REFCNT]
-0x000042DC       RET
+0x00004588       LI R4 1
+0x00004590       STW R4 [R1 + FILE_REFCNT]
+0x00004594       RET
 
 ;====================================================================
 ; fd_alloc - set initialised file to process fd_table (dynamic space )
@@ -2837,61 +3036,61 @@ file_init:
 
 fd_alloc:
 
-0x000042E0       MOV R8 R1                  ; save file pointer
+0x00004598       MOV R8 R1                  ; save file pointer
 
 ; macro: GET_CURR_TASK_IDX R4
-0x000042E4   LI R1 CURRENT_TASK
-0x000042EC   LDW R4 [R1]
+0x0000459C   LI R1 CURRENT_TASK
+0x000045A4   LDW R4 [R1]
 ; macro: GET_TASK_PTR R4, R4
-0x000042F0   LI R1 TASK_SIZE
-0x000042F8   MUL R3 R4 R1
-0x000042FC   LI R4 tasks
-0x00004304   ADD R4 R4 R3
+0x000045A8   LI R1 TASK_SIZE
+0x000045B0   MUL R3 R4 R1
+0x000045B4   LI R4 tasks
+0x000045BC   ADD R4 R4 R3
 ; macro: TASK_GET_FD_TABLE R4, R4   ; R4 = fd table ptr
-0x00004308   LDW R4 [R4 + TASK_FD_TABLE]
+0x000045C0   LDW R4 [R4 + TASK_FD_TABLE]
 
-0x0000430C       LI R5 3                    ; start after stdin/out/err dynamic space
+0x000045C4       LI R5 3                    ; start after stdin/out/err dynamic space
 
 fd_alloc_loop:
 
-0x00004314       CMP R5 MAX_FDS
-0x00004318       BGE fd_alloc_fail
+0x000045CC       CMP R5 MAX_FDS
+0x000045D0       BGE fd_alloc_fail
 
-0x00004320       SHL R6 R5 2                ; fd * 4
-0x00004324       ADD R7 R4 R6               ; &fd_table[fd]
+0x000045D8       SHL R6 R5 2                ; fd * 4
+0x000045DC       ADD R7 R4 R6               ; &fd_table[fd]
 
-0x00004328       LDW R2 [R7]
-0x0000432C       CMP R2 0                   ; 0 - empty
-0x00004330       BEQ fd_alloc_found
+0x000045E0       LDW R2 [R7]
+0x000045E4       CMP R2 0                   ; 0 - empty
+0x000045E8       BEQ fd_alloc_found
 
-0x00004338       ADD R5 R5 1
-0x0000433C       B fd_alloc_loop
+0x000045F0       ADD R5 R5 1
+0x000045F4       B fd_alloc_loop
 
 fd_alloc_found:
 
-0x00004344       STW R8 [R7]                ; fd_table[fd] = file*
+0x000045FC       STW R8 [R7]                ; fd_table[fd] = file*
 
-0x00004348       MOV R1 R5                  ; return fd
-0x0000434C       RET
+0x00004600       MOV R1 R5                  ; return fd
+0x00004604       RET
 
 fd_alloc_fail:
 
-0x00004350       LI R1 ERR_MFILE
-0x00004358       RET
+0x00004608       LI R1 ERR_MFILE
+0x00004610       RET
 
 syscall_close:
     ;================================================================
     ; in R1 = fd
     ; out R1 = 0 / err -1
     ;================================================================
-0x0000435C       LDW R1 [SP + TF_R1]
+0x00004614       LDW R1 [SP + TF_R1]
 
-0x00004360       BL vfs_close
+0x00004618       BL vfs_close
 
-0x00004368       LI R1 0
-0x00004370       STW R1 [SP + TF_R1]
+0x00004620       LI R1 0
+0x00004628       STW R1 [SP + TF_R1]
 
-0x00004374       B trap_restore
+0x0000462C       B trap_restore
 
 syscall_pipe:
     ;================================================================
@@ -2902,207 +3101,207 @@ syscall_pipe:
     ;================================================================
 
     ; user int fd[2]
-0x0000437C       LDW R7 [SP + TF_R1]
+0x00004634       LDW R7 [SP + TF_R1]
 
-0x00004380       BL pipe_alloc       ;create new pipe object in pipe_pool
-0x00004388       CMP R1 0
-0x0000438C       BEQ pipe_fail_nospc
+0x00004638       BL pipe_alloc       ;create new pipe object in pipe_pool
+0x00004640       CMP R1 0
+0x00004644       BEQ pipe_fail_nospc
 
-0x00004394       MOV R8 R1            ; new slot in pipe_pool ( pipe* )
+0x0000464C       MOV R8 R1            ; new slot in pipe_pool ( pipe* )
     ; [0] read end          write[1]>--pipe--->read[0]
-0x00004398       BL file_alloc        ; R1 - created read file ptr for read end
-0x000043A0       CMP R1 0
-0x000043A4       BEQ pipe_fail_read_fd
+0x00004650       BL file_alloc        ; R1 - created read file ptr for read end
+0x00004658       CMP R1 0
+0x0000465C       BEQ pipe_fail_read_fd
 
-0x000043AC       MOV R9 R1           ; new file for read end  in file_pool
-0x000043B0       BL inode_alloc      ; get inode for this end file
-0x000043B8       CMP R1 0
-0x000043BC       BEQ pipe_fail_ia_read_fd
-0x000043C4       MOV R10 R1
+0x00004664       MOV R9 R1           ; new file for read end  in file_pool
+0x00004668       BL inode_alloc      ; get inode for this end file
+0x00004670       CMP R1 0
+0x00004674       BEQ pipe_fail_ia_read_fd
+0x0000467C       MOV R10 R1
 
-0x000043C8       LI  R2 pipe_ops         ; pipe_ops table
-0x000043D0       MOV R3 R8               ; store our slot pipe*
-0x000043D4       LI  R4 INODE_PIPE       ; inode type PIPE
-0x000043DC       LI  R5 0                ; size =0
-0x000043E4       BL inode_init           ; make inode for read end
+0x00004680       LI  R2 pipe_ops         ; pipe_ops table
+0x00004688       MOV R3 R8               ; store our slot pipe*
+0x0000468C       LI  R4 INODE_PIPE       ; inode type PIPE
+0x00004694       LI  R5 0                ; size =0
+0x0000469C       BL inode_init           ; make inode for read end
 
     ; initialize file object ;read end file
-0x000043EC       MOV R1 R9                ; R1 file*
-0x000043F0       MOV R2 R10               ; inode*
-0x000043F4       LI R3  FD_FLAG_READ      ; flags READ end
-0x000043FC       BL file_init
+0x000046A4       MOV R1 R9                ; R1 file*
+0x000046A8       MOV R2 R10               ; inode*
+0x000046AC       LI R3  FD_FLAG_READ      ; flags READ end
+0x000046B4       BL file_init
 
-0x00004404       MOV R1 R9
-0x00004408       BL fd_alloc                 ; insert read file to fd_table of user process
+0x000046BC       MOV R1 R9
+0x000046C0       BL fd_alloc                 ; insert read file to fd_table of user process
 
-0x00004410       LI R2 ERR_MFILE             ; check if fd_alloc problem
-0x00004418       CMP R1 R2
-0x0000441C       BEQ pipe_fail_read_file
+0x000046C8       LI R2 ERR_MFILE             ; check if fd_alloc problem
+0x000046D0       CMP R1 R2
+0x000046D4       BEQ pipe_fail_read_file
 
-0x00004424       MOV R12 R1           ; get file read fd created to R10
+0x000046DC       MOV R12 R1           ; get file read fd created to R10
 
     ; same for write end
-0x00004428       BL file_alloc
-0x00004430       CMP R1 0
-0x00004434       BEQ pipe_fail_ia_write_fd
-0x0000443C       MOV R9 R1
+0x000046E0       BL file_alloc
+0x000046E8       CMP R1 0
+0x000046EC       BEQ pipe_fail_ia_write_fd
+0x000046F4       MOV R9 R1
 
-0x00004440       BL inode_alloc      ; get inode for this end file
-0x00004448       CMP R1 0
-0x0000444C       BEQ pipe_fail_ia_write_fd
-0x00004454       MOV R10 R1
+0x000046F8       BL inode_alloc      ; get inode for this end file
+0x00004700       CMP R1 0
+0x00004704       BEQ pipe_fail_ia_write_fd
+0x0000470C       MOV R10 R1
 
-0x00004458       LI  R2 pipe_ops         ; pipe_ops table
-0x00004460       MOV R3 R8               ; store our slot pipe* need to check if this is ok here (might be changed)
-0x00004464       LI  R4 INODE_PIPE       ; inode type PIPE
-0x0000446C       LI  R5 0                ; size =0
-0x00004474       BL inode_init           ; make inode for write end
+0x00004710       LI  R2 pipe_ops         ; pipe_ops table
+0x00004718       MOV R3 R8               ; store our slot pipe* need to check if this is ok here (might be changed)
+0x0000471C       LI  R4 INODE_PIPE       ; inode type PIPE
+0x00004724       LI  R5 0                ; size =0
+0x0000472C       BL inode_init           ; make inode for write end
 
     ; initialize file object ;write end file
-0x0000447C       MOV R1 R9                ; R1 file*
-0x00004480       MOV R2 R10               ; inode*
-0x00004484       LI  R3 FD_FLAG_WRITE     ; flags WRITE end
-0x0000448C       BL file_init
+0x00004734       MOV R1 R9                ; R1 file*
+0x00004738       MOV R2 R10               ; inode*
+0x0000473C       LI  R3 FD_FLAG_WRITE     ; flags WRITE end
+0x00004744       BL file_init
 
-0x00004494       MOV R1 R9
-0x00004498       BL  fd_alloc
+0x0000474C       MOV R1 R9
+0x00004750       BL  fd_alloc
 
-0x000044A0       LI  R2 ERR_MFILE         ; check if fd_alloc problem
-0x000044A8       CMP R1 R2
-0x000044AC       BEQ pipe_fail_write_file
+0x00004758       LI  R2 ERR_MFILE         ; check if fd_alloc problem
+0x00004760       CMP R1 R2
+0x00004764       BEQ pipe_fail_write_file
 
-0x000044B4       MOV R11 R1           ; R11 is write and fd R12 is read fd
+0x0000476C       MOV R11 R1           ; R11 is write and fd R12 is read fd
 
-0x000044B8       MOV R1 R7    ; in &fd[2]. not sure if R7 still has value for this ptr
-0x000044BC       LI  R2 8     ; len 2 words (8 bytes)
-0x000044C4       LI  R3 1     ; mem perm to write cond
-0x000044CC       BL  user_buffer_valid_range
-0x000044D4       CMP R1 1
-0x000044D8       BNE pipe_fail_both_fds
+0x00004770       MOV R1 R7    ; in &fd[2]. not sure if R7 still has value for this ptr
+0x00004774       LI  R2 8     ; len 2 words (8 bytes)
+0x0000477C       LI  R3 1     ; mem perm to write cond
+0x00004784       BL  user_buffer_valid_range
+0x0000478C       CMP R1 1
+0x00004790       BNE pipe_fail_both_fds
 
-0x000044E0       STW R12 [R7]     ;fill fd user array of read and write ends fd[0]-rd fd[1]-wr
-0x000044E4       STW R11 [R7 + 4]
+0x00004798       STW R12 [R7]     ;fill fd user array of read and write ends fd[0]-rd fd[1]-wr
+0x0000479C       STW R11 [R7 + 4]
 
-0x000044E8       LI R1 0
-0x000044F0       STW R1 [SP + TF_R1]
+0x000047A0       LI R1 0
+0x000047A8       STW R1 [SP + TF_R1]
 
-0x000044F4       B trap_restore
+0x000047AC       B trap_restore
 
 pipe_fail:
-0x000044FC       LI R1 ERR_IO
-0x00004504       STW R1 [SP + TF_R1]
+0x000047B4       LI R1 ERR_IO
+0x000047BC       STW R1 [SP + TF_R1]
 
-0x00004508       B trap_restore
+0x000047C0       B trap_restore
 
 pipe_fail_both_fds:
-0x00004510       MOV R12 R8
-0x00004514       MOV R1 R11
-0x00004518       BL fd_remove
-0x00004520       CMP R1 0
-0x00004524       BEQ pipe_fail_both_fds_read
-0x0000452C       BL file_free
+0x000047C8       MOV R12 R8
+0x000047CC       MOV R1 R11
+0x000047D0       BL fd_remove
+0x000047D8       CMP R1 0
+0x000047DC       BEQ pipe_fail_both_fds_read
+0x000047E4       BL file_free
 
 pipe_fail_both_fds_read:
-0x00004534       MOV R1 R10
-0x00004538       BL fd_remove
-0x00004540       CMP R1 0
-0x00004544       BEQ pipe_fail_free_pipe_fault
-0x0000454C       BL file_free
+0x000047EC       MOV R1 R10
+0x000047F0       BL fd_remove
+0x000047F8       CMP R1 0
+0x000047FC       BEQ pipe_fail_free_pipe_fault
+0x00004804       BL file_free
 
 pipe_fail_free_pipe_fault:
-0x00004554       MOV R1 R12
-0x00004558       BL pipe_free
-0x00004560       LI R1 ERR_FAULT
-0x00004568       STW R1 [SP + TF_R1]
+0x0000480C       MOV R1 R12
+0x00004810       BL pipe_free
+0x00004818       LI R1 ERR_FAULT
+0x00004820       STW R1 [SP + TF_R1]
 
-0x0000456C       B trap_restore
+0x00004824       B trap_restore
 
 pipe_fail_write_file:
-0x00004574       MOV R12 R8
-0x00004578       MOV R1 R9
-0x0000457C       BL file_free
-0x00004584       MOV R1 R10
-0x00004588       BL fd_remove
-0x00004590       CMP R1 0
-0x00004594       BEQ pipe_fail_free_pipe_mfile
-0x0000459C       BL file_free
+0x0000482C       MOV R12 R8
+0x00004830       MOV R1 R9
+0x00004834       BL file_free
+0x0000483C       MOV R1 R10
+0x00004840       BL fd_remove
+0x00004848       CMP R1 0
+0x0000484C       BEQ pipe_fail_free_pipe_mfile
+0x00004854       BL file_free
 
 pipe_fail_free_pipe_mfile:
-0x000045A4       MOV R1 R12
-0x000045A8       BL pipe_free
-0x000045B0       LI R1 ERR_MFILE
-0x000045B8       STW R1 [SP + TF_R1]
+0x0000485C       MOV R1 R12
+0x00004860       BL pipe_free
+0x00004868       LI R1 ERR_MFILE
+0x00004870       STW R1 [SP + TF_R1]
 
-0x000045BC       B trap_restore
+0x00004874       B trap_restore
 
 pipe_fail_read_fd:
-0x000045C4       MOV R12 R8
-0x000045C8       MOV R1 R10
-0x000045CC       BL fd_remove
-0x000045D4       CMP R1 0
-0x000045D8       BEQ pipe_fail_free_pipe_nfile
-0x000045E0       BL file_free
+0x0000487C       MOV R12 R8
+0x00004880       MOV R1 R10
+0x00004884       BL fd_remove
+0x0000488C       CMP R1 0
+0x00004890       BEQ pipe_fail_free_pipe_nfile
+0x00004898       BL file_free
 
 pipe_fail_free_pipe_nfile:
-0x000045E8       MOV R1 R12
-0x000045EC       BL pipe_free
-0x000045F4       LI R1 ERR_NFILE
-0x000045FC       STW R1 [SP + TF_R1]
+0x000048A0       MOV R1 R12
+0x000048A4       BL pipe_free
+0x000048AC       LI R1 ERR_NFILE
+0x000048B4       STW R1 [SP + TF_R1]
 
-0x00004600       B trap_restore
+0x000048B8       B trap_restore
 
 pipe_fail_read_file:
-0x00004608       MOV R12 R8
-0x0000460C       MOV R1 R9
-0x00004610       BL file_free
-0x00004618       MOV R1 R10          ; освободить inode read end
-0x0000461C       BL inode_free
-0x00004624       MOV R1 R12
-0x00004628       BL pipe_free
-0x00004630       LI R1 ERR_MFILE
-0x00004638       STW R1 [SP + TF_R1]
+0x000048C0       MOV R12 R8
+0x000048C4       MOV R1 R9
+0x000048C8       BL file_free
+0x000048D0       MOV R1 R10          ; освободить inode read end
+0x000048D4       BL inode_free
+0x000048DC       MOV R1 R12
+0x000048E0       BL pipe_free
+0x000048E8       LI R1 ERR_MFILE
+0x000048F0       STW R1 [SP + TF_R1]
 
-0x0000463C       B trap_restore
+0x000048F4       B trap_restore
 
 pipe_fail_pipe_only:
-0x00004644       MOV R1 R8
-0x00004648       BL pipe_free
-0x00004650       LI R1 ERR_NFILE
-0x00004658       STW R1 [SP + TF_R1]
+0x000048FC       MOV R1 R8
+0x00004900       BL pipe_free
+0x00004908       LI R1 ERR_NFILE
+0x00004910       STW R1 [SP + TF_R1]
 
-0x0000465C       B trap_restore
+0x00004914       B trap_restore
 
 pipe_fail_nospc:
-0x00004664       LI R1 ERR_NOSPC
-0x0000466C       STW R1 [SP + TF_R1]
+0x0000491C       LI R1 ERR_NOSPC
+0x00004924       STW R1 [SP + TF_R1]
 
-0x00004670       B trap_restore
+0x00004928       B trap_restore
 
 pipe_fail_ia_read_fd:
     ; Ошибка при создании inode для read end
-0x00004678       MOV R1 R9          ; освобождаем file (read end)
-0x0000467C       BL  file_free
-0x00004684       MOV R1 R8          ; освобождаем pipe
-0x00004688       BL  pipe_free
-0x00004690       LI R1 ERR_NFILE    ; или ERR_NOMEM - смотрите ваши коды ошибок
-0x00004698       STW R1 [SP + TF_R1]
-0x0000469C       B trap_restore
+0x00004930       MOV R1 R9          ; освобождаем file (read end)
+0x00004934       BL  file_free
+0x0000493C       MOV R1 R8          ; освобождаем pipe
+0x00004940       BL  pipe_free
+0x00004948       LI R1 ERR_NFILE    ; или ERR_NOMEM - смотрите ваши коды ошибок
+0x00004950       STW R1 [SP + TF_R1]
+0x00004954       B trap_restore
 
 pipe_fail_ia_write_fd:
     ; Ошибка при создании inode для write end
-0x000046A4       MOV R1 R12         ; освобождаем read fd (если уже создан)
-0x000046A8       BL fd_remove
-0x000046B0       CMP R1 0
-0x000046B4       BEQ skip_file_free_read
-0x000046BC       BL file_free
+0x0000495C       MOV R1 R12         ; освобождаем read fd (если уже создан)
+0x00004960       BL fd_remove
+0x00004968       CMP R1 0
+0x0000496C       BEQ skip_file_free_read
+0x00004974       BL file_free
 skip_file_free_read:
-0x000046C4       MOV R1 R9          ; освобождаем file (write end)
-0x000046C8       BL file_free
-0x000046D0       MOV R1 R8          ; освобождаем pipe
-0x000046D4       BL pipe_free
-0x000046DC       LI R1 ERR_NFILE
-0x000046E4       STW R1 [SP + TF_R1]
-0x000046E8       B trap_restore
+0x0000497C       MOV R1 R9          ; освобождаем file (write end)
+0x00004980       BL file_free
+0x00004988       MOV R1 R8          ; освобождаем pipe
+0x0000498C       BL pipe_free
+0x00004994       LI R1 ERR_NFILE
+0x0000499C       STW R1 [SP + TF_R1]
+0x000049A0       B trap_restore
 
 ;===========================================================
 ; syscall_dup - make another fd for FILE increase refcnt
@@ -3116,40 +3315,40 @@ skip_file_free_read:
 
 syscall_dup:
 
-0x000046F0       LDW R1 [SP + TF_R1]     ; argument fd
+0x000049A8       LDW R1 [SP + TF_R1]     ; argument fd
 
-0x000046F4       BL fd_lookup            ; lookup FILE*
-0x000046FC       CMP R1 0
-0x00004700       BEQ dup_badfd
-0x00004708       MOV R8 R1               ; keep FILE*
+0x000049AC       BL fd_lookup            ; lookup FILE*
+0x000049B4       CMP R1 0
+0x000049B8       BEQ dup_badfd
+0x000049C0       MOV R8 R1               ; keep FILE*
 
-0x0000470C       BL file_get             ; FILE.ref++
+0x000049C4       BL file_get             ; FILE.ref++
 
-0x00004714       MOV R1 R8
-0x00004718       BL fd_alloc             ; try to allocate new fd
+0x000049CC       MOV R1 R8
+0x000049D0       BL fd_alloc             ; try to allocate new fd
 
-0x00004720       LI R2 ERR_MFILE
-0x00004728       CMP R1 R2
-0x0000472C       BEQ dup_fail_fd
+0x000049D8       LI R2 ERR_MFILE
+0x000049E0       CMP R1 R2
+0x000049E4       BEQ dup_fail_fd
 
-0x00004734       STW R1 [SP + TF_R1] ;R1 - new fd
-0x00004738       B trap_restore
+0x000049EC       STW R1 [SP + TF_R1] ;R1 - new fd
+0x000049F0       B trap_restore
 
 dup_fail_fd:
 
-0x00004740       MOV R1 R8
-0x00004744       BL file_put
+0x000049F8       MOV R1 R8
+0x000049FC       BL file_put
 
-0x0000474C       LI R1 ERR_MFILE     ;R1 -err + rollback
-0x00004754       STW R1 [SP + TF_R1]
-0x00004758       B trap_restore
+0x00004A04       LI R1 ERR_MFILE     ;R1 -err + rollback
+0x00004A0C       STW R1 [SP + TF_R1]
+0x00004A10       B trap_restore
 
 dup_badfd:
 
-0x00004760       LI R1 ERR_BADF      ;R1 -err + file not found
-0x00004768       STW R1 [SP + TF_R1]
+0x00004A18       LI R1 ERR_BADF      ;R1 -err + file not found
+0x00004A20       STW R1 [SP + TF_R1]
 
-0x0000476C       B trap_restore
+0x00004A24       B trap_restore
 
 ;===============================================================
 ; syscall_gettime
@@ -3167,72 +3366,72 @@ syscall_gettime:
     ; Get user pointer
     ;----------------------------------------------------------
 
-0x00004774       LDW R8 [SP + TF_R1]         ; user pointer to struct timeval
+0x00004A2C       LDW R8 [SP + TF_R1]         ; user pointer to struct timeval
 
     ;----------------------------------------------------------
     ; Validate destination buffer
     ;----------------------------------------------------------
 
-0x00004778       MOV R1 R8
-0x0000477C       LI  R2 TIMEVAL_SIZE
-0x00004784       LI  R3 1                   ; write access
-0x0000478C       BL  user_buffer_valid_range
+0x00004A30       MOV R1 R8
+0x00004A34       LI  R2 TIMEVAL_SIZE
+0x00004A3C       LI  R3 1                   ; write access
+0x00004A44       BL  user_buffer_valid_range
 
-0x00004794       CMP R1 1
-0x00004798       BNE gettime_badptr
+0x00004A4C       CMP R1 1
+0x00004A50       BNE gettime_badptr
 
     ;----------------------------------------------------------
     ; Get current kernel time
     ;----------------------------------------------------------
 
-0x000047A0       BL clock_gettime           ;out: R1=sec, R2=usec
+0x00004A58       BL clock_gettime           ;out: R1=sec, R2=usec
 
     ;----------------------------------------------------------
     ; Build timeval in kernel buffer
     ;----------------------------------------------------------
 
 ; macro: GET_CURR_TASK_IDX R4
-0x000047A8   LI R1 CURRENT_TASK
-0x000047B0   LDW R4 [R1]
+0x00004A60   LI R1 CURRENT_TASK
+0x00004A68   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x000047B4   LI R1 TASK_SIZE
-0x000047BC   MUL R3 R4 R1
-0x000047C0   LI R5 tasks
-0x000047C8   ADD R5 R5 R3
+0x00004A6C   LI R1 TASK_SIZE
+0x00004A74   MUL R3 R4 R1
+0x00004A78   LI R5 tasks
+0x00004A80   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_WR R6, R5   ; R6 ptr kbuf_wr
-0x000047CC   LDW R6 [R5 + TASK_KBUF_WR_PTR]
+0x00004A84   LDW R6 [R5 + TASK_KBUF_WR_PTR]
 
-0x000047D0       STW R1 [R6 + TIMEVAL_SEC]
-0x000047D4       STW R2 [R6 + TIMEVAL_USEC]
+0x00004A88       STW R1 [R6 + TIMEVAL_SEC]
+0x00004A8C       STW R2 [R6 + TIMEVAL_USEC]
 
     ;----------------------------------------------------------
     ; Copy to user
     ;----------------------------------------------------------
 
-0x000047D8       MOV R1 R8                  ; user destination
-0x000047DC       LI  R2 TIMEVAL_SIZE        ; size in bytes (8)
-0x000047E4       MOV R4 R6                  ; kernel source
+0x00004A90       MOV R1 R8                  ; user destination
+0x00004A94       LI  R2 TIMEVAL_SIZE        ; size in bytes (8)
+0x00004A9C       MOV R4 R6                  ; kernel source
 
-0x000047E8       BL copy_to_user
+0x00004AA0       BL copy_to_user
 
-0x000047F0       CMP R1 TIMEVAL_SIZE
-0x000047F4       BNE gettime_badptr
+0x00004AA8       CMP R1 TIMEVAL_SIZE
+0x00004AAC       BNE gettime_badptr
 
     ;----------------------------------------------------------
     ; Success
     ;----------------------------------------------------------
 
-0x000047FC       LI R1 0
-0x00004804       STW R1 [SP + TF_R1]
+0x00004AB4       LI R1 0
+0x00004ABC       STW R1 [SP + TF_R1]
 
-0x00004808       B trap_restore
+0x00004AC0       B trap_restore
 
 gettime_badptr:
 
-0x00004810       LI R1 ERR_FAULT
-0x00004818       STW R1 [SP + TF_R1]
+0x00004AC8       LI R1 ERR_FAULT
+0x00004AD0       STW R1 [SP + TF_R1]
 
-0x0000481C       B trap_restore
+0x00004AD4       B trap_restore
 
 ; ================================================================
 ; syscall_brk - Set program break
@@ -3244,43 +3443,43 @@ gettime_badptr:
 ; ================================================================
 
 syscall_brk:
-0x00004824       LDW R8 [SP + TF_R1]        ; R8 = new break address (user space VA)
+0x00004ADC       LDW R8 [SP + TF_R1]        ; R8 = new break address (user space VA)
 
     ; Validate the address is within the data page
-0x00004828       LI R2 HEAP_START
-0x00004830       CMP R8 R2
-0x00004834       BLT brk_invalid            ; if new break is below data page, return error
+0x00004AE0       LI R2 HEAP_START
+0x00004AE8       CMP R8 R2
+0x00004AEC       BLT brk_invalid            ; if new break is below data page, return error
 
-0x0000483C       LI R2 HEAP_END
-0x00004844       CMP R8 R2
-0x00004848       BGT brk_invalid            ; if new break is above last address in data page, return error
+0x00004AF4       LI R2 HEAP_END
+0x00004AFC       CMP R8 R2
+0x00004B00       BGT brk_invalid            ; if new break is above last address in data page, return error
 
     ; Get current task
 ; macro: GET_CURR_TASK_IDX R4
-0x00004850   LI R1 CURRENT_TASK
-0x00004858   LDW R4 [R1]
+0x00004B08   LI R1 CURRENT_TASK
+0x00004B10   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x0000485C   LI R1 TASK_SIZE
-0x00004864   MUL R3 R4 R1
-0x00004868   LI R5 tasks
-0x00004870   ADD R5 R5 R3
+0x00004B14   LI R1 TASK_SIZE
+0x00004B1C   MUL R3 R4 R1
+0x00004B20   LI R5 tasks
+0x00004B28   ADD R5 R5 R3
 
     ; Set new break in task struct
     ; (We'll add this field to TASK structure)
 ; macro: TASK_SET_BREAK R5, R8
-0x00004874   STW R8 [R5 + TASK_BREAK]
+0x00004B2C   STW R8 [R5 + TASK_BREAK]
 
     ; Return new break
-0x00004878       STW R8 [SP + TF_R1]
+0x00004B30       STW R8 [SP + TF_R1]
 
-0x0000487C       B trap_restore
+0x00004B34       B trap_restore
 
 brk_invalid:
     ; Return -1
-0x00004884       LI R1 ERR_FAULT
-0x0000488C       STW R1 [SP + TF_R1]
+0x00004B3C       LI R1 ERR_FAULT
+0x00004B44       STW R1 [SP + TF_R1]
 
-0x00004890       B trap_restore
+0x00004B48       B trap_restore
 
 ; ================================================================
 ; syscall_sbrk - Increment program break (set new break relative to current ie sbrk)
@@ -3292,48 +3491,48 @@ brk_invalid:
 ; ================================================================
 
 syscall_sbrk:
-0x00004898       LDW R8 [SP + TF_R1]        ; R8 = increment
+0x00004B50       LDW R8 [SP + TF_R1]        ; R8 = increment
 
     ; Get current task
 ; macro: GET_CURR_TASK_IDX R4
-0x0000489C   LI R1 CURRENT_TASK
-0x000048A4   LDW R4 [R1]
+0x00004B54   LI R1 CURRENT_TASK
+0x00004B5C   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x000048A8   LI R1 TASK_SIZE
-0x000048B0   MUL R3 R4 R1
-0x000048B4   LI R5 tasks
-0x000048BC   ADD R5 R5 R3
+0x00004B60   LI R1 TASK_SIZE
+0x00004B68   MUL R3 R4 R1
+0x00004B6C   LI R5 tasks
+0x00004B74   ADD R5 R5 R3
 
     ; Get current break
 ; macro: TASK_GET_BREAK R9, R5
-0x000048C0   LDW R9 [R5 + TASK_BREAK]
+0x00004B78   LDW R9 [R5 + TASK_BREAK]
 
     ; Calculate new break
-0x000048C4       ADD R10 R9 R8
+0x00004B7C       ADD R10 R9 R8
 
     ; Validate it's within the data page
-0x000048C8       LI R2 HEAP_START
-0x000048D0       CMP R10 R2
-0x000048D4       BLT sbrk_invalid
+0x00004B80       LI R2 HEAP_START
+0x00004B88       CMP R10 R2
+0x00004B8C       BLT sbrk_invalid
 
-0x000048DC       LI R2 HEAP_END
-0x000048E4       CMP R10 R2
-0x000048E8       BGT sbrk_invalid
+0x00004B94       LI R2 HEAP_END
+0x00004B9C       CMP R10 R2
+0x00004BA0       BGT sbrk_invalid
 
     ; Return old break
-0x000048F0       STW R9 [SP + TF_R1]     ; old break address
+0x00004BA8       STW R9 [SP + TF_R1]     ; old break address
 
     ; Update break
 ; macro: TASK_SET_BREAK R5, R10  ;R10 - updated break address
-0x000048F4   STW R10 [R5 + TASK_BREAK]
+0x00004BAC   STW R10 [R5 + TASK_BREAK]
 
-0x000048F8       B trap_restore
+0x00004BB0       B trap_restore
 
 sbrk_invalid:
     ; Return -1
-0x00004900       LI R1 ERR_FAULT
-0x00004908       STW R1 [SP + TF_R1]
-0x0000490C       B trap_restore
+0x00004BB8       LI R1 ERR_FAULT
+0x00004BC0       STW R1 [SP + TF_R1]
+0x00004BC4       B trap_restore
 
 ;===============================================================
 ; clock_gettime
@@ -3346,20 +3545,20 @@ sbrk_invalid:
 ;===============================================================
 clock_gettime:
 
-0x00004914       LI  R3 timer_ticks
-0x0000491C       LDW R4 [R3]                ; tick counter (1 ms per tick)
+0x00004BCC       LI  R3 timer_ticks
+0x00004BD4       LDW R4 [R3]                ; tick counter (1 ms per tick)
 
     ; seconds = ticks / 1000
-0x00004920       MOV R1 R4
-0x00004924       LI  R5 1000
-0x0000492C       DIV R1 R1 R5
+0x00004BD8       MOV R1 R4
+0x00004BDC       LI  R5 1000
+0x00004BE4       DIV R1 R1 R5
 
     ; usec = (ticks % 1000) * 1000
-0x00004930       MOD R4 R4 R5
-0x00004934       LI  R5 1000
-0x0000493C       MUL R2 R4 R5
+0x00004BE8       MOD R4 R4 R5
+0x00004BEC       LI  R5 1000
+0x00004BF4       MUL R2 R4 R5
 
-0x00004940       RET
+0x00004BF8       RET
 
 pipe_read:
 ;=========================================================
@@ -3372,130 +3571,130 @@ pipe_read:
 ; this is specific pipe device read loop!
 ;=========================================================
 
-0x00004944       PUSH LR
+0x00004BFC       PUSH LR
 
-0x00004948       MOV R9 R1              ; file*
-0x0000494C       MOV R7 R2              ; user buffer
-0x00004950       MOV R6 R3              ; requested len
+0x00004C00       MOV R9 R1              ; file*
+0x00004C04       MOV R7 R2              ; user buffer
+0x00004C08       MOV R6 R3              ; requested len
 
-0x00004954       LDW R9 [R9 + FILE_INODE]
-0x00004958       LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
-0x0000495C       CMP R6 0                ;fast clear from it if len=0
-0x00004960       BEQ pipe_read_done
+0x00004C0C       LDW R9 [R9 + FILE_INODE]
+0x00004C10       LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
+0x00004C14       CMP R6 0                ;fast clear from it if len=0
+0x00004C18       BEQ pipe_read_done
 ;-----------------------------------------
 ; validate user destination buffer
 ;-----------------------------------------
-0x00004968       PUSH R7
-0x0000496C       PUSH R6
+0x00004C20       PUSH R7
+0x00004C24       PUSH R6
 
-0x00004970       MOV R1 R7
-0x00004974       MOV R2 R6
-0x00004978       LI  R3 1               ; write access
-0x00004980       BL user_buffer_valid_range
+0x00004C28       MOV R1 R7
+0x00004C2C       MOV R2 R6
+0x00004C30       LI  R3 1               ; write access
+0x00004C38       BL user_buffer_valid_range
 
-0x00004988       POP R6
-0x0000498C       POP R7
-0x00004990       CMP R1 1
-0x00004994       BNE pipe_read_badptr
+0x00004C40       POP R6
+0x00004C44       POP R7
+0x00004C48       CMP R1 1
+0x00004C4C       BNE pipe_read_badptr
 
 pipe_read_retry:
 ;-----------------------------------------
 ; anything in pipe?
 ;-----------------------------------------
-0x0000499C       LDW R4 [R9 + PIPE_COUNT]
-0x000049A0       CMP R4 0
-0x000049A4       BEQ pipe_read_sleep     ;go to sleep
+0x00004C54       LDW R4 [R9 + PIPE_COUNT]
+0x00004C58       CMP R4 0
+0x00004C5C       BEQ pipe_read_sleep     ;go to sleep
 ;-----------------------------------------
 ; bytes_to_read=min(len (R6),count(R4)
 ;-----------------------------------------
-0x000049AC       CMP R6 R4
-0x000049B0       BLT pipe_user_len
+0x00004C64       CMP R6 R4
+0x00004C68       BLT pipe_user_len
 
-0x000049B8       MOV R5 R4
-0x000049BC       B pipe_have_amount
+0x00004C70       MOV R5 R4
+0x00004C74       B pipe_have_amount
 
 pipe_user_len:
-0x000049C4       MOV R5 R6
+0x00004C7C       MOV R5 R6
 
 pipe_have_amount:
-0x000049C8       LI R10 0              ; bytes copied
+0x00004C80       LI R10 0              ; bytes copied
 
 pipe_read_loop:         ;cpy pipe_buffer to user with min(pipe_count,len) bytes
-0x000049D0       CMP R10 R5
-0x000049D4       BGE pipe_read_done
+0x00004C88       CMP R10 R5
+0x00004C8C       BGE pipe_read_done
 
 ;------------------------------------------
 ; tail = pipe->tail (idx in PIPE_BUFFER in pipe*(R9) struc)
 ;------------------------------------------
-0x000049DC       LDW R11 [R9 + PIPE_TAIL]
+0x00004C94       LDW R11 [R9 + PIPE_TAIL]
 ;------------------------------------------
 ; R12 addr = pipe + PIPE_BUFFER
 ;------------------------------------------
-0x000049E0       MOV R12 R9
-0x000049E4       ADD R12 R12 PIPE_BUFFER
-0x000049E8       ADD R12 R12 R11         ; addr += tail
+0x00004C98       MOV R12 R9
+0x00004C9C       ADD R12 R12 PIPE_BUFFER
+0x00004CA0       ADD R12 R12 R11         ; addr += tail
 
-0x000049EC       LDB R4 [R12]    ;read data from buffer[tail_idx]
+0x00004CA4       LDB R4 [R12]    ;read data from buffer[tail_idx]
 
 ;------------------------------------------
 ; useraddr=userbuf+copied
 ;------------------------------------------
-0x000049F0       MOV R12 R7
-0x000049F4       ADD R12 R12 R10
+0x00004CA8       MOV R12 R7
+0x00004CAC       ADD R12 R12 R10
 
-0x000049F8       STB R4 [R12]    ;copy to user side
+0x00004CB0       STB R4 [R12]    ;copy to user side
 
 ;------------------------------------------
     ; tail=(tail+1)&255
 ;------------------------------------------
-0x000049FC       ADD R11 R11 1   ;update tail inc idx if idx > 255 idx=0
-0x00004A00       LI R2 255
-0x00004A08       AND R11 R11 R2
-0x00004A0C       STW R11 [R9 + PIPE_TAIL]    ;save to pipe struc updated tail_idx
+0x00004CB4       ADD R11 R11 1   ;update tail inc idx if idx > 255 idx=0
+0x00004CB8       LI R2 255
+0x00004CC0       AND R11 R11 R2
+0x00004CC4       STW R11 [R9 + PIPE_TAIL]    ;save to pipe struc updated tail_idx
 ;------------------------------------------
 ; count-- (update to struc)
 ;------------------------------------------
-0x00004A10       LDW R12 [R9 + PIPE_COUNT]
-0x00004A14       SUB R12 R12 1
-0x00004A18       STW R12 [R9 + PIPE_COUNT]
+0x00004CC8       LDW R12 [R9 + PIPE_COUNT]
+0x00004CCC       SUB R12 R12 1
+0x00004CD0       STW R12 [R9 + PIPE_COUNT]
 
     ; copied++ loop counter
-0x00004A1C       ADD R10 R10 1
-0x00004A20       B pipe_read_loop
+0x00004CD4       ADD R10 R10 1
+0x00004CD8       B pipe_read_loop
 
 pipe_read_done:
 ; wake blocked writers
-0x00004A28       MOV R1 R9
-0x00004A2C       ADD R1 R1 PIPE_WWAIT
-0x00004A30       BL waitq_wake_all
-0x00004A38       MOV R1 R10          ; read bytes amount
-0x00004A3C       POP LR
-0x00004A40       RET
+0x00004CE0       MOV R1 R9
+0x00004CE4       ADD R1 R1 PIPE_WWAIT
+0x00004CE8       BL waitq_wake_all
+0x00004CF0       MOV R1 R10          ; read bytes amount
+0x00004CF4       POP LR
+0x00004CF8       RET
 
 pipe_read_badptr:
-0x00004A44       LI R1 ERR_FAULT
-0x00004A4C       POP LR
-0x00004A50       RET
+0x00004CFC       LI R1 ERR_FAULT
+0x00004D04       POP LR
+0x00004D08       RET
 
 pipe_read_sleep:
 ;------------------------------------------
 ; prepare sleep
 ;------------------------------------------
-0x00004A54       MOV R1 R9
-0x00004A58       ADD R1 R1 PIPE_RWAIT    ;ptr on wait queue read in pipe instance
-0x00004A5C       LI R2 WAIT_PIPE_READ    ;REASON for block in process (debug)
-0x00004A64       BL waitq_prepare_sleep
+0x00004D0C       MOV R1 R9
+0x00004D10       ADD R1 R1 PIPE_RWAIT    ;ptr on wait queue read in pipe instance
+0x00004D14       LI R2 WAIT_PIPE_READ    ;REASON for block in process (debug)
+0x00004D1C       BL waitq_prepare_sleep
 
 ;------------------------------------------
 ; race check
 ;------------------------------------------
-0x00004A6C       LDW R4 [R9 + PIPE_COUNT]
-0x00004A70       CMP R4 0
-0x00004A74       BNE pipe_read_retry
+0x00004D24       LDW R4 [R9 + PIPE_COUNT]
+0x00004D28       CMP R4 0
+0x00004D2C       BNE pipe_read_retry
 
-0x00004A7C       BL waitq_sleep_current  ;freesze here untill unblock
+0x00004D34       BL waitq_sleep_current  ;freesze here untill unblock
     ;data arrived/unbloked
-0x00004A84       B pipe_read_retry
+0x00004D3C       B pipe_read_retry
 
 ;later sort out  issue: pipe_fail leaks objects
 ;pipe_alloc OK
@@ -3508,50 +3707,50 @@ pipe_alloc:
     ; out R1 ptr to new slot in pipe_pool, or R1 = 0 if no slots
     ;================================================================
 
-0x00004A8C       LI R2 0
+0x00004D44       LI R2 0
 
 pipe_loop:
-0x00004A94       LI  R1 MAX_PIPES
-0x00004A9C       CMP R2 R1
-0x00004AA0       BGE pipe_alloc_fail
+0x00004D4C       LI  R1 MAX_PIPES
+0x00004D54       CMP R2 R1
+0x00004D58       BGE pipe_alloc_fail
 
-0x00004AA8       SHL R3 R2 2
+0x00004D60       SHL R3 R2 2
 
-0x00004AAC       LI R4 pipe_used
-0x00004AB4       ADD R4 R4 R3
+0x00004D64       LI R4 pipe_used
+0x00004D6C       ADD R4 R4 R3
 
-0x00004AB8       LDW R5 [R4]             ;R4 address in PIPE_USED LIST
+0x00004D70       LDW R5 [R4]             ;R4 address in PIPE_USED LIST
 
-0x00004ABC       CMP R5 0                ; 0 -empty
-0x00004AC0       BEQ pipe_found
+0x00004D74       CMP R5 0                ; 0 -empty
+0x00004D78       BEQ pipe_found
 
-0x00004AC8       ADD R2 R2 1
-0x00004ACC       B pipe_loop
+0x00004D80       ADD R2 R2 1
+0x00004D84       B pipe_loop
 
 pipe_found:
 
-0x00004AD4       LI R5 1
-0x00004ADC       STW R5 [R4]             ; set it in PIPE_USED =1 as used
+0x00004D8C       LI R5 1
+0x00004D94       STW R5 [R4]             ; set it in PIPE_USED =1 as used
 
-0x00004AE0       LI R4 PIPE_SIZE
-0x00004AE8       MUL R6 R2 R4            ; r2 - is idx so get full offset = PIPE_SIZE*idx
+0x00004D98       LI R4 PIPE_SIZE
+0x00004DA0       MUL R6 R2 R4            ; r2 - is idx so get full offset = PIPE_SIZE*idx
 
-0x00004AEC       LI R1 pipe_pool         ; R1 - is address of the to be allocated slot in pipe_pool
-0x00004AF4       ADD R1 R1 R6
+0x00004DA4       LI R1 pipe_pool         ; R1 - is address of the to be allocated slot in pipe_pool
+0x00004DAC       ADD R1 R1 R6
 
-0x00004AF8       LI R7 0                 ; clean it up
-0x00004B00       STW R7 [R1 + PIPE_HEAD]
-0x00004B04       STW R7 [R1 + PIPE_TAIL]
-0x00004B08       STW R7 [R1 + PIPE_COUNT]
-0x00004B0C       STW R7 [R1 + PIPE_RWAIT]
-0x00004B10       STW R7 [R1 + PIPE_WWAIT]
+0x00004DB0       LI R7 0                 ; clean it up
+0x00004DB8       STW R7 [R1 + PIPE_HEAD]
+0x00004DBC       STW R7 [R1 + PIPE_TAIL]
+0x00004DC0       STW R7 [R1 + PIPE_COUNT]
+0x00004DC4       STW R7 [R1 + PIPE_RWAIT]
+0x00004DC8       STW R7 [R1 + PIPE_WWAIT]
     ; R1 - address of the slot
-0x00004B14       RET
+0x00004DCC       RET
 
 pipe_alloc_fail:
     ; R1 = NULL
-0x00004B18       LI R1 0
-0x00004B20       RET
+0x00004DD0       LI R1 0
+0x00004DD8       RET
 
 pipe_free:
     ;================================================================
@@ -3559,20 +3758,20 @@ pipe_free:
     ; marks the pipe slot free
     ;================================================================
 
-0x00004B24       LI R2 pipe_pool
-0x00004B2C       SUB R3 R1 R2
+0x00004DDC       LI R2 pipe_pool
+0x00004DE4       SUB R3 R1 R2
 
-0x00004B30       LI R4 PIPE_SIZE
-0x00004B38       DIV R5 R3 R4
+0x00004DE8       LI R4 PIPE_SIZE
+0x00004DF0       DIV R5 R3 R4
 
-0x00004B3C       SHL R5 R5 2
-0x00004B40       LI R6 pipe_used
-0x00004B48       ADD R6 R6 R5
+0x00004DF4       SHL R5 R5 2
+0x00004DF8       LI R6 pipe_used
+0x00004E00       ADD R6 R6 R5
 
-0x00004B4C       LI R7 0
-0x00004B54       STW R7 [R6]
+0x00004E04       LI R7 0
+0x00004E0C       STW R7 [R6]
 
-0x00004B58       RET
+0x00004E10       RET
 
 pipe_write:
 ;--------------------------------------------------
@@ -3583,110 +3782,110 @@ pipe_write:
 ; return:
 ;   R1 = bytes written
 ;--------------------------------------------------
-0x00004B5C       PUSH LR
+0x00004E14       PUSH LR
 
-0x00004B60       MOV R9 R1
-0x00004B64       MOV R7 R2
-0x00004B68       MOV R6 R3
+0x00004E18       MOV R9 R1
+0x00004E1C       MOV R7 R2
+0x00004E20       MOV R6 R3
 
-0x00004B6C       LDW R9 [R9 + FILE_INODE]
-0x00004B70       LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
+0x00004E24       LDW R9 [R9 + FILE_INODE]
+0x00004E28       LDW R9 [R9 + INODE_PRIVATE] ;get our Pipe instance allocated in pipe_pool (pipe*) (from its inode)
 
     ;---------------------------------------
     ; validate user source buffer
     ;---------------------------------------
 
-0x00004B74       PUSH R7
-0x00004B78       PUSH R6
+0x00004E2C       PUSH R7
+0x00004E30       PUSH R6
 
-0x00004B7C       MOV R1 R7
-0x00004B80       MOV R2 R6
-0x00004B84       LI  R3 0           ; READ access
-0x00004B8C       BL user_buffer_valid_range
+0x00004E34       MOV R1 R7
+0x00004E38       MOV R2 R6
+0x00004E3C       LI  R3 0           ; READ access
+0x00004E44       BL user_buffer_valid_range
 
-0x00004B94       POP R6
-0x00004B98       POP R7
+0x00004E4C       POP R6
+0x00004E50       POP R7
 
-0x00004B9C       CMP R1 1
-0x00004BA0       BNE pipe_write_badptr
+0x00004E54       CMP R1 1
+0x00004E58       BNE pipe_write_badptr
 
-0x00004BA8       LI R10 0               ; bytes written
+0x00004E60       LI R10 0               ; bytes written
 pipe_write_retry:
-0x00004BB0       CMP R10 R6
-0x00004BB4       BGE pipe_write_done
+0x00004E68       CMP R10 R6
+0x00004E6C       BGE pipe_write_done
 ;------------------------------------------
 ; pipe full ?
 ;------------------------------------------
-0x00004BBC       LDW R11 [R9 + PIPE_COUNT]
-0x00004BC0       LI R2 256
-0x00004BC8       CMP R11 R2
-0x00004BCC       BEQ pipe_write_sleep
+0x00004E74       LDW R11 [R9 + PIPE_COUNT]
+0x00004E78       LI R2 256
+0x00004E80       CMP R11 R2
+0x00004E84       BEQ pipe_write_sleep
 ;------------------------------------------
 ; head = pipe->head
 ;------------------------------------------
-0x00004BD4       LDW R12 [R9 + PIPE_HEAD]
+0x00004E8C       LDW R12 [R9 + PIPE_HEAD]
 
-0x00004BD8       MOV R4 R7
-0x00004BDC       ADD R4 R4 R10
-0x00004BE0       LDB R5 [R4]     ; read byte from user buff addr
+0x00004E90       MOV R4 R7
+0x00004E94       ADD R4 R4 R10
+0x00004E98       LDB R5 [R4]     ; read byte from user buff addr
 
-0x00004BE4       MOV R4 R9
-0x00004BE8       ADD R4 R4 PIPE_BUFFER
-0x00004BEC       ADD R4 R4 R12
-0x00004BF0       STB R5 [R4]     ; put it to pipe addr - ie write user -> pipe buff
+0x00004E9C       MOV R4 R9
+0x00004EA0       ADD R4 R4 PIPE_BUFFER
+0x00004EA4       ADD R4 R4 R12
+0x00004EA8       STB R5 [R4]     ; put it to pipe addr - ie write user -> pipe buff
 
 ;------------------------------------------
 ; head=(head+1)&255
 ;------------------------------------------
-0x00004BF4       ADD R12 R12 1
-0x00004BF8       LI R2 255
-0x00004C00       AND R12 R12 R2
-0x00004C04       STW R12 [R9 + PIPE_HEAD]
+0x00004EAC       ADD R12 R12 1
+0x00004EB0       LI R2 255
+0x00004EB8       AND R12 R12 R2
+0x00004EBC       STW R12 [R9 + PIPE_HEAD]
 ;------------------------------------------
 ; count++
 ;------------------------------------------
-0x00004C08       LDW R4 [R9 + PIPE_COUNT]
-0x00004C0C       ADD R4 R4 1
-0x00004C10       STW R4 [R9 + PIPE_COUNT]
+0x00004EC0       LDW R4 [R9 + PIPE_COUNT]
+0x00004EC4       ADD R4 R4 1
+0x00004EC8       STW R4 [R9 + PIPE_COUNT]
 
 ; written++
-0x00004C14       ADD R10 R10 1
-0x00004C18       B pipe_write_retry
+0x00004ECC       ADD R10 R10 1
+0x00004ED0       B pipe_write_retry
 
 pipe_write_done:
 ; wake readers
-0x00004C20       MOV R1 R9
-0x00004C24       ADD R1 R1 PIPE_RWAIT    ; wq ptr from pipe*
-0x00004C28       BL waitq_wake_all
-0x00004C30       MOV R1 R10      ;written bytes
-0x00004C34       POP LR
-0x00004C38       RET
+0x00004ED8       MOV R1 R9
+0x00004EDC       ADD R1 R1 PIPE_RWAIT    ; wq ptr from pipe*
+0x00004EE0       BL waitq_wake_all
+0x00004EE8       MOV R1 R10      ;written bytes
+0x00004EEC       POP LR
+0x00004EF0       RET
 
 pipe_write_badptr:
-0x00004C3C       LI R1 ERR_FAULT
-0x00004C44       POP LR
-0x00004C48       RET
+0x00004EF4       LI R1 ERR_FAULT
+0x00004EFC       POP LR
+0x00004F00       RET
 
 pipe_write_empty:
-0x00004C4C       LI R1 0
-0x00004C54       POP LR
-0x00004C58       RET
+0x00004F04       LI R1 0
+0x00004F0C       POP LR
+0x00004F10       RET
 
 pipe_write_sleep:
 ;setup tasks for block on write (pipe buffer is full)
-0x00004C5C       MOV R1 R9
-0x00004C60       ADD R1 R1 PIPE_WWAIT    ; wq ptr from pipe*
-0x00004C64       LI R2 WAIT_PIPE_WRITE
-0x00004C6C       BL waitq_prepare_sleep
+0x00004F14       MOV R1 R9
+0x00004F18       ADD R1 R1 PIPE_WWAIT    ; wq ptr from pipe*
+0x00004F1C       LI R2 WAIT_PIPE_WRITE
+0x00004F24       BL waitq_prepare_sleep
     ; race check
-0x00004C74       LDW R4 [R9 + PIPE_COUNT]
-0x00004C78       LI R2 256
-0x00004C80       CMP R4 R2
-0x00004C84       BLT pipe_write_retry    ;if not full dont block/frezze go write
+0x00004F2C       LDW R4 [R9 + PIPE_COUNT]
+0x00004F30       LI R2 256
+0x00004F38       CMP R4 R2
+0x00004F3C       BLT pipe_write_retry    ;if not full dont block/frezze go write
 
-0x00004C8C       BL waitq_sleep_current  ;block anf freeze writer here until reading buffer frees room in pipe!
+0x00004F44       BL waitq_sleep_current  ;block anf freeze writer here until reading buffer frees room in pipe!
 
-0x00004C94       B pipe_write_retry      ; unblocked! go write!
+0x00004F4C       B pipe_write_retry      ; unblocked! go write!
 
 
 
@@ -3698,39 +3897,39 @@ pipe_write_sleep:
 ;================================================================
 fd_lookup:
     ; Проверка валидности fd
-0x00004C9C       CMP R1 3
-0x00004CA0       BLT fd_lookup_invalid       ; fd 0,1,2 - stdio, нельзя закрыть пользователю
-0x00004CA8       CMP R1 MAX_FDS
-0x00004CAC       BGE fd_lookup_invalid       ; fd >= MAX_FDS - вне диапазона
+0x00004F54       CMP R1 3
+0x00004F58       BLT fd_lookup_invalid       ; fd 0,1,2 - stdio, нельзя закрыть пользователю
+0x00004F60       CMP R1 MAX_FDS
+0x00004F64       BGE fd_lookup_invalid       ; fd >= MAX_FDS - вне диапазона
 
-0x00004CB4       MOV R8 R1                   ; сохраняем fd
+0x00004F6C       MOV R8 R1                   ; сохраняем fd
     ; Получаем указатель на fd_table текущего процесса
 ; macro: GET_CURR_TASK_IDX R4
-0x00004CB8   LI R1 CURRENT_TASK
-0x00004CC0   LDW R4 [R1]
+0x00004F70   LI R1 CURRENT_TASK
+0x00004F78   LDW R4 [R1]
 ; macro: GET_TASK_PTR R4, R4
-0x00004CC4   LI R1 TASK_SIZE
-0x00004CCC   MUL R3 R4 R1
-0x00004CD0   LI R4 tasks
-0x00004CD8   ADD R4 R4 R3
+0x00004F7C   LI R1 TASK_SIZE
+0x00004F84   MUL R3 R4 R1
+0x00004F88   LI R4 tasks
+0x00004F90   ADD R4 R4 R3
 ; macro: TASK_GET_FD_TABLE R4, R4    ; R4 = &fd_table[0]
-0x00004CDC   LDW R4 [R4 + TASK_FD_TABLE]
+0x00004F94   LDW R4 [R4 + TASK_FD_TABLE]
 
     ; Вычисляем адрес fd_table[fd]
-0x00004CE0       SHL R5 R8 2                 ; R5 = fd * 4 (размер указателя)
-0x00004CE4       ADD R6 R4 R5                ; R6 = &fd_table[fd]
+0x00004F98       SHL R5 R8 2                 ; R5 = fd * 4 (размер указателя)
+0x00004F9C       ADD R6 R4 R5                ; R6 = &fd_table[fd]
 
-0x00004CE8       LDW R1 [R6]                 ; R1 = file* из таблицы
-0x00004CEC       CMP R1 0
-0x00004CF0       BEQ fd_lookup_invalid       ; если NULL - дескриптор не занят
+0x00004FA0       LDW R1 [R6]                 ; R1 = file* из таблицы
+0x00004FA4       CMP R1 0
+0x00004FA8       BEQ fd_lookup_invalid       ; если NULL - дескриптор не занят
 
-0x00004CF8       MOV R2 R6                   ; возвращаем адрес ячейки для fd_remove
-0x00004CFC       RET
+0x00004FB0       MOV R2 R6                   ; возвращаем адрес ячейки для fd_remove
+0x00004FB4       RET
 
 fd_lookup_invalid:
-0x00004D00       LI R1 0
-0x00004D08       LI R2 0
-0x00004D10       RET
+0x00004FB8       LI R1 0
+0x00004FC0       LI R2 0
+0x00004FC8       RET
 
  ;================================================================
  ;  frees fd_entry of this fd ; fd_table[fd] = null + gives this file_ptr for file_free
@@ -3738,22 +3937,22 @@ fd_lookup_invalid:
  ;  out R1 = file* / R1 = 0 if invalid
  ;================================================================
  fd_remove:
-0x00004D14       PUSH LR
-0x00004D18       BL  fd_lookup
-0x00004D20       CMP R1 0
-0x00004D24       BEQ fd_remove_invalid
+0x00004FCC       PUSH LR
+0x00004FD0       BL  fd_lookup
+0x00004FD8       CMP R1 0
+0x00004FDC       BEQ fd_remove_invalid
 
-0x00004D2C       MOV R8 R1          ; сохраняем file*
-0x00004D30       LI R3 0
-0x00004D38       STW R3 [R2]        ; fd_table[fd] = NULL (R2 из fd_lookup)
-0x00004D3C       MOV R1 R8          ; file*
-0x00004D40       POP LR
-0x00004D44       RET
+0x00004FE4       MOV R8 R1          ; сохраняем file*
+0x00004FE8       LI R3 0
+0x00004FF0       STW R3 [R2]        ; fd_table[fd] = NULL (R2 из fd_lookup)
+0x00004FF4       MOV R1 R8          ; file*
+0x00004FF8       POP LR
+0x00004FFC       RET
 
 fd_remove_invalid:
-0x00004D48       LI R1 0
-0x00004D50       POP LR
-0x00004D54       RET
+0x00005000       LI R1 0
+0x00005008       POP LR
+0x0000500C       RET
 
 
 syscall_read:
@@ -3763,22 +3962,22 @@ syscall_read:
     ; R3 = length
     ;================================================================
 
-0x00004D58       LDW R1 [SP + TF_R1]
-0x00004D5C       LDW R2 [SP + TF_R2]
-0x00004D60       LDW R3 [SP + TF_R3]
+0x00005010       LDW R1 [SP + TF_R1]
+0x00005014       LDW R2 [SP + TF_R2]
+0x00005018       LDW R3 [SP + TF_R3]
 
-0x00004D64       BL vfs_read
+0x0000501C       BL vfs_read
 
-0x00004D6C       STW R1 [SP + TF_R1]
-0x00004D70       B trap_restore
+0x00005024       STW R1 [SP + TF_R1]
+0x00005028       B trap_restore
 
 ; to comply with vfs interface
 devfs_open:
-0x00004D78       LI R1 0
-0x00004D80       RET
+0x00005030       LI R1 0
+0x00005038       RET
 devfs_close:
-0x00004D84       LI R1 0
-0x00004D8C       RET
+0x0000503C       LI R1 0
+0x00005044       RET
 
 
 devfs_read:
@@ -3789,161 +3988,161 @@ devfs_read:
     ; this is specific con device read loop!
     ;================================================================
 
-0x00004D90       PUSH LR
-0x00004D94       PUSH R8
-0x00004D98       PUSH R9
-0x00004D9C       PUSH R10
-0x00004DA0       PUSH R11
-0x00004DA4       PUSH R12
-0x00004DA8       MOV R9 R1
-0x00004DAC       MOV R7 R2
-0x00004DB0       MOV R6 R3
-0x00004DB4       LI R8 0                    ; total bytes collected
-0x00004DBC       LDW R9 [R9 + FILE_INODE]
-0x00004DC0       LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
-0x00004DC4       CMP R6 0
-0x00004DC8       BEQ read_done
+0x00005048       PUSH LR
+0x0000504C       PUSH R8
+0x00005050       PUSH R9
+0x00005054       PUSH R10
+0x00005058       PUSH R11
+0x0000505C       PUSH R12
+0x00005060       MOV R9 R1
+0x00005064       MOV R7 R2
+0x00005068       MOV R6 R3
+0x0000506C       LI R8 0                    ; total bytes collected
+0x00005074       LDW R9 [R9 + FILE_INODE]
+0x00005078       LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
+0x0000507C       CMP R6 0
+0x00005080       BEQ read_done
 
-0x00004DD0       PUSH R7
-0x00004DD4       PUSH R6
-0x00004DD8       PUSH R9
-0x00004DDC       MOV R1 R7
-0x00004DE0       MOV R2 R6
-0x00004DE4       LI R3 1                ; write access for destination buffer
-0x00004DEC       BL user_buffer_valid_range
-0x00004DF4       POP R9
-0x00004DF8       POP R6
-0x00004DFC       POP R7
-0x00004E00       CMP R1 1
-0x00004E04       BNE con_read_fault
+0x00005088       PUSH R7
+0x0000508C       PUSH R6
+0x00005090       PUSH R9
+0x00005094       MOV R1 R7
+0x00005098       MOV R2 R6
+0x0000509C       LI R3 1                ; write access for destination buffer
+0x000050A4       BL user_buffer_valid_range
+0x000050AC       POP R9
+0x000050B0       POP R6
+0x000050B4       POP R7
+0x000050B8       CMP R1 1
+0x000050BC       BNE con_read_fault
 
 read_wait_uart_rx:
-0x00004E0C       LDW R4 [R9 + UARTDEV_MMIO]  ; UART MMIO Base Address
-0x00004E10       LDW R5 [R4 + 4]             ; read UART_STATUS register
-0x00004E14       AND R5 R5 1                 ; bit 0 = RX_READY
-0x00004E18       CMP R5 0
-0x00004E1C       BEQ read_block_uart_rx      ; bit 0=0 no data yet in rx_queue, block this curr user task inside syscall
+0x000050C4       LDW R4 [R9 + UARTDEV_MMIO]  ; UART MMIO Base Address
+0x000050C8       LDW R5 [R4 + 4]             ; read UART_STATUS register
+0x000050CC       AND R5 R5 1                 ; bit 0 = RX_READY
+0x000050D0       CMP R5 0
+0x000050D4       BEQ read_block_uart_rx      ; bit 0=0 no data yet in rx_queue, block this curr user task inside syscall
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00004E24   LI R1 CURRENT_TASK
-0x00004E2C   LDW R4 [R1]
+0x000050DC   LI R1 CURRENT_TASK
+0x000050E4   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00004E30   LI R1 TASK_SIZE
-0x00004E38   MUL R3 R4 R1
-0x00004E3C   LI R5 tasks
-0x00004E44   ADD R5 R5 R3
+0x000050E8   LI R1 TASK_SIZE
+0x000050F0   MUL R3 R4 R1
+0x000050F4   LI R5 tasks
+0x000050FC   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_RD R1, R5
-0x00004E48   LDW R1 [R5 + TASK_KBUF_RD_PTR]
-0x00004E4C       MOV R2 R6
-0x00004E50       MOV R3 R9
-0x00004E54       PUSH R6
-0x00004E58       PUSH R7
-0x00004E5C       PUSH R8
-0x00004E60       PUSH R9
-0x00004E64       BL device_read          ;read data from rx_queue to KBUFFER_RD len=R2(<- R6) or if 0xd (enter sign)
-0x00004E6C       POP R9
-0x00004E70       POP R8
-0x00004E74       POP R7
-0x00004E78       POP R6
+0x00005100   LDW R1 [R5 + TASK_KBUF_RD_PTR]
+0x00005104       MOV R2 R6
+0x00005108       MOV R3 R9
+0x0000510C       PUSH R6
+0x00005110       PUSH R7
+0x00005114       PUSH R8
+0x00005118       PUSH R9
+0x0000511C       BL device_read          ;read data from rx_queue to KBUFFER_RD len=R2(<- R6) or if 0xd (enter sign)
+0x00005124       POP R9
+0x00005128       POP R8
+0x0000512C       POP R7
+0x00005130       POP R6
 
-0x00004E7C       CMP R1 0
-0x00004E80       BEQ read_wait_uart_rx
+0x00005134       CMP R1 0
+0x00005138       BEQ read_wait_uart_rx
 
-0x00004E88       MOV R10 R1             ; actual bytes read
+0x00005140       MOV R10 R1             ; actual bytes read
 
 ; macro: GET_CURR_TASK_IDX R5
-0x00004E8C   LI R1 CURRENT_TASK
-0x00004E94   LDW R5 [R1]
+0x00005144   LI R1 CURRENT_TASK
+0x0000514C   LDW R5 [R1]
 ; macro: GET_TASK_PTR R4, R5
-0x00004E98   LI R1 TASK_SIZE
-0x00004EA0   MUL R3 R5 R1
-0x00004EA4   LI R4 tasks
-0x00004EAC   ADD R4 R4 R3
+0x00005150   LI R1 TASK_SIZE
+0x00005158   MUL R3 R5 R1
+0x0000515C   LI R4 tasks
+0x00005164   ADD R4 R4 R3
 ; macro: TASK_GET_KBUF_RD R4, R4
-0x00004EB0   LDW R4 [R4 + TASK_KBUF_RD_PTR]
+0x00005168   LDW R4 [R4 + TASK_KBUF_RD_PTR]
 
     ; Remember whether this chunk ended with CR/LF before copy_to_user
     ; clobbers temporary registers.
-0x00004EB4       LI R11 0
-0x00004EBC       SUB R5 R10 1
-0x00004EC0       ADD R5 R4 R5
-0x00004EC4       LDB R5 [R5]
-0x00004EC8       CMP R5 10
-0x00004ECC       BEQ read_chunk_line_done
-0x00004ED4       CMP R5 13
-0x00004ED8       BNE read_chunk_not_newline
+0x0000516C       LI R11 0
+0x00005174       SUB R5 R10 1
+0x00005178       ADD R5 R4 R5
+0x0000517C       LDB R5 [R5]
+0x00005180       CMP R5 10
+0x00005184       BEQ read_chunk_line_done
+0x0000518C       CMP R5 13
+0x00005190       BNE read_chunk_not_newline
 read_chunk_line_done:
-0x00004EE0       LI R11 1
+0x00005198       LI R11 1
 
 read_chunk_not_newline:
-0x00004EE8       PUSH R6
-0x00004EEC       PUSH R7
-0x00004EF0       PUSH R8
-0x00004EF4       PUSH R9
-0x00004EF8       PUSH R10
-0x00004EFC       PUSH R11
-0x00004F00       MOV R1 R7              ; user destination
-0x00004F04       MOV R2 R10
-0x00004F08       BL copy_to_user        ; copy from kernel buffer to user buffer
-0x00004F10       POP R11
-0x00004F14       POP R10
-0x00004F18       POP R9
-0x00004F1C       POP R8
-0x00004F20       POP R7
-0x00004F24       POP R6
+0x000051A0       PUSH R6
+0x000051A4       PUSH R7
+0x000051A8       PUSH R8
+0x000051AC       PUSH R9
+0x000051B0       PUSH R10
+0x000051B4       PUSH R11
+0x000051B8       MOV R1 R7              ; user destination
+0x000051BC       MOV R2 R10
+0x000051C0       BL copy_to_user        ; copy from kernel buffer to user buffer
+0x000051C8       POP R11
+0x000051CC       POP R10
+0x000051D0       POP R9
+0x000051D4       POP R8
+0x000051D8       POP R7
+0x000051DC       POP R6
 
-0x00004F28       ADD R7 R7 R10
-0x00004F2C       ADD R8 R8 R10
-0x00004F30       SUB R6 R6 R10
+0x000051E0       ADD R7 R7 R10
+0x000051E4       ADD R8 R8 R10
+0x000051E8       SUB R6 R6 R10
 
-0x00004F34       CMP R11 1
-0x00004F38       BEQ read_complete
-0x00004F40       CMP R6 0
-0x00004F44       BGT read_wait_uart_rx
+0x000051EC       CMP R11 1
+0x000051F0       BEQ read_complete
+0x000051F8       CMP R6 0
+0x000051FC       BGT read_wait_uart_rx
 
 read_complete:
-0x00004F4C       MOV R1 R8
-0x00004F50       B read_return
+0x00005204       MOV R1 R8
+0x00005208       B read_return
 
 read_block_uart_rx:
     ; Put the current task on the UART RX wait queue before the re-check.
     ; This ordering prevents a lost wakeup if an IRQ arrives between the
     ; status check above and the actual scheduler sleep.
-0x00004F58       LI R1 uart_rx_waitq
-0x00004F60       LI R2 WAIT_UART_RX
-0x00004F68       BL waitq_prepare_sleep
+0x00005210       LI R1 uart_rx_waitq
+0x00005218       LI R2 WAIT_UART_RX
+0x00005220       BL waitq_prepare_sleep
 
-0x00004F70       LDW R4 [R9 + UARTDEV_MMIO]
-0x00004F74       LDW R10 [R4 + 4]             ; re-check uart reg RX-ready bit 0 after marking blocked
-0x00004F78       AND R10 R10 1
-0x00004F7C       CMP R10 0
-0x00004F80       BNE read_unblock_uart_rx     ; if data arrived, cancel sleep and read it
+0x00005228       LDW R4 [R9 + UARTDEV_MMIO]
+0x0000522C       LDW R10 [R4 + 4]             ; re-check uart reg RX-ready bit 0 after marking blocked
+0x00005230       AND R10 R10 1
+0x00005234       CMP R10 0
+0x00005238       BNE read_unblock_uart_rx     ; if data arrived, cancel sleep and read it
 
-0x00004F88       BL waitq_sleep_current       ; save this user task as frozen in kernel space
+0x00005240       BL waitq_sleep_current       ; save this user task as frozen in kernel space
 
-0x00004F90       B read_wait_uart_rx          ;repeat read uart loop
+0x00005248       B read_wait_uart_rx          ;repeat read uart loop
 
 read_unblock_uart_rx:            ;mark current task as unblocked
-0x00004F98       LI R1 uart_rx_waitq
-0x00004FA0       BL waitq_cancel_sleep_current
+0x00005250       LI R1 uart_rx_waitq
+0x00005258       BL waitq_cancel_sleep_current
 
-0x00004FA8       B read_wait_uart_rx          ;go back and read bytes
+0x00005260       B read_wait_uart_rx          ;go back and read bytes
 
 read_done:
-0x00004FB0       LI R1 0
-0x00004FB8       B read_return
+0x00005268       LI R1 0
+0x00005270       B read_return
 
 con_read_fault:
-0x00004FC0       LI R1 ERR_FAULT
+0x00005278       LI R1 ERR_FAULT
 
 read_return:
-0x00004FC8       POP R12
-0x00004FCC       POP R11
-0x00004FD0       POP R10
-0x00004FD4       POP R9
-0x00004FD8       POP R8
-0x00004FDC       POP LR
-0x00004FE0       RET
+0x00005280       POP R12
+0x00005284       POP R11
+0x00005288       POP R10
+0x0000528C       POP R9
+0x00005290       POP R8
+0x00005294       POP LR
+0x00005298       RET
 
 syscall_write:
     ;================================================================
@@ -3952,14 +4151,14 @@ syscall_write:
     ; R3 = length
     ;================================================================
 
-0x00004FE4       LDW R1 [SP + TF_R1]
-0x00004FE8       LDW R2 [SP + TF_R2]
-0x00004FEC       LDW R3 [SP + TF_R3]
+0x0000529C       LDW R1 [SP + TF_R1]
+0x000052A0       LDW R2 [SP + TF_R2]
+0x000052A4       LDW R3 [SP + TF_R3]
 
-0x00004FF0       BL vfs_write
+0x000052A8       BL vfs_write
 
-0x00004FF8       STW R1 [SP + TF_R1]
-0x00004FFC       B trap_restore
+0x000052B0       STW R1 [SP + TF_R1]
+0x000052B4       B trap_restore
 
 
 devfs_write:
@@ -3970,27 +4169,27 @@ devfs_write:
     ; this is specific con device write loop!
     ;================================================================
 
-0x00005004       PUSH LR
-0x00005008       MOV R9 R1
-0x0000500C       MOV R7 R2
-0x00005010       MOV R6 R3
-0x00005014       LDW R9 [R9 + FILE_INODE]
-0x00005018       LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
-0x0000501C       LI R8 0                    ; total bytes written
+0x000052BC       PUSH LR
+0x000052C0       MOV R9 R1
+0x000052C4       MOV R7 R2
+0x000052C8       MOV R6 R3
+0x000052CC       LDW R9 [R9 + FILE_INODE]
+0x000052D0       LDW R9 [R9 + INODE_PRIVATE] ; console device pointer
+0x000052D4       LI R8 0                    ; total bytes written
                                ;also R6-len R7-user buf ptr R9-file struc ptr
 write_loop:
-0x00005024       CMP R6 0
-0x00005028       BEQ write_done             ;0 bytes
+0x000052DC       CMP R6 0
+0x000052E0       BEQ write_done             ;0 bytes
 
-0x00005030       LI R2 KBUFFER_SIZE
-0x00005038       CMP R6 R2                  ;here we write in chunks to dev, last one is small chunk (less then Kbuffer_size)
-0x0000503C       BLT write_chunk_small
-0x00005044       LI R2 KBUFFER_SIZE
+0x000052E8       LI R2 KBUFFER_SIZE
+0x000052F0       CMP R6 R2                  ;here we write in chunks to dev, last one is small chunk (less then Kbuffer_size)
+0x000052F4       BLT write_chunk_small
+0x000052FC       LI R2 KBUFFER_SIZE
 
-0x0000504C       B write_chunk
+0x00005304       B write_chunk
 
 write_chunk_small:
-0x00005054       MOV R2 R6
+0x0000530C       MOV R2 R6
 
 write_chunk:
     ;================================================================
@@ -3999,143 +4198,143 @@ write_chunk:
     ; buffer overflows or invalid memory accesses.
     ;================================================================
 
-0x00005058       PUSH R7
-0x0000505C       PUSH R6
-0x00005060       PUSH R9
-0x00005064       PUSH R8
-0x00005068       MOV R1 R7
-0x0000506C       MOV R2 R2
-0x00005070       LI R3 0                ; read access for source buffer
-0x00005078       BL user_buffer_valid_range ;Validate user buffer and length for this chunk
-0x00005080       POP R8
-0x00005084       POP R9
-0x00005088       POP R6
-0x0000508C       POP R7
-0x00005090       CMP R1 1
-0x00005094       BNE driver_bad_pointer
+0x00005310       PUSH R7
+0x00005314       PUSH R6
+0x00005318       PUSH R9
+0x0000531C       PUSH R8
+0x00005320       MOV R1 R7
+0x00005324       MOV R2 R2
+0x00005328       LI R3 0                ; read access for source buffer
+0x00005330       BL user_buffer_valid_range ;Validate user buffer and length for this chunk
+0x00005338       POP R8
+0x0000533C       POP R9
+0x00005340       POP R6
+0x00005344       POP R7
+0x00005348       CMP R1 1
+0x0000534C       BNE driver_bad_pointer
 
-0x0000509C       PUSH R7
-0x000050A0       PUSH R6
+0x00005354       PUSH R7
+0x00005358       PUSH R6
     ;=================================================
     ; access curr task fields to get task kbuffer_wr (to avoid nasty shared buffer things)
     ;=================================================
 ; macro: GET_CURR_TASK_IDX R4
-0x000050A4   LI R1 CURRENT_TASK
-0x000050AC   LDW R4 [R1]
+0x0000535C   LI R1 CURRENT_TASK
+0x00005364   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x000050B0   LI R1 TASK_SIZE
-0x000050B8   MUL R3 R4 R1
-0x000050BC   LI R5 tasks
-0x000050C4   ADD R5 R5 R3
+0x00005368   LI R1 TASK_SIZE
+0x00005370   MUL R3 R4 R1
+0x00005374   LI R5 tasks
+0x0000537C   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_WR R4, R5
-0x000050C8   LDW R4 [R5 + TASK_KBUF_WR_PTR]
-0x000050CC       MOV R1 R7
-0x000050D0       BL copy_from_user      ; copy chunk to tasks kbuffer_wr
-0x000050D8       MOV R10 R1             ; bytes copied
-0x000050DC       POP R6
-0x000050E0       POP R7
+0x00005380   LDW R4 [R5 + TASK_KBUF_WR_PTR]
+0x00005384       MOV R1 R7
+0x00005388       BL copy_from_user      ; copy chunk to tasks kbuffer_wr
+0x00005390       MOV R10 R1             ; bytes copied
+0x00005394       POP R6
+0x00005398       POP R7
 
-0x000050E4       PUSH R7
-0x000050E8       PUSH R9
-0x000050EC       PUSH R6
+0x0000539C       PUSH R7
+0x000053A0       PUSH R9
+0x000053A4       PUSH R6
 
 ; now actual send to uart chunk from  kbuffer_wr to device
 write_wait_uart_tx:
-0x000050F0       LDW R1 [R9 + UARTDEV_MMIO]
-0x000050F4       LDW R2 [R1 + 4]
-0x000050F8       AND R2 R2 2                     ;check bit 1 - UART_TX rdy
-0x000050FC       CMP R2 0
-0x00005100       BEQ write_block_uart_tx         ;not rdy go and block this task
+0x000053A8       LDW R1 [R9 + UARTDEV_MMIO]
+0x000053AC       LDW R2 [R1 + 4]
+0x000053B0       AND R2 R2 2                     ;check bit 1 - UART_TX rdy
+0x000053B4       CMP R2 0
+0x000053B8       BEQ write_block_uart_tx         ;not rdy go and block this task
 
 ; can TX to UART!
 
 ; macro: GET_CURR_TASK_IDX R4
-0x00005108   LI R1 CURRENT_TASK
-0x00005110   LDW R4 [R1]
+0x000053C0   LI R1 CURRENT_TASK
+0x000053C8   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00005114   LI R1 TASK_SIZE
-0x0000511C   MUL R3 R4 R1
-0x00005120   LI R5 tasks
-0x00005128   ADD R5 R5 R3
+0x000053CC   LI R1 TASK_SIZE
+0x000053D4   MUL R3 R4 R1
+0x000053D8   LI R5 tasks
+0x000053E0   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_WR R1, R5
-0x0000512C   LDW R1 [R5 + TASK_KBUF_WR_PTR]
-0x00005130       MOV R2 R10
-0x00005134       MOV R3 R9
+0x000053E4   LDW R1 [R5 + TASK_KBUF_WR_PTR]
+0x000053E8       MOV R2 R10
+0x000053EC       MOV R3 R9
     ;============================================================================
     ; get R1 - kbuff_wr ptr R2 = R10 amounts to be sent (shunk/small_chunk size)
     ; R9 - ptr to Private (con_device)
     ; r1 - outputs number of written bytes to device
     ;-----------------------------------------------------------------------------
 
-0x00005138       BL device_write
-0x00005140       POP R6
-0x00005144       POP R9
-0x00005148       POP R7
+0x000053F0       BL device_write
+0x000053F8       POP R6
+0x000053FC       POP R9
+0x00005400       POP R7
 
-0x0000514C       CMP R1 0        ;nothing is written - go again
-0x00005150       BEQ write_loop
+0x00005404       CMP R1 0        ;nothing is written - go again
+0x00005408       BEQ write_loop
 
-0x00005158       ADD R8 R8 R1     ;update ptrs
-0x0000515C       ADD R7 R7 R1     ;R7 pointer in user buffer R8-who knows?
-0x00005160       SUB R6 R6 R1     ;decrease amounts for next chunk to send
-0x00005164       B write_loop     ;chunk is sent go to next one
+0x00005410       ADD R8 R8 R1     ;update ptrs
+0x00005414       ADD R7 R7 R1     ;R7 pointer in user buffer R8-who knows?
+0x00005418       SUB R6 R6 R1     ;decrease amounts for next chunk to send
+0x0000541C       B write_loop     ;chunk is sent go to next one
 
 write_block_uart_tx:
     ; Queue the task on UART TX before the re-check. If TX becomes ready
     ; immediately after this, cancel the queued sleep without scheduling.
-0x0000516C       LI R1 uart_tx_waitq
-0x00005174       LI R2 WAIT_UART_TX
-0x0000517C       BL waitq_prepare_sleep
+0x00005424       LI R1 uart_tx_waitq
+0x0000542C       LI R2 WAIT_UART_TX
+0x00005434       BL waitq_prepare_sleep
 
-0x00005184       LDW R1 [R9 + UARTDEV_MMIO]
-0x00005188       LDW R2 [R1 + 4]             ; re-check after marking blocked
-0x0000518C       AND R2 R2 2
-0x00005190       CMP R2 0
-0x00005194       BNE write_unblock_uart_tx   ; if suddenly TX ready - unblock it
+0x0000543C       LDW R1 [R9 + UARTDEV_MMIO]
+0x00005440       LDW R2 [R1 + 4]             ; re-check after marking blocked
+0x00005444       AND R2 R2 2
+0x00005448       CMP R2 0
+0x0000544C       BNE write_unblock_uart_tx   ; if suddenly TX ready - unblock it
                                 ; its like to check if we have zero bytes to send at the begining
                                 ; putting on frezze task costs time and effort so we dont need to do it if tx is rdy!!!
 
-0x0000519C       BL waitq_sleep_current      ; if task is blocked it sleeps here inside syscall line waiting for irq UART handler ublocks it
+0x00005454       BL waitq_sleep_current      ; if task is blocked it sleeps here inside syscall line waiting for irq UART handler ublocks it
                                 ; (when TX rdy)
                                 ; also this call saves task in trapframe and jumps to schedule and switch other tasks
-0x000051A4       B write_wait_uart_tx        ; task awakes here - jumps send uart again!!
+0x0000545C       B write_wait_uart_tx        ; task awakes here - jumps send uart again!!
 
 write_unblock_uart_tx:
-0x000051AC       LI R1 uart_tx_waitq
-0x000051B4       BL waitq_cancel_sleep_current
+0x00005464       LI R1 uart_tx_waitq
+0x0000546C       BL waitq_cancel_sleep_current
 
-0x000051BC       B write_wait_uart_tx
+0x00005474       B write_wait_uart_tx
 
 write_done:
-0x000051C4       MOV R1 R8
-0x000051C8       POP LR
-0x000051CC       RET
+0x0000547C       MOV R1 R8
+0x00005480       POP LR
+0x00005484       RET
 
 driver_bad_pointer:
-0x000051D0       LI R1 ERR_FAULT
-0x000051D8       POP LR
-0x000051DC       RET
+0x00005488       LI R1 ERR_FAULT
+0x00005490       POP LR
+0x00005494       RET
 
 bad_fd:
-0x000051E0       LI R1 ERR_BADF
-0x000051E8       STW R1 [SP + TF_R1]
+0x00005498       LI R1 ERR_BADF
+0x000054A0       STW R1 [SP + TF_R1]
 
-0x000051EC       B trap_restore
+0x000054A4       B trap_restore
 
 bad_pointer:
-0x000051F4       LI R1 ERR_FAULT
-0x000051FC       STW R1 [SP + TF_R1]
+0x000054AC       LI R1 ERR_FAULT
+0x000054B4       STW R1 [SP + TF_R1]
 
-0x00005200       B trap_restore
+0x000054B8       B trap_restore
 
 file_read:
     ;================================================================
     ; R1 = file ptr, R2 = user buffer, R3 = len
     ;================================================================
-0x00005208       LDW R4 [R1 + FILE_INODE]
-0x0000520C       LDW R4 [R4 + INODE_OPS]
-0x00005210       LDW R4 [R4 + FSOPS_READ]
-0x00005214       JR R4
+0x000054C0       LDW R4 [R1 + FILE_INODE]
+0x000054C4       LDW R4 [R4 + INODE_OPS]
+0x000054C8       LDW R4 [R4 + FSOPS_READ]
+0x000054CC       JR R4
 
    ; LDW R4 [R1 + FILE_OPS]
    ; LDW R4 [R4 + FOPS_READ]     ; get read function xdev_read from ops
@@ -4146,24 +4345,24 @@ file_write:
     ; R1 = file ptr, R2 = user buffer, R3 = len
     ;================================================================
 
-0x00005218       LDW R4 [R1 + FILE_INODE]
-0x0000521C       LDW R4 [R4 + INODE_OPS]
-0x00005220       LDW R4 [R4 + FSOPS_WRITE]    ; get write function xdev_write from ops
-0x00005224       JR R4                       ; execute it
+0x000054D0       LDW R4 [R1 + FILE_INODE]
+0x000054D4       LDW R4 [R4 + INODE_OPS]
+0x000054D8       LDW R4 [R4 + FSOPS_WRITE]    ; get write function xdev_write from ops
+0x000054DC       JR R4                       ; execute it
 
 device_read:
     ;================================================================
     ; R1 = kernel buffer, R2 = len, R3 = uart device pointer
     ;================================================================
 
-0x00005228       B uart_read_kernel
+0x000054E0       B uart_read_kernel
 
 device_write:
     ;================================================================
     ; R1 = kernel buffer, R2 = len, R3 = uart device pointer
     ;================================================================
 
-0x00005230       B uart_write_kernel
+0x000054E8       B uart_write_kernel
 
 ;================================================================
 ; read /dev/console - from MMIO UART, consuming currently available RX bytes
@@ -4174,34 +4373,34 @@ uart_read_kernel:
     ; Reads up to R2 bytes from the UART into kernel buffer at R1.
     ; Returns when the UART RX FIFO is empty, without spinning.
     ; Stops early when CR or LF is received.
-0x00005238       LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
-0x0000523C       LI R5 0                     ; index = 0 (bytes read so far)
+0x000054F0       LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
+0x000054F4       LI R5 0                     ; index = 0 (bytes read so far)
 
 dr_loop:
-0x00005244       CMP R5 R2                   ; have we read enough bytes?
-0x00005248       BGE dr_done                 ; yes -> return
+0x000054FC       CMP R5 R2                   ; have we read enough bytes?
+0x00005500       BGE dr_done                 ; yes -> return
 
 dr_poll_ready:
-0x00005250       LDW R6 [R4 + 4]             ; read UART_STATUS register
-0x00005254       AND R6 R6 1                 ; bit 0 = RX_READY
-0x00005258       CMP R6 0
-0x0000525C       BEQ dr_done                 ; no more buffered input available
+0x00005508       LDW R6 [R4 + 4]             ; read UART_STATUS register
+0x0000550C       AND R6 R6 1                 ; bit 0 = RX_READY
+0x00005510       CMP R6 0
+0x00005514       BEQ dr_done                 ; no more buffered input available
 
-0x00005264       LDW R7 [R4 + 0]             ; pop character from UART_DATA (RX FIFO)
-0x00005268       STB R7 [R1 + R5]            ; store it into the kernel buffer
-0x0000526C       ADD R5 R5 1
+0x0000551C       LDW R7 [R4 + 0]             ; pop character from UART_DATA (RX FIFO)
+0x00005520       STB R7 [R1 + R5]            ; store it into the kernel buffer
+0x00005524       ADD R5 R5 1
 
     ; If we received a line terminator, stop reading early.
-0x00005270       CMP R7 10
-0x00005274       BEQ dr_done
-0x0000527C       CMP R7 13
-0x00005280       BEQ dr_done
+0x00005528       CMP R7 10
+0x0000552C       BEQ dr_done
+0x00005534       CMP R7 13
+0x00005538       BEQ dr_done
 
-0x00005288       B dr_loop
+0x00005540       B dr_loop
 
 dr_done:
-0x00005290       MOV R1 R5                   ; return number of bytes actually read
-0x00005294       RET
+0x00005548       MOV R1 R5                   ; return number of bytes actually read
+0x0000554C       RET
 
 ;=================================================================
 ; write /dev/con - to MMIO UART, polling TX_READY before each byte
@@ -4214,52 +4413,52 @@ uart_write_kernel:
     ; Polls the UART_STATUS TX_READY bit before sending each byte.
     ; This is a simple synchronous write that blocks until all bytes are sent.
     ;================================================================
-0x00005298       PUSH LR
+0x00005550       PUSH LR
 
     ; mutex for write to console lock
-0x0000529C       PUSH R1
-0x000052A0       PUSH R2
-0x000052A4       PUSH R3
+0x00005554       PUSH R1
+0x00005558       PUSH R2
+0x0000555C       PUSH R3
 
     ; Lock console mutex
-0x000052A8       BL console_lock
+0x00005560       BL console_lock
 
     ; Write to UART
-0x000052B0       POP R3
-0x000052B4       POP R2
-0x000052B8       POP R1
+0x00005568       POP R3
+0x0000556C       POP R2
+0x00005570       POP R1
 
 
-0x000052BC       LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
-0x000052C0       LI R5 0                     ; index = 0 (bytes written so far)
+0x00005574       LDW R4 [R3 + UARTDEV_MMIO]  ; UART MMIO Base Address
+0x00005578       LI R5 0                     ; index = 0 (bytes written so far)
 
 dcw_loop:
-0x000052C8       CMP R5 R2                   ; have we written all bytes?
-0x000052CC       BGE dcw_done                ; yes -> return
+0x00005580       CMP R5 R2                   ; have we written all bytes?
+0x00005584       BGE dcw_done                ; yes -> return
 
 dcw_poll_tx:
-0x000052D4       LDW R6 [R4 + 4]             ; read UART_STATUS register
-0x000052D8       AND R6 R6 2                 ; bit 1 = TX_READY
-0x000052DC       CMP R6 0
-0x000052E0       BEQ dcw_done
+0x0000558C       LDW R6 [R4 + 4]             ; read UART_STATUS register
+0x00005590       AND R6 R6 2                 ; bit 1 = TX_READY
+0x00005594       CMP R6 0
+0x00005598       BEQ dcw_done
 
-0x000052E8       LDB R7 [R1 + R5]            ; load next byte from kernel buffer
-0x000052EC       STW R7 [R4 + 0]             ; write to UART_DATA register (transmit)
-0x000052F0       ADD R5 R5 1
-0x000052F4       B dcw_loop
+0x000055A0       LDB R7 [R1 + R5]            ; load next byte from kernel buffer
+0x000055A4       STW R7 [R4 + 0]             ; write to UART_DATA register (transmit)
+0x000055A8       ADD R5 R5 1
+0x000055AC       B dcw_loop
 
 dcw_done:
-0x000052FC       MOV R1 R5                   ; return number of bytes written
+0x000055B4       MOV R1 R5                   ; return number of bytes written
 
 
  ; Unlock console mutex for exclusive write to uart device
-0x00005300       PUSH R1
-0x00005304       BL console_unlock
-0x0000530C       POP R1
+0x000055B8       PUSH R1
+0x000055BC       BL console_unlock
+0x000055C4       POP R1
 
 
-0x00005310       POP LR
-0x00005314       RET
+0x000055C8       POP LR
+0x000055CC       RET
 
 null_read:
     ;================================================================
@@ -4267,8 +4466,8 @@ null_read:
     ; /dev/null always returns EOF without touching the destination.
     ;================================================================
 
-0x00005318       LI R1 0
-0x00005320       RET
+0x000055D0       LI R1 0
+0x000055D8       RET
 
 null_write:
     ;================================================================
@@ -4276,29 +4475,29 @@ null_write:
     ; /dev/null discards valid input and reports all bytes written.
     ;================================================================
 
-0x00005324       PUSH LR
-0x00005328       MOV R6 R3
-0x0000532C       CMP R6 0
-0x00005330       BEQ null_write_done
+0x000055DC       PUSH LR
+0x000055E0       MOV R6 R3
+0x000055E4       CMP R6 0
+0x000055E8       BEQ null_write_done
 
-0x00005338       PUSH R6
-0x0000533C       MOV R1 R2
-0x00005340       MOV R2 R6
-0x00005344       LI R3 0                    ; read access from user source
-0x0000534C       BL user_buffer_valid_range
-0x00005354       POP R6
-0x00005358       CMP R1 1
-0x0000535C       BNE null_write_badptr
+0x000055F0       PUSH R6
+0x000055F4       MOV R1 R2
+0x000055F8       MOV R2 R6
+0x000055FC       LI R3 0                    ; read access from user source
+0x00005604       BL user_buffer_valid_range
+0x0000560C       POP R6
+0x00005610       CMP R1 1
+0x00005614       BNE null_write_badptr
 
 null_write_done:
-0x00005364       MOV R1 R6
-0x00005368       POP LR
-0x0000536C       RET
+0x0000561C       MOV R1 R6
+0x00005620       POP LR
+0x00005624       RET
 
 null_write_badptr:
-0x00005370       LI R1 ERR_FAULT
-0x00005378       POP LR
-0x0000537C       RET
+0x00005628       LI R1 ERR_FAULT
+0x00005630       POP LR
+0x00005634       RET
 
 fetch_fd_entry:
     ;================================================================
@@ -4309,47 +4508,47 @@ fetch_fd_entry:
     ; - fd table entry must have at least the required flags set
     ;
     ;================================================================
-0x00005380       PUSH R5
-0x00005384       PUSH R6
-0x00005388       PUSH R8
+0x00005638       PUSH R5
+0x0000563C       PUSH R6
+0x00005640       PUSH R8
 
-0x0000538C       CMP R1 0
-0x00005390       BLT fd_invalid
-0x00005398       CMP R1 MAX_FDS
-0x0000539C       BGE fd_invalid
+0x00005644       CMP R1 0
+0x00005648       BLT fd_invalid
+0x00005650       CMP R1 MAX_FDS
+0x00005654       BGE fd_invalid
 
-0x000053A4       MOV R8 R1                   ; preserve fd across task lookup macros
+0x0000565C       MOV R8 R1                   ; preserve fd across task lookup macros
 ; macro: GET_CURR_TASK_IDX R4
-0x000053A8   LI R1 CURRENT_TASK
-0x000053B0   LDW R4 [R1]
+0x00005660   LI R1 CURRENT_TASK
+0x00005668   LDW R4 [R1]
 ; macro: GET_TASK_PTR R4, R4
-0x000053B4   LI R1 TASK_SIZE
-0x000053BC   MUL R3 R4 R1
-0x000053C0   LI R4 tasks
-0x000053C8   ADD R4 R4 R3
+0x0000566C   LI R1 TASK_SIZE
+0x00005674   MUL R3 R4 R1
+0x00005678   LI R4 tasks
+0x00005680   ADD R4 R4 R3
 ; macro: TASK_GET_FD_TABLE R4, R4
-0x000053CC   LDW R4 [R4 + TASK_FD_TABLE]
+0x00005684   LDW R4 [R4 + TASK_FD_TABLE]
 
-0x000053D0       SHL R5 R8 2
-0x000053D4       ADD R4 R4 R5                ; r4=fd*4+FD_TABLE
-0x000053D8       LDW R1 [R4]                 ; R1 = file ptr
-0x000053DC       LDW R6 [R1 + FILE_FLAGS]
-0x000053E0       AND R6 R6 R2
-0x000053E4       CMP R6 R2
-0x000053E8       BNE fd_invalid
+0x00005688       SHL R5 R8 2
+0x0000568C       ADD R4 R4 R5                ; r4=fd*4+FD_TABLE
+0x00005690       LDW R1 [R4]                 ; R1 = file ptr
+0x00005694       LDW R6 [R1 + FILE_FLAGS]
+0x00005698       AND R6 R6 R2
+0x0000569C       CMP R6 R2
+0x000056A0       BNE fd_invalid
 
-0x000053F0       POP R8
-0x000053F4       POP R6
-0x000053F8       POP R5
-0x000053FC       RET                         ;on exit R1 - has file ptr
+0x000056A8       POP R8
+0x000056AC       POP R6
+0x000056B0       POP R5
+0x000056B4       RET                         ;on exit R1 - has file ptr
 
 fd_invalid:
-0x00005400       POP R8
-0x00005404       POP R6
-0x00005408       POP R5
+0x000056B8       POP R8
+0x000056BC       POP R6
+0x000056C0       POP R5
 
-0x0000540C       LI R1 0
-0x00005414       RET
+0x000056C4       LI R1 0
+0x000056CC       RET
 
 
 ;================================================================
@@ -4359,28 +4558,28 @@ fd_invalid:
 ;================================================================
 vfs_read:
 
-0x00005418       PUSH LR
-0x0000541C       MOV R7 R2
-0x00005420       MOV R10 R3
+0x000056D0       PUSH LR
+0x000056D4       MOV R7 R2
+0x000056D8       MOV R10 R3
 
-0x00005424       LI R2 FD_FLAG_READ
-0x0000542C       BL fetch_fd_entry   ; macro inside destroys R6
+0x000056DC       LI R2 FD_FLAG_READ
+0x000056E4       BL fetch_fd_entry   ; macro inside destroys R6
 
-0x00005434       CMP R1 0
-0x00005438       BEQ vfs_read_badfd
+0x000056EC       CMP R1 0
+0x000056F0       BEQ vfs_read_badfd
 
-0x00005440       MOV R9 R1
-0x00005444       MOV R1 R9
-0x00005448       MOV R2 R7
-0x0000544C       MOV R3 R10
-0x00005450       BL file_read
-0x00005458       POP LR
-0x0000545C       RET
+0x000056F8       MOV R9 R1
+0x000056FC       MOV R1 R9
+0x00005700       MOV R2 R7
+0x00005704       MOV R3 R10
+0x00005708       BL file_read
+0x00005710       POP LR
+0x00005714       RET
 
 vfs_read_badfd:
-0x00005460       LI R1 ERR_BADF
-0x00005468       POP LR
-0x0000546C       RET
+0x00005718       LI R1 ERR_BADF
+0x00005720       POP LR
+0x00005724       RET
 
 vfs_write:
     ;================================================================
@@ -4388,28 +4587,28 @@ vfs_write:
     ; out: R1 = bytes written or errno
     ;================================================================
 
-0x00005470       PUSH LR
-0x00005474       MOV R7 R2
-0x00005478       MOV R10 R3
+0x00005728       PUSH LR
+0x0000572C       MOV R7 R2
+0x00005730       MOV R10 R3
 
-0x0000547C       LI R2 FD_FLAG_WRITE
-0x00005484       BL fetch_fd_entry   ;macro inside desroys R6 (fixed)
+0x00005734       LI R2 FD_FLAG_WRITE
+0x0000573C       BL fetch_fd_entry   ;macro inside desroys R6 (fixed)
 
-0x0000548C       CMP R1 0
-0x00005490       BEQ vfs_write_badfd
+0x00005744       CMP R1 0
+0x00005748       BEQ vfs_write_badfd
 
-0x00005498       MOV R9 R1
-0x0000549C       MOV R1 R9           ; R1 - file* acc to fd
-0x000054A0       MOV R2 R7
-0x000054A4       MOV R3 R10
-0x000054A8       BL file_write
-0x000054B0       POP LR
-0x000054B4       RET
+0x00005750       MOV R9 R1
+0x00005754       MOV R1 R9           ; R1 - file* acc to fd
+0x00005758       MOV R2 R7
+0x0000575C       MOV R3 R10
+0x00005760       BL file_write
+0x00005768       POP LR
+0x0000576C       RET
 
 vfs_write_badfd:
-0x000054B8       LI R1 ERR_BADF
-0x000054C0       POP LR
-0x000054C4       RET
+0x00005770       LI R1 ERR_BADF
+0x00005778       POP LR
+0x0000577C       RET
 
 
 
@@ -4427,52 +4626,52 @@ user_buffer_valid_range:
     ; - each page spanned by the buffer must be present (P) and user-accessible (U) in the page table
     ; - if access type is write, pages must also have the writable (W) bit set
     ;================================================================
-0x000054C8       PUSH R5
-0x000054CC       PUSH R6
-0x000054D0       PUSH R7
-0x000054D4       PUSH R8
-0x000054D8       PUSH R9
-0x000054DC       PUSH R10
-0x000054E0       PUSH R11
-0x000054E4       PUSH R12
+0x00005780       PUSH R5
+0x00005784       PUSH R6
+0x00005788       PUSH R7
+0x0000578C       PUSH R8
+0x00005790       PUSH R9
+0x00005794       PUSH R10
+0x00005798       PUSH R11
+0x0000579C       PUSH R12
 
-0x000054E8       LI R4 0
-0x000054F0       CMP R2 R4
-0x000054F4       BEQ uv_valid
+0x000057A0       LI R4 0
+0x000057A8       CMP R2 R4
+0x000057AC       BEQ uv_valid
 
-0x000054FC       LI R4 USER_BASE
-0x00005504       CMP R1 R4
-0x00005508       BLT uv_invalid
+0x000057B4       LI R4 USER_BASE
+0x000057BC       CMP R1 R4
+0x000057C0       BLT uv_invalid
 
-0x00005510       LI R4 USER_LIMIT
-0x00005518       ADD R5 R1 R2
-0x0000551C       SUB R5 R5 1
-0x00005520       CMP R5 R1
-0x00005524       BLT uv_invalid
-0x0000552C       CMP R5 R4
-0x00005530       BGT uv_invalid
-0x00005538       MOV R11 R1              ; save start address; task macros clobber R1
-0x0000553C       MOV R12 R5              ; save end address for page calculation
-0x00005540       MOV R4 R3               ; save access type; task macros clobber R3
+0x000057C8       LI R4 USER_LIMIT
+0x000057D0       ADD R5 R1 R2
+0x000057D4       SUB R5 R5 1
+0x000057D8       CMP R5 R1
+0x000057DC       BLT uv_invalid
+0x000057E4       CMP R5 R4
+0x000057E8       BGT uv_invalid
+0x000057F0       MOV R11 R1              ; save start address; task macros clobber R1
+0x000057F4       MOV R12 R5              ; save end address for page calculation
+0x000057F8       MOV R4 R3               ; save access type; task macros clobber R3
 
 ; macro: GET_CURR_TASK_IDX R6
-0x00005544   LI R1 CURRENT_TASK
-0x0000554C   LDW R6 [R1]
+0x000057FC   LI R1 CURRENT_TASK
+0x00005804   LDW R6 [R1]
 ; macro: GET_TASK_PTR R6, R6
-0x00005550   LI R1 TASK_SIZE
-0x00005558   MUL R3 R6 R1
-0x0000555C   LI R6 tasks
-0x00005564   ADD R6 R6 R3
+0x00005808   LI R1 TASK_SIZE
+0x00005810   MUL R3 R6 R1
+0x00005814   LI R6 tasks
+0x0000581C   ADD R6 R6 R3
 ; macro: TASK_GET_PTBR R6, R6
-0x00005568   LDW R6 [R6 + TASK_PTBR]
+0x00005820   LDW R6 [R6 + TASK_PTBR]
     ; Dynamic page tables live in the supervisor-only allocator pool,
     ; which is identity-mapped into every task address space.
-0x0000556C       CMP R6 0
-0x00005570       BEQ uv_invalid
+0x00005824       CMP R6 0
+0x00005828       BEQ uv_invalid
 
 uv_check_pages:
-0x00005578       SHR R7 R11 12
-0x0000557C       SHR R8 R12 12
+0x00005830       SHR R7 R11 12
+0x00005834       SHR R8 R12 12
 uv_loop:
     ;================================================================
     ; For each page spanned by the buffer, check the corresponding PTE in the page table:
@@ -4480,57 +4679,57 @@ uv_loop:
     ; - if access type is write, must also have the writable (W) bit set
     ;================================================================
 
-0x00005580       CMP R7 R8
-0x00005584       BGT uv_valid
-0x0000558C       SHL R9 R7 2
-0x00005590       ADD R9 R9 R6
-0x00005594       LDW R10 [R9]
-0x00005598       AND R5 R10 PTE_P
-0x0000559C       CMP R5 0
-0x000055A0       BEQ uv_invalid
-0x000055A8       AND R5 R10 PTE_U
-0x000055AC       CMP R5 0
-0x000055B0       BEQ uv_invalid
-0x000055B8       CMP R4 0
-0x000055BC       BEQ uv_check_read
-0x000055C4       AND R5 R10 PTE_W
-0x000055C8       CMP R5 0
-0x000055CC       BEQ uv_invalid
-0x000055D4       B uv_next
+0x00005838       CMP R7 R8
+0x0000583C       BGT uv_valid
+0x00005844       SHL R9 R7 2
+0x00005848       ADD R9 R9 R6
+0x0000584C       LDW R10 [R9]
+0x00005850       AND R5 R10 PTE_P
+0x00005854       CMP R5 0
+0x00005858       BEQ uv_invalid
+0x00005860       AND R5 R10 PTE_U
+0x00005864       CMP R5 0
+0x00005868       BEQ uv_invalid
+0x00005870       CMP R4 0
+0x00005874       BEQ uv_check_read
+0x0000587C       AND R5 R10 PTE_W
+0x00005880       CMP R5 0
+0x00005884       BEQ uv_invalid
+0x0000588C       B uv_next
 
 uv_check_read:
-0x000055DC       AND R5 R10 PTE_R
-0x000055E0       CMP R5 0
-0x000055E4       BEQ uv_invalid
+0x00005894       AND R5 R10 PTE_R
+0x00005898       CMP R5 0
+0x0000589C       BEQ uv_invalid
 
 uv_next:
-0x000055EC       ADD R7 R7 1
-0x000055F0       B uv_loop
+0x000058A4       ADD R7 R7 1
+0x000058A8       B uv_loop
 
 uv_valid:
-0x000055F8       LI R1 1
-0x00005600       POP R12
-0x00005604       POP R11
-0x00005608       POP R10
-0x0000560C       POP R9
-0x00005610       POP R8
-0x00005614       POP R7
-0x00005618       POP R6
-0x0000561C       POP R5
-0x00005620       RET
+0x000058B0       LI R1 1
+0x000058B8       POP R12
+0x000058BC       POP R11
+0x000058C0       POP R10
+0x000058C4       POP R9
+0x000058C8       POP R8
+0x000058CC       POP R7
+0x000058D0       POP R6
+0x000058D4       POP R5
+0x000058D8       RET
 
 uv_invalid:
-0x00005624       LI R1 0
+0x000058DC       LI R1 0
 
-0x0000562C       POP R12
-0x00005630       POP R11
-0x00005634       POP R10
-0x00005638       POP R9
-0x0000563C       POP R8
-0x00005640       POP R7
-0x00005644       POP R6
-0x00005648       POP R5
-0x0000564C       RET
+0x000058E4       POP R12
+0x000058E8       POP R11
+0x000058EC       POP R10
+0x000058F0       POP R9
+0x000058F4       POP R8
+0x000058F8       POP R7
+0x000058FC       POP R6
+0x00005900       POP R5
+0x00005904       RET
 
 copy_from_user:
     ;================================================================
@@ -4541,50 +4740,50 @@ copy_from_user:
     ;================================================================
 
    ; DEBUG 2
-0x00005650       PUSH R5
-0x00005654       PUSH R6
-0x00005658       PUSH R7
-0x0000565C       LI R5 0
+0x00005908       PUSH R5
+0x0000590C       PUSH R6
+0x00005910       PUSH R7
+0x00005914       LI R5 0
 cfu_head:
-0x00005664       CMP R2 0
-0x00005668       BEQ cfu_done
-0x00005670       OR R6 R1 R4
-0x00005674       AND R6 R6 3
-0x00005678       CMP R6 0
-0x0000567C       BEQ cfu_word
-0x00005684       LDB R7 [R1]
-0x00005688       STB R7 [R4]
-0x0000568C       ADD R1 R1 1
-0x00005690       ADD R4 R4 1
-0x00005694       ADD R5 R5 1
-0x00005698       SUB R2 R2 1
-0x0000569C       B cfu_head
+0x0000591C       CMP R2 0
+0x00005920       BEQ cfu_done
+0x00005928       OR R6 R1 R4
+0x0000592C       AND R6 R6 3
+0x00005930       CMP R6 0
+0x00005934       BEQ cfu_word
+0x0000593C       LDB R7 [R1]
+0x00005940       STB R7 [R4]
+0x00005944       ADD R1 R1 1
+0x00005948       ADD R4 R4 1
+0x0000594C       ADD R5 R5 1
+0x00005950       SUB R2 R2 1
+0x00005954       B cfu_head
 cfu_word:
-0x000056A4       CMP R2 4
-0x000056A8       BLT cfu_tail
-0x000056B0       LDW R7 [R1]
-0x000056B4       STW R7 [R4]
-0x000056B8       ADD R1 R1 4
-0x000056BC       ADD R4 R4 4
-0x000056C0       ADD R5 R5 4
-0x000056C4       SUB R2 R2 4
-0x000056C8       B cfu_word
+0x0000595C       CMP R2 4
+0x00005960       BLT cfu_tail
+0x00005968       LDW R7 [R1]
+0x0000596C       STW R7 [R4]
+0x00005970       ADD R1 R1 4
+0x00005974       ADD R4 R4 4
+0x00005978       ADD R5 R5 4
+0x0000597C       SUB R2 R2 4
+0x00005980       B cfu_word
 cfu_tail:
-0x000056D0       CMP R2 0
-0x000056D4       BEQ cfu_done
-0x000056DC       LDB R7 [R1]
-0x000056E0       STB R7 [R4]
-0x000056E4       ADD R1 R1 1
-0x000056E8       ADD R4 R4 1
-0x000056EC       ADD R5 R5 1
-0x000056F0       SUB R2 R2 1
-0x000056F4       B cfu_tail
+0x00005988       CMP R2 0
+0x0000598C       BEQ cfu_done
+0x00005994       LDB R7 [R1]
+0x00005998       STB R7 [R4]
+0x0000599C       ADD R1 R1 1
+0x000059A0       ADD R4 R4 1
+0x000059A4       ADD R5 R5 1
+0x000059A8       SUB R2 R2 1
+0x000059AC       B cfu_tail
 cfu_done:
-0x000056FC       MOV R1 R5
-0x00005700       POP R7
-0x00005704       POP R6
-0x00005708       POP R5
-0x0000570C       RET
+0x000059B4       MOV R1 R5
+0x000059B8       POP R7
+0x000059BC       POP R6
+0x000059C0       POP R5
+0x000059C4       RET
 
 copy_to_user:
     ;================================================================
@@ -4595,54 +4794,54 @@ copy_to_user:
     ;================================================================
 
    ; DEBUG 2
-0x00005710       PUSH R5
-0x00005714       PUSH R6
-0x00005718       PUSH R7
-0x0000571C       LI R5 0
+0x000059C8       PUSH R5
+0x000059CC       PUSH R6
+0x000059D0       PUSH R7
+0x000059D4       LI R5 0
 ctu_head:
-0x00005724       CMP R2 0
-0x00005728       BEQ ctu_done
-0x00005730       OR R6 R1 R4
-0x00005734       AND R6 R6 3
-0x00005738       CMP R6 0
-0x0000573C       BEQ ctu_word
-0x00005744       LDB R7 [R4]
-0x00005748       STB R7 [R1]
-0x0000574C       ADD R1 R1 1
-0x00005750       ADD R4 R4 1
-0x00005754       ADD R5 R5 1
-0x00005758       SUB R2 R2 1
-0x0000575C       B ctu_head
+0x000059DC       CMP R2 0
+0x000059E0       BEQ ctu_done
+0x000059E8       OR R6 R1 R4
+0x000059EC       AND R6 R6 3
+0x000059F0       CMP R6 0
+0x000059F4       BEQ ctu_word
+0x000059FC       LDB R7 [R4]
+0x00005A00       STB R7 [R1]
+0x00005A04       ADD R1 R1 1
+0x00005A08       ADD R4 R4 1
+0x00005A0C       ADD R5 R5 1
+0x00005A10       SUB R2 R2 1
+0x00005A14       B ctu_head
 ctu_word:
-0x00005764       CMP R2 4
-0x00005768       BLT ctu_tail
-0x00005770       LDW R7 [R4]
-0x00005774       STW R7 [R1]
-0x00005778       ADD R1 R1 4
-0x0000577C       ADD R4 R4 4
-0x00005780       ADD R5 R5 4
-0x00005784       SUB R2 R2 4
-0x00005788       B ctu_word
+0x00005A1C       CMP R2 4
+0x00005A20       BLT ctu_tail
+0x00005A28       LDW R7 [R4]
+0x00005A2C       STW R7 [R1]
+0x00005A30       ADD R1 R1 4
+0x00005A34       ADD R4 R4 4
+0x00005A38       ADD R5 R5 4
+0x00005A3C       SUB R2 R2 4
+0x00005A40       B ctu_word
 ctu_tail:
-0x00005790       CMP R2 0
-0x00005794       BEQ ctu_done
-0x0000579C       LDB R7 [R4]
-0x000057A0       STB R7 [R1]
-0x000057A4       ADD R1 R1 1
-0x000057A8       ADD R4 R4 1
-0x000057AC       ADD R5 R5 1
-0x000057B0       SUB R2 R2 1
-0x000057B4       B ctu_tail
+0x00005A48       CMP R2 0
+0x00005A4C       BEQ ctu_done
+0x00005A54       LDB R7 [R4]
+0x00005A58       STB R7 [R1]
+0x00005A5C       ADD R1 R1 1
+0x00005A60       ADD R4 R4 1
+0x00005A64       ADD R5 R5 1
+0x00005A68       SUB R2 R2 1
+0x00005A6C       B ctu_tail
 ctu_done:
-0x000057BC       MOV R1 R5
-0x000057C0       POP R7
-0x000057C4       POP R6
-0x000057C8       POP R5
-0x000057CC       RET
+0x00005A74       MOV R1 R5
+0x00005A78       POP R7
+0x00005A7C       POP R6
+0x00005A80       POP R5
+0x00005A84       RET
 
 handle_debug:
     ; Debug trap - just return
-0x000057D0       B trap_restore
+0x00005A88       B trap_restore
 
 handle_irq:
     ;================================================================
@@ -4652,19 +4851,19 @@ handle_irq:
     ; - IRQ 1 = UART RX
     ;================================================================
 
-0x000057D8       CSRR R1 STVAL
+0x00005A90       CSRR R1 STVAL
 
-0x000057DC       CMP R1 0
-0x000057E0       BEQ handle_timer_irq
+0x00005A94       CMP R1 0
+0x00005A98       BEQ handle_timer_irq
 
-0x000057E8       CMP R1 1
-0x000057EC       BEQ handle_uart_irq
+0x00005AA0       CMP R1 1
+0x00005AA4       BEQ handle_uart_irq
     ;================================================================
     ; Default IRQ handling: acknowledge PIC and restore
     ;================================================================
-0x000057F4       LI R2 0x00102000
-0x000057FC       STW R1 [R2 + 8]             ; PIC_ACK = R1
-0x00005800       B trap_restore
+0x00005AAC       LI R2 0x00102000
+0x00005AB4       STW R1 [R2 + 8]             ; PIC_ACK = R1
+0x00005AB8       B trap_restore
 
 handle_timer_irq:
 
@@ -4672,68 +4871,68 @@ handle_timer_irq:
     ; Acknowledge IRQ 0 (Timer) in PIC MMIO
     ;================================================================
 
-0x00005808       LI R2 0x00102000
-0x00005810       LI R3 0
-0x00005818       STW R3 [R2 + 8]             ; PIC_ACK = 0
+0x00005AC0       LI R2 0x00102000
+0x00005AC8       LI R3 0
+0x00005AD0       STW R3 [R2 + 8]             ; PIC_ACK = 0
 
     ; Increment timer tick counter
-0x0000581C       LI R1 timer_ticks
-0x00005824       LDW R2 [R1]
-0x00005828       ADD R2 R2 1
-0x0000582C       STW R2 [R1]
+0x00005AD4       LI R1 timer_ticks
+0x00005ADC       LDW R2 [R1]
+0x00005AE0       ADD R2 R2 1
+0x00005AE4       STW R2 [R1]
 
     ;================================================================
     ; Wake sleeping tasks whose time has expired
     ;================================================================
 
-0x00005830       LI R1 sleep_waitq
-0x00005838       LDW R8 [R1]                ; R8 = current sleep_waitq mask
-0x0000583C       LI R9 0                    ; R9 = tasks to wake bitmask
-0x00005844       LI R3 0                    ; task index
+0x00005AE8       LI R1 sleep_waitq
+0x00005AF0       LDW R8 [R1]                ; R8 = current sleep_waitq mask
+0x00005AF4       LI R9 0                    ; R9 = tasks to wake bitmask
+0x00005AFC       LI R3 0                    ; task index
 
 timer_wake_scan:
-0x0000584C       CMP R3 MAX_TASKS
-0x00005850       BGE timer_wake_scan_done
+0x00005B04       CMP R3 MAX_TASKS
+0x00005B08       BGE timer_wake_scan_done
 
     ; Check if this task is in the sleep wait queue
-0x00005858       LI R6 1
-0x00005860       SHL R6 R6 R3               ; bit for this task
-0x00005864       AND R7 R8 R6
-0x00005868       CMP R7 0
-0x0000586C       BEQ timer_wake_next        ; not in sleep queue
+0x00005B10       LI R6 1
+0x00005B18       SHL R6 R6 R3               ; bit for this task
+0x00005B1C       AND R7 R8 R6
+0x00005B20       CMP R7 0
+0x00005B24       BEQ timer_wake_next        ; not in sleep queue
 
     ; Task is sleeping, check if it's time to wake
 ; macro: GET_TASK_PTR R5, R3
-0x00005874   LI R1 TASK_SIZE
-0x0000587C   MUL R3 R3 R1
-0x00005880   LI R5 tasks
-0x00005888   ADD R5 R5 R3
+0x00005B2C   LI R1 TASK_SIZE
+0x00005B34   MUL R3 R3 R1
+0x00005B38   LI R5 tasks
+0x00005B40   ADD R5 R5 R3
 ; macro: TASK_GET_WAKE_TIME R7, R5
-0x0000588C   LDW R7 [R5 + TASK_WAKE_TIME]
-0x00005890       CMP R2 R7                  ; current time >= wake time?
-0x00005894       BLT timer_wake_next
+0x00005B44   LDW R7 [R5 + TASK_WAKE_TIME]
+0x00005B48       CMP R2 R7                  ; current time >= wake time?
+0x00005B4C       BLT timer_wake_next
 
     ; Mark this task for wakeup
-0x0000589C       OR R9 R9 R6                 ; add to wake bitmask bitwize
+0x00005B54       OR R9 R9 R6                 ; add to wake bitmask bitwize
 
 timer_wake_next:
-0x000058A0       ADD R3 R3 1
-0x000058A4       B timer_wake_scan
+0x00005B58       ADD R3 R3 1
+0x00005B5C       B timer_wake_scan
 
 timer_wake_scan_done:
     ; If no tasks to wake, skip
-0x000058AC       CMP R9 0
-0x000058B0       BEQ timer_no_wake
+0x00005B64       CMP R9 0
+0x00005B68       BEQ timer_no_wake
 
     ; Wake the expired tasks using our new function
-0x000058B8       LI R1 sleep_waitq
-0x000058C0       MOV R2 R9
-0x000058C4       BL waitq_wake_bitmask
+0x00005B70       LI R1 sleep_waitq
+0x00005B78       MOV R2 R9
+0x00005B7C       BL waitq_wake_bitmask
 
 timer_no_wake:
 
     ; Yield the CPU (reschedule and switch tasks)
-0x000058CC       B schedule_and_switch
+0x00005B84       B schedule_and_switch
 
 handle_uart_irq:
     ;================================================================
@@ -4743,20 +4942,20 @@ handle_uart_irq:
     ; decodes TASK_WAIT reasons by hand.
     ;================================================================
 
-0x000058D4       LI R2 0x00102000
-0x000058DC       LI R3 1
-0x000058E4       STW R3 [R2 + 8]             ; PIC_ACK = 1
+0x00005B8C       LI R2 0x00102000
+0x00005B94       LI R3 1
+0x00005B9C       STW R3 [R2 + 8]             ; PIC_ACK = 1
 
     ; Current UART interrupt source is coarse, so wake both sides.
     ; The resumed syscall loops re-check hardware status before doing I/O.
-0x000058E8       LI R1 uart_rx_waitq
-0x000058F0       BL waitq_wake_all
-0x000058F8       LI R1 uart_tx_waitq
-0x00005900       BL waitq_wake_all
+0x00005BA0       LI R1 uart_rx_waitq
+0x00005BA8       BL waitq_wake_all
+0x00005BB0       LI R1 uart_tx_waitq
+0x00005BB8       BL waitq_wake_all
 
 uart_wake_done:
     ; Resume the interrupted task immediately
-0x00005908       B trap_restore
+0x00005BC0       B trap_restore
 
 trap_restore:
     ;================================================================
@@ -4766,40 +4965,40 @@ trap_restore:
     ; Restore privileged state saved after the GPRs.
     ;================================================================
 
-0x00005910       POP R1                  ; stval, informational only
-0x00005914       POP R1                  ; scause, informational only
-0x00005918       POP R1
-0x0000591C       CSRW SSTATUS R1
-0x00005920       POP R1
-0x00005924       CSRW SFLAGS R1
-0x00005928       POP R1
-0x0000592C       CSRW SEPC R1
-0x00005930       POP R1                  ; interrupted task SP
-0x00005934       CSRW SSCRATCH R1        ; task SP goes to SSCRATCH
+0x00005BC8       POP R1                  ; stval, informational only
+0x00005BCC       POP R1                  ; scause, informational only
+0x00005BD0       POP R1
+0x00005BD4       CSRW SSTATUS R1
+0x00005BD8       POP R1
+0x00005BDC       CSRW SFLAGS R1
+0x00005BE0       POP R1
+0x00005BE4       CSRW SEPC R1
+0x00005BE8       POP R1                  ; interrupted task SP
+0x00005BEC       CSRW SSCRATCH R1        ; task SP goes to SSCRATCH
 
     ; Restore interrupted GPR state in reverse order.
-0x00005938       POP R15
-0x0000593C       POP R14
-0x00005940       POP R12
-0x00005944       POP R11
-0x00005948       POP R10
-0x0000594C       POP R9
-0x00005950       POP R8
-0x00005954       POP R7
-0x00005958       POP R6
-0x0000595C       POP R5
-0x00005960       POP R4
-0x00005964       POP R3
-0x00005968       POP R2
-0x0000596C       POP R1
+0x00005BF0       POP R15
+0x00005BF4       POP R14
+0x00005BF8       POP R12
+0x00005BFC       POP R11
+0x00005C00       POP R10
+0x00005C04       POP R9
+0x00005C08       POP R8
+0x00005C0C       POP R7
+0x00005C10       POP R6
+0x00005C14       POP R5
+0x00005C18       POP R4
+0x00005C1C       POP R3
+0x00005C20       POP R2
+0x00005C24       POP R1
     ;================================================================
     ; Switch back from kernel stack to interrupted task stack.
     ; Before: SP=kernel stack top, SSCRATCH=task SP.
     ; After:  SP=task SP, SSCRATCH=kernel stack top for next trap.
     ;================================================================
 
-0x00005970       CSRRW SP SSCRATCH SP
-0x00005974       SRET
+0x00005C28       CSRRW SP SSCRATCH SP
+0x00005C2C       SRET
 
 
 ; ================================================================
@@ -5015,6 +5214,24 @@ devfs_ops:
 .EQU NSFS_DEFAULT_NS,     0
 .EQU NSFS_MAX_NODES,     64
 
+.EQU NSFS_TYPE_FILE,      1
+.EQU NSFS_TYPE_DIR,       2
+
+.EQU NSFS_WIRE_TYPE,      0
+.EQU NSFS_WIRE_SIZE,      4
+.EQU NSFS_WIRE_VERSION,   8
+.EQU NSFS_WIRE_PATH_LEN, 12
+.EQU NSFS_WIRE_HDR_SIZEOF, 16
+
+.EQU NSFS_INDEX_TYPE,     0
+.EQU NSFS_INDEX_SIZE,     4
+.EQU NSFS_INDEX_VERSION,  8
+.EQU NSFS_INDEX_PATH,    12
+.EQU NSFS_INDEX_PATH_LEN, 16
+.EQU NSFS_INDEX_ENTRY_SIZEOF, 20
+.EQU NSFS_INDEX_MAX_ENTRIES, 64
+.EQU NSFS_INDEX_PATH_POOL_SIZE, 2048
+
 nsfs_ops:
     .WORD nsfs_open
     .WORD nsfs_read
@@ -5049,6 +5266,18 @@ nsfs_node_pool:
 
 nsfs_node_used:
     .SPACE NSFS_MAX_NODES * 4
+
+nsfs_index_count:
+    .WORD 0
+
+nsfs_index_table:
+    .SPACE NSFS_INDEX_MAX_ENTRIES * NSFS_INDEX_ENTRY_SIZEOF
+
+nsfs_index_path_next:
+    .WORD nsfs_index_path_pool
+
+nsfs_index_path_pool:
+    .SPACE NSFS_INDEX_PATH_POOL_SIZE
 
 ; special con uart related
 ;con_ops:
@@ -5226,12 +5455,12 @@ tar_limit:
 
 
 tarfs_open:
-0x00008239       LI R1 0
-0x00008241       RET
+0x00008F41       LI R1 0
+0x00008F49       RET
 
 tarfs_close:
-0x00008245       LI R1 0
-0x0000824D       RET
+0x00008F4D       LI R1 0
+0x00008F55       RET
 ; --------------------------------------------------
 ; tarfs_lookup - lookup a file in the tar index by name, for open and read operations
 ;
@@ -5244,93 +5473,93 @@ tarfs_close:
 
 tarfs_lookup:
 
-0x00008251       PUSH LR
-0x00008255       PUSH R8
-0x00008259       PUSH R9
-0x0000825D       PUSH R10
+0x00008F59       PUSH LR
+0x00008F5D       PUSH R8
+0x00008F61       PUSH R9
+0x00008F65       PUSH R10
 
-0x00008261       MOV R8 R1              ; pathname
-0x00008265       LDB R2 [R8]
-0x00008269       LI R3 47               ; accept normal absolute paths: "/etc/motd"
-0x00008271       CMP R2 R3
-0x00008275       BNE lookup_path_ready
-0x0000827D       ADD R8 R8 1
+0x00008F69       MOV R8 R1              ; pathname
+0x00008F6D       LDB R2 [R8]
+0x00008F71       LI R3 47               ; accept normal absolute paths: "/etc/motd"
+0x00008F79       CMP R2 R3
+0x00008F7D       BNE lookup_path_ready
+0x00008F85       ADD R8 R8 1
 
 lookup_path_ready:
 
-0x00008281       LI R9 0                ; index
+0x00008F89       LI R9 0                ; index
 
-0x00008289       LI R10 tar_count
-0x00008291       LDW R10 [R10]
+0x00008F91       LI R10 tar_count
+0x00008F99       LDW R10 [R10]
 
 tar_lookup_loop:
 
-0x00008295       CMP R9 R10
-0x00008299       BGE tar_lookup_not_found
+0x00008F9D       CMP R9 R10
+0x00008FA1       BGE tar_lookup_not_found
 
     ; entry address
 
-0x000082A1       LI R1 tar_index
+0x00008FA9       LI R1 tar_index
 
-0x000082A9       LI R2 TAR_IDX_SIZEOF
-0x000082B1       MUL R3 R9 R2
-0x000082B5       ADD R1 R1 R3            ;
+0x00008FB1       LI R2 TAR_IDX_SIZEOF
+0x00008FB9       MUL R3 R9 R2
+0x00008FBD       ADD R1 R1 R3            ;
 
     ; compare names
 
-0x000082B9       MOV R2 R8
+0x00008FC1       MOV R2 R8
 
-0x000082BD       LDW R1 [R1 + TAR_IDX_NAME]
+0x00008FC5       LDW R1 [R1 + TAR_IDX_NAME]
 
-0x000082C1       BL strcmp   ;R1 is tar name, R2 is pathname, returns 1 if match
+0x00008FC9       BL strcmp   ;R1 is tar name, R2 is pathname, returns 1 if match
 
-0x000082C9       CMP R1 1
-0x000082CD       BEQ tar_lookup_found
+0x00008FD1       CMP R1 1
+0x00008FD5       BEQ tar_lookup_found
 
-0x000082D5       ADD R9 R9 1
-0x000082D9       B tar_lookup_loop
+0x00008FDD       ADD R9 R9 1
+0x00008FE1       B tar_lookup_loop
 
 tar_lookup_found:
 
-0x000082E1       LI R1 tar_index
-0x000082E9       LI R2 TAR_IDX_SIZEOF
-0x000082F1       MUL R3 R9 R2
-0x000082F5       ADD R11 R1 R3        ; R11 = &tar_index[R9]
+0x00008FE9       LI R1 tar_index
+0x00008FF1       LI R2 TAR_IDX_SIZEOF
+0x00008FF9       MUL R3 R9 R2
+0x00008FFD       ADD R11 R1 R3        ; R11 = &tar_index[R9]
 
     ;alloc node for this file
 
-0x000082F9       BL inode_alloc
-0x00008301       CMP R1 0
-0x00008305       BEQ tar_lookup_not_found
-0x0000830D       MOV R10 R1              ; r10 = new inode ptr
+0x00009001       BL inode_alloc
+0x00009009       CMP R1 0
+0x0000900D       BEQ tar_lookup_not_found
+0x00009015       MOV R10 R1              ; r10 = new inode ptr
 
     ; init this node with data from &tar_index[R9]
 
-0x00008311       MOV R1 R10              ; inode
-0x00008315       LI  R2 tarfs_ops        ; ops table
-0x0000831D       MOV R3 R11              ; private = tar entry
+0x00009019       MOV R1 R10              ; inode
+0x0000901D       LI  R2 tarfs_ops        ; ops table
+0x00009025       MOV R3 R11              ; private = tar entry
 
-0x00008321       LDW R4 [R11 + TAR_IDX_TYPE] ; FILE type
-0x00008325       LDW R5 [R11 + TAR_IDX_SIZE] ; file size
-0x00008329       BL inode_init
+0x00009029       LDW R4 [R11 + TAR_IDX_TYPE] ; FILE type
+0x0000902D       LDW R5 [R11 + TAR_IDX_SIZE] ; file size
+0x00009031       BL inode_init
 
-0x00008331       MOV R1 R10              ;R1 = new node ptr inited for file found in lookup
+0x00009039       MOV R1 R10              ;R1 = new node ptr inited for file found in lookup
 
-0x00008335       POP R10
-0x00008339       POP R9
-0x0000833D       POP R8
-0x00008341       POP LR
-0x00008345       RET
+0x0000903D       POP R10
+0x00009041       POP R9
+0x00009045       POP R8
+0x00009049       POP LR
+0x0000904D       RET
 
 tar_lookup_not_found:
 
-0x00008349       LI R1 0             ; R1 = NULL
+0x00009051       LI R1 0             ; R1 = NULL
 
-0x00008351       POP R10
-0x00008355       POP R9
-0x00008359       POP R8
-0x0000835D       POP LR
-0x00008361       RET
+0x00009059       POP R10
+0x0000905D       POP R9
+0x00009061       POP R8
+0x00009065       POP LR
+0x00009069       RET
 
 
 ; --------------------------------------------------
@@ -5345,136 +5574,136 @@ tar_lookup_not_found:
 
 tarfs_init:
 
-0x00008365       PUSH LR
-0x00008369       PUSH R8
-0x0000836D       PUSH R9
-0x00008371       PUSH R10
-0x00008375       PUSH R11
-0x00008379       PUSH R12
+0x0000906D       PUSH LR
+0x00009071       PUSH R8
+0x00009075       PUSH R9
+0x00009079       PUSH R10
+0x0000907D       PUSH R11
+0x00009081       PUSH R12
 
-0x0000837D       MOV R8 R1                  ; current tar header
-0x00008381       LI R11 tar_limit
-0x00008389       ADD R2 R1 R2
-0x0000838D       STW R2 [R11]               ; exclusive end of archive
+0x00009085       MOV R8 R1                  ; current tar header
+0x00009089       LI R11 tar_limit
+0x00009091       ADD R2 R1 R2
+0x00009095       STW R2 [R11]               ; exclusive end of archive
 
-0x00008391       LI R9 tar_index            ; current index entry
+0x00009099       LI R9 tar_index            ; current index entry
 
-0x00008399       LI R10 0                   ; file count
+0x000090A1       LI R10 0                   ; file count
 
 tar_scan_loop:
 
-0x000083A1       CMP R10 MAX_TAR_FILES
-0x000083A5       BGE tar_done                ; check before writing the next index entry
+0x000090A9       CMP R10 MAX_TAR_FILES
+0x000090AD       BGE tar_done                ; check before writing the next index entry
 
-0x000083AD       LI R11 tar_limit
-0x000083B5       LDW R11 [R11]
-0x000083B9       LI R12 TAR_HEADER_SIZE
-0x000083C1       ADD R12 R8 R12
-0x000083C5       CMP R12 R11
-0x000083C9       BGTU tar_done               ; truncated/corrupt header
+0x000090B5       LI R11 tar_limit
+0x000090BD       LDW R11 [R11]
+0x000090C1       LI R12 TAR_HEADER_SIZE
+0x000090C9       ADD R12 R8 R12
+0x000090CD       CMP R12 R11
+0x000090D1       BGTU tar_done               ; truncated/corrupt header
 
     ; ------------------------------------
     ; end of archive?
     ; ------------------------------------
 
-0x000083D1       LDB R11 [R8 + TAR_NAME_OFF]
+0x000090D9       LDB R11 [R8 + TAR_NAME_OFF]
 
-0x000083D5       CMP R11 0                   ; if name[0] == 0, this is the end of the archive
+0x000090DD       CMP R11 0                   ; if name[0] == 0, this is the end of the archive
                                 ; (two consecutive zero 512-byte blocks)
-0x000083D9       BEQ tar_done
+0x000090E1       BEQ tar_done
 
     ; ------------------------------------
     ; name pointer
     ; ------------------------------------
 
-0x000083E1       MOV R11 R8
+0x000090E9       MOV R11 R8
 
-0x000083E5       ADD R11 R11 TAR_NAME_OFF
+0x000090ED       ADD R11 R11 TAR_NAME_OFF
 
-0x000083E9       STW R11 [R9 + TAR_IDX_NAME]
+0x000090F1       STW R11 [R9 + TAR_IDX_NAME]
 
     ; ------------------------------------
     ; size
     ; ------------------------------------
 
-0x000083ED       MOV R1 R8
-0x000083F1       ADD R1 R1 TAR_SIZE_OFF
+0x000090F5       MOV R1 R8
+0x000090F9       ADD R1 R1 TAR_SIZE_OFF
 
     ;R1 = ptr to TAR size field
 
-0x000083F5       BL tar_parse_octal         ; parse octal size from tar header field to binary integer
+0x000090FD       BL tar_parse_octal         ; parse octal size from tar header field to binary integer
 
-0x000083FD       MOV R12 R1                 ; save file resulted binary size
+0x00009105       MOV R12 R1                 ; save file resulted binary size
 
-0x00008401       STW R12 [R9 + TAR_IDX_SIZE]
+0x00009109       STW R12 [R9 + TAR_IDX_SIZE]
 
     ; ------------------------------------
     ; data pointer
     ; ------------------------------------
 
-0x00008405       MOV R11 R8
-0x00008409       LI R2 TAR_HEADER_SIZE
-0x00008411       ADD R11 R11 R2
+0x0000910D       MOV R11 R8
+0x00009111       LI R2 TAR_HEADER_SIZE
+0x00009119       ADD R11 R11 R2
 
-0x00008415       STW R11 [R9 + TAR_IDX_DATA]
+0x0000911D       STW R11 [R9 + TAR_IDX_DATA]
 
     ; ------------------------------------
     ; type - file or directory 0 for file, 5 for directory
     ; ------------------------------------
 
-0x00008419       LI R2 TAR_TYPE_OFF
-0x00008421       ADD R2 R8 R2
-0x00008425       LDB R11 [R2]
-0x00008429       STW R11 [R9 + TAR_IDX_TYPE]
+0x00009121       LI R2 TAR_TYPE_OFF
+0x00009129       ADD R2 R8 R2
+0x0000912D       LDB R11 [R2]
+0x00009131       STW R11 [R9 + TAR_IDX_TYPE]
 
     ; ------------------------------------
     ; next index entry
     ; ------------------------------------
 
-0x0000842D       ADD R10 R10 1               ; othewise go to next file count
+0x00009135       ADD R10 R10 1               ; othewise go to next file count
 
-0x00008431       ADD R9 R9 TAR_IDX_SIZEOF
+0x00009139       ADD R9 R9 TAR_IDX_SIZEOF
 
     ; ------------------------------------
     ; advance to next tar header
     ; ------------------------------------
 
-0x00008435       MOV R11 R12
+0x0000913D       MOV R11 R12
 
     ; round up to 512 boundary
 
-0x00008439       LI R2 511
-0x00008441       ADD R11 R11 R2
+0x00009141       LI R2 511
+0x00009149       ADD R11 R11 R2
 
-0x00008445       SHR R11 R11 9
-0x00008449       SHL R11 R11 9           ; R11 = size rounded up to next 512 multiple
+0x0000914D       SHR R11 R11 9
+0x00009151       SHL R11 R11 9           ; R11 = size rounded up to next 512 multiple
 
-0x0000844D       LI R2 TAR_HEADER_SIZE
-0x00008455       ADD R8 R8 R2
+0x00009155       LI R2 TAR_HEADER_SIZE
+0x0000915D       ADD R8 R8 R2
 
-0x00008459       ADD R8 R8 R11           ; advance to next tar header
+0x00009161       ADD R8 R8 R11           ; advance to next tar header
 
-0x0000845D       LI R12 tar_limit
-0x00008465       LDW R12 [R12]
-0x00008469       CMP R8 R12
-0x0000846D       BGTU tar_done            ; file data/padding extends beyond archive
+0x00009165       LI R12 tar_limit
+0x0000916D       LDW R12 [R12]
+0x00009171       CMP R8 R12
+0x00009175       BGTU tar_done            ; file data/padding extends beyond archive
 
-0x00008475       B tar_scan_loop
+0x0000917D       B tar_scan_loop
 
 tar_done:
 
-0x0000847D       LI R11 tar_count        ; store total file count for this tar archive in global variable
+0x00009185       LI R11 tar_count        ; store total file count for this tar archive in global variable
 
-0x00008485       STW R10 [R11]
+0x0000918D       STW R10 [R11]
 
-0x00008489       POP R12
-0x0000848D       POP R11
-0x00008491       POP R10
-0x00008495       POP R9
-0x00008499       POP R8
-0x0000849D       POP LR
+0x00009191       POP R12
+0x00009195       POP R11
+0x00009199       POP R10
+0x0000919D       POP R9
+0x000091A1       POP R8
+0x000091A5       POP LR
 
-0x000084A1       RET
+0x000091A9       RET
 
 ; --------------------------------------------------
 ; tar_parse_octal - a history of bit of unix code now in our kenrel!
@@ -5491,53 +5720,53 @@ tar_done:
 
 tar_parse_octal:
 
-0x000084A5       PUSH R2
-0x000084A9       PUSH R3
-0x000084AD       PUSH R4
+0x000091AD       PUSH R2
+0x000091B1       PUSH R3
+0x000091B5       PUSH R4
 
-0x000084B1       LI   R2 0                  ; result
+0x000091B9       LI   R2 0                  ; result
 
 octal_loop:
 
-0x000084B9       LDB  R3 [R1]
+0x000091C1       LDB  R3 [R1]
 
     ; end of field?
     ;
     ; ASCII NUL = 0
     ; ASCII SPACE = 32
 
-0x000084BD       CMP  R3 0
-0x000084C1       BEQ  octal_done
+0x000091C5       CMP  R3 0
+0x000091C9       BEQ  octal_done
 
-0x000084C9       LI   R4 32                 ; ' '
-0x000084D1       CMP  R3 R4
-0x000084D5       BEQ  octal_done
+0x000091D1       LI   R4 32                 ; ' '
+0x000091D9       CMP  R3 R4
+0x000091DD       BEQ  octal_done
 
     ; digit = ascii - '0'
     ;
     ; ASCII '0' = 48
 
-0x000084DD       LI   R4 48
-0x000084E5       SUB  R3 R3 R4
+0x000091E5       LI   R4 48
+0x000091ED       SUB  R3 R3 R4
 
     ; result = result * 8 + digit
 
-0x000084E9       SHL  R2 R2 3               ; multiply by 8
+0x000091F1       SHL  R2 R2 3               ; multiply by 8
 
-0x000084ED       ADD  R2 R2 R3              ; add digit
+0x000091F5       ADD  R2 R2 R3              ; add digit
 
-0x000084F1       ADD  R1 R1 1               ; advance to next octal character
+0x000091F9       ADD  R1 R1 1               ; advance to next octal character
 
-0x000084F5       B    octal_loop
+0x000091FD       B    octal_loop
 
 octal_done:
 
-0x000084FD       MOV  R1 R2                 ; return binary result in R1
+0x00009205       MOV  R1 R2                 ; return binary result in R1
 
-0x00008501       POP  R4
-0x00008505       POP  R3
-0x00008509       POP  R2
-0x0000850D       RET
+0x00009209       POP  R4
+0x0000920D       POP  R3
+0x00009211       POP  R2
+0x00009215       RET
 
 ; for kputs
 newline:
@@ -5560,57 +5789,57 @@ bin_path:
 ;==============================================================
 tarfs_dump_index:
 
-0x00008528       PUSH LR
-0x0000852C       PUSH R8
-0x00008530       PUSH R9
-0x00008534       PUSH R10
+0x00009230       PUSH LR
+0x00009234       PUSH R8
+0x00009238       PUSH R9
+0x0000923C       PUSH R10
 
-0x00008538       LI R8 0
+0x00009240       LI R8 0
 
-0x00008540       LI R10 tar_count
-0x00008548       LDW R10 [R10]
+0x00009248       LI R10 tar_count
+0x00009250       LDW R10 [R10]
 
-0x0000854C       LI R1 tarfs_banner
-0x00008554       BL kputs
+0x00009254       LI R1 tarfs_banner
+0x0000925C       BL kputs
 
 dump_loop:
 
-0x0000855C       CMP R8 R10
-0x00008560       BGE dump_done
+0x00009264       CMP R8 R10
+0x00009268       BGE dump_done
 
     ; entry = tar_index + i*sizeof(entry)
 
-0x00008568       LI R1 tar_index
+0x00009270       LI R1 tar_index
 
-0x00008570       LI R2 TAR_IDX_SIZEOF
-0x00008578       MUL R3 R8 R2
+0x00009278       LI R2 TAR_IDX_SIZEOF
+0x00009280       MUL R3 R8 R2
 
-0x0000857C       ADD R9 R1 R3
+0x00009284       ADD R9 R1 R3
 
     ; filename
 
-0x00008580       LDW R2 [R9 + TAR_IDX_NAME]
+0x00009288       LDW R2 [R9 + TAR_IDX_NAME]
 
     ; print string somehow
 
-0x00008584       MOV R1 R2
-0x00008588       BL kputs
+0x0000928C       MOV R1 R2
+0x00009290       BL kputs
 
     ; newline
 
-0x00008590       LI R1 newline
-0x00008598       BL kputs
+0x00009298       LI R1 newline
+0x000092A0       BL kputs
 
-0x000085A0       ADD R8 R8 1
-0x000085A4       B dump_loop
+0x000092A8       ADD R8 R8 1
+0x000092AC       B dump_loop
 
 dump_done:
 
-0x000085AC       POP R10
-0x000085B0       POP R9
-0x000085B4       POP R8
-0x000085B8       POP LR
-0x000085BC       RET
+0x000092B4       POP R10
+0x000092B8       POP R9
+0x000092BC       POP R8
+0x000092C0       POP LR
+0x000092C4       RET
 
 ;==============================================================
 ; TARFS file operations
@@ -5627,89 +5856,89 @@ dump_done:
 
 tarfs_read:
 
-0x000085C0       PUSH LR
-0x000085C4       PUSH R8
-0x000085C8       PUSH R9
-0x000085CC       PUSH R10
-0x000085D0       PUSH R11
-0x000085D4       PUSH R12
+0x000092C8       PUSH LR
+0x000092CC       PUSH R8
+0x000092D0       PUSH R9
+0x000092D4       PUSH R10
+0x000092D8       PUSH R11
+0x000092DC       PUSH R12
 
-0x000085D8       MOV R8 R1
-0x000085DC       MOV R9 R2
-0x000085E0       MOV R10 R3
+0x000092E0       MOV R8 R1
+0x000092E4       MOV R9 R2
+0x000092E8       MOV R10 R3
 
-0x000085E4       CMP R10 0
-0x000085E8       BEQ tarfs_read_eof
+0x000092EC       CMP R10 0
+0x000092F0       BEQ tarfs_read_eof
 
-0x000085F0       PUSH R8
-0x000085F4       PUSH R9
-0x000085F8       MOV R1 R9
-0x000085FC       MOV R2 R10
-0x00008600       LI R3 1                    ; destination must be user-writable
-0x00008608       BL user_buffer_valid_range
-0x00008610       POP R9
-0x00008614       POP R8
-0x00008618       CMP R1 1
-0x0000861C       BNE tarfs_read_fault
+0x000092F8       PUSH R8
+0x000092FC       PUSH R9
+0x00009300       MOV R1 R9
+0x00009304       MOV R2 R10
+0x00009308       LI R3 1                    ; destination must be user-writable
+0x00009310       BL user_buffer_valid_range
+0x00009318       POP R9
+0x0000931C       POP R8
+0x00009320       CMP R1 1
+0x00009324       BNE tarfs_read_fault
 
-0x00008624       LDW R11 [R8 + FILE_INODE]
-0x00008628       LDW R5  [R11 + INODE_TYPE]
-0x0000862C       LDW R11 [R11 + INODE_PRIVATE]
+0x0000932C       LDW R11 [R8 + FILE_INODE]
+0x00009330       LDW R5  [R11 + INODE_TYPE]
+0x00009334       LDW R11 [R11 + INODE_PRIVATE]
      ; ---- check if this is a directory ----
-0x00008630       LI  R2 INODE_DIR
-0x00008638       CMP R5 R2
+0x00009338       LI  R2 INODE_DIR
+0x00009340       CMP R5 R2
     ; CMP R5 INODE_DIR - this will result inerror as command will be assembled in decimal number
-0x0000863C       BEQ tarfs_read_dir
+0x00009344       BEQ tarfs_read_dir
 
-0x00008644       LDW R12 [R8 + FILE_OFFSET]
-0x00008648       LDW R4  [R11 + TAR_IDX_SIZE]
+0x0000934C       LDW R12 [R8 + FILE_OFFSET]
+0x00009350       LDW R4  [R11 + TAR_IDX_SIZE]
 
-0x0000864C       CMP R12 R4
-0x00008650       BGEU tarfs_read_eof
+0x00009354       CMP R12 R4
+0x00009358       BGEU tarfs_read_eof
 
-0x00008658       SUB R4 R4 R12             ; bytes remaining
-0x0000865C       CMP R10 R4
-0x00008660       BLEU tarfs_read_count_ready
-0x00008668       MOV R10 R4
+0x00009360       SUB R4 R4 R12             ; bytes remaining
+0x00009364       CMP R10 R4
+0x00009368       BLEU tarfs_read_count_ready
+0x00009370       MOV R10 R4
 
 tarfs_read_count_ready:
-0x0000866C       LDW R4 [R11 + TAR_IDX_DATA]
-0x00008670       ADD R4 R4 R12             ; kernel source
-0x00008674       MOV R1 R9                 ; user destination
-0x00008678       MOV R2 R10
-0x0000867C       BL copy_to_user
+0x00009374       LDW R4 [R11 + TAR_IDX_DATA]
+0x00009378       ADD R4 R4 R12             ; kernel source
+0x0000937C       MOV R1 R9                 ; user destination
+0x00009380       MOV R2 R10
+0x00009384       BL copy_to_user
 
-0x00008684       ADD R12 R12 R1
-0x00008688       STW R12 [R8 + FILE_OFFSET]
-0x0000868C       B tarfs_read_done
+0x0000938C       ADD R12 R12 R1
+0x00009390       STW R12 [R8 + FILE_OFFSET]
+0x00009394       B tarfs_read_done
 
 tarfs_read_dir:
     ; directory read – call our dir read function
-0x00008694       MOV R1 R8
-0x00008698       MOV R2 R9
-0x0000869C       MOV R3 R10
-0x000086A0       BL tarfs_readdir
-0x000086A8       B tarfs_read_done   ; jump to the common return path
+0x0000939C       MOV R1 R8
+0x000093A0       MOV R2 R9
+0x000093A4       MOV R3 R10
+0x000093A8       BL tarfs_readdir
+0x000093B0       B tarfs_read_done   ; jump to the common return path
 
 tarfs_read_fault:
-0x000086B0       LI R1 ERR_FAULT
-0x000086B8       B tarfs_read_done
+0x000093B8       LI R1 ERR_FAULT
+0x000093C0       B tarfs_read_done
 
 tarfs_read_eof:
-0x000086C0       LI R1 0
+0x000093C8       LI R1 0
 
 tarfs_read_done:
-0x000086C8       POP R12
-0x000086CC       POP R11
-0x000086D0       POP R10
-0x000086D4       POP R9
-0x000086D8       POP R8
-0x000086DC       POP LR
-0x000086E0       RET
+0x000093D0       POP R12
+0x000093D4       POP R11
+0x000093D8       POP R10
+0x000093DC       POP R9
+0x000093E0       POP R8
+0x000093E4       POP LR
+0x000093E8       RET
 
 tarfs_write:
-0x000086E4       LI R1 ERR_ACCES
-0x000086EC       RET
+0x000093EC       LI R1 ERR_ACCES
+0x000093F4       RET
 
 ; --------------------------------------------------
 ; tarfs_readdir - read next directory entry into user buffer
@@ -5722,118 +5951,118 @@ tarfs_write:
 ;   R1 = DIRENT_SIZEOF (74) on success, 0 on EOF, negative errno
 ; --------------------------------------------------
 tarfs_readdir:
-0x000086F0       PUSH LR
-0x000086F4       PUSH R8
-0x000086F8       PUSH R9
-0x000086FC       PUSH R10
-0x00008700       PUSH R11
-0x00008704       PUSH R12
+0x000093F8       PUSH LR
+0x000093FC       PUSH R8
+0x00009400       PUSH R9
+0x00009404       PUSH R10
+0x00009408       PUSH R11
+0x0000940C       PUSH R12
 
     ; ---- validate user buffer ----
-0x00008708       MOV R8 R2                 ; save user buffer + to stack
-0x0000870C       PUSH R8
-0x00008710       MOV R9 R3                 ; save length
-0x00008714       MOV R12 R1                ; save file ptr
-0x00008718       CMP R9 DIRENT_SIZEOF
-0x0000871C       BLT readdir_short         ; not enough space for one entry
+0x00009410       MOV R8 R2                 ; save user buffer + to stack
+0x00009414       PUSH R8
+0x00009418       MOV R9 R3                 ; save length
+0x0000941C       MOV R12 R1                ; save file ptr
+0x00009420       CMP R9 DIRENT_SIZEOF
+0x00009424       BLT readdir_short         ; not enough space for one entry
 
     ;PUSH R9
-0x00008724       MOV R1 R8
-0x00008728       LI  R2 DIRENT_SIZEOF
-0x00008730       LI  R3 1                  ; write access
-0x00008738       BL  user_buffer_valid_range
+0x0000942C       MOV R1 R8
+0x00009430       LI  R2 DIRENT_SIZEOF
+0x00009438       LI  R3 1                  ; write access
+0x00009440       BL  user_buffer_valid_range
     ;POP R9
-0x00008740       CMP R1 1
-0x00008744       BNE readdir_fault
+0x00009448       CMP R1 1
+0x0000944C       BNE readdir_fault
 
     ; ---- get inode and private data ----
-0x0000874C       LDW R4 [R12 + FILE_INODE]    ; R4 = inode* r12 -file ptf
-0x00008750       LDW R5 [R4 + INODE_PRIVATE] ; R5 = tar index entry for the directory itself
-0x00008754       CMP R5 0
-0x00008758       BEQ readdir_eof
+0x00009454       LDW R4 [R12 + FILE_INODE]    ; R4 = inode* r12 -file ptf
+0x00009458       LDW R5 [R4 + INODE_PRIVATE] ; R5 = tar index entry for the directory itself
+0x0000945C       CMP R5 0
+0x00009460       BEQ readdir_eof
 
     ; get directory prefix from that tar entry (e.g., "etc/")
-0x00008760       LDW R10 [R5 + TAR_IDX_NAME] ; R10 = full path of directory (with trailing /)
+0x00009468       LDW R10 [R5 + TAR_IDX_NAME] ; R10 = full path of directory (with trailing /)
 
     ; load current entry index from file offset
-0x00008764       LDW R11 [R12 + FILE_OFFSET] ; R11 = index (number of entries already returned)
+0x0000946C       LDW R11 [R12 + FILE_OFFSET] ; R11 = index (number of entries already returned)
 
     ; ---- scan tar index from this index ----
     ;LI R12 tar_count
     ;LDW R12 [R12]             ; total number of tar entries
-0x00008768       MOV R6 R11                ; current scan index
+0x00009470       MOV R6 R11                ; current scan index
 
 readdir_scan:
-0x0000876C       LI  R1 tar_count          ;total number entryes in index count
-0x00008774       LDW R1 [R1]
-0x00008778       CMP R6 R1
-0x0000877C       BGE readdir_eof           ; no more entries
+0x00009474       LI  R1 tar_count          ;total number entryes in index count
+0x0000947C       LDW R1 [R1]
+0x00009480       CMP R6 R1
+0x00009484       BGE readdir_eof           ; no more entries
 
     ; entry = tar_index + R6 * TAR_IDX_SIZEOF
-0x00008784       LI R1 tar_index
-0x0000878C       LI R2 TAR_IDX_SIZEOF
-0x00008794       MUL R3 R6 R2
-0x00008798       ADD R7 R1 R3              ; R7 = &tar_index[R6]
+0x0000948C       LI R1 tar_index
+0x00009494       LI R2 TAR_IDX_SIZEOF
+0x0000949C       MUL R3 R6 R2
+0x000094A0       ADD R7 R1 R3              ; R7 = &tar_index[R6]
 
     ; check if this entry's name starts with the directory prefix
-0x0000879C       LDW R1 [R7 + TAR_IDX_NAME]
-0x000087A0       MOV R2 R10
-0x000087A4       BL str_prefix            ; check if tar_index entry name ie etc/motd matches prefix etc/
-0x000087AC       CMP R1 1
-0x000087B0       BNE readdir_skip
+0x000094A4       LDW R1 [R7 + TAR_IDX_NAME]
+0x000094A8       MOV R2 R10
+0x000094AC       BL str_prefix            ; check if tar_index entry name ie etc/motd matches prefix etc/
+0x000094B4       CMP R1 1
+0x000094B8       BNE readdir_skip
 
     ; skip the directory entry itself (exact match)
-0x000087B8       LDW R1 [R7 + TAR_IDX_NAME]
-0x000087BC       MOV R2 R10
-0x000087C0       BL strcmp                ; ie skip if we read 'etc/' == etc/
-0x000087C8       CMP R1 1
-0x000087CC       BEQ readdir_skip
+0x000094C0       LDW R1 [R7 + TAR_IDX_NAME]
+0x000094C4       MOV R2 R10
+0x000094C8       BL strcmp                ; ie skip if we read 'etc/' == etc/
+0x000094D0       CMP R1 1
+0x000094D4       BEQ readdir_skip
 
     ; ---- found a matching file/directory ----
     ; skip the prefix to get the relative component
-0x000087D4       LDW R1 [R7 + TAR_IDX_NAME]
-0x000087D8       MOV R2 R10
-0x000087DC       BL skip_prefix            ; R1 = pointer after prefix omit prefix - just filename 'etc/bin' -> bin
-0x000087E4       MOV R9 R1                 ; R9 = component name (e.g., "motd" (file) or "network/ (subdir)")
+0x000094DC       LDW R1 [R7 + TAR_IDX_NAME]
+0x000094E0       MOV R2 R10
+0x000094E4       BL skip_prefix            ; R1 = pointer after prefix omit prefix - just filename 'etc/bin' -> bin
+0x000094EC       MOV R9 R1                 ; R9 = component name (e.g., "motd" (file) or "network/ (subdir)")
 
     ; compute the component length up to next '/'
-0x000087E8       MOV R1 R9
-0x000087EC       BL path_component_len     ; R1 = component length (L)
-0x000087F4       MOV R8 R1                 ; R8 = component name length
+0x000094F0       MOV R1 R9
+0x000094F4       BL path_component_len     ; R1 = component length (L)
+0x000094FC       MOV R8 R1                 ; R8 = component name length
 
     ; clamp to DIRENT_NAME_LEN - 1 to avoid overflow
-0x000087F8       LI R2 63
-0x00008800       CMP R8 R2
-0x00008804       BLE readdir_name_ok
-0x0000880C       MOV R8 63
+0x00009500       LI R2 63
+0x00009508       CMP R8 R2
+0x0000950C       BLE readdir_name_ok
+0x00009514       MOV R8 63
 readdir_name_ok:
     ; save R6 cureent entry index
-0x00008810       MOV R11 R6
+0x00009518       MOV R11 R6
     ;get type
-0x00008814       LDW R6  [R7 + TAR_IDX_TYPE]  ;R6  R11 = tar type (0=file, 5=dir)
+0x0000951C       LDW R6  [R7 + TAR_IDX_TYPE]  ;R6  R11 = tar type (0=file, 5=dir)
 
     ; map tar type to DT_* constants
-0x00008818       LI  R1 INODE_DIR     ;adapted 35hex yess
-0x00008820       CMP R6 R1
+0x00009520       LI  R1 INODE_DIR     ;adapted 35hex yess
+0x00009528       CMP R6 R1
     ;CMP R6 5            ;needs to be adapted 35hex
-0x00008824       BEQ readdir_type_dir
-0x0000882C       LI R6 DT_REG               ; default type to regular r11 - file
-0x00008834       B readdir_type_done
+0x0000952C       BEQ readdir_type_dir
+0x00009534       LI R6 DT_REG               ; default type to regular r11 - file
+0x0000953C       B readdir_type_done
 readdir_type_dir:
-0x0000883C       LI R6 DT_DIR               ; switch type R11 - dir
+0x00009544       LI R6 DT_DIR               ; switch type R11 - dir
 readdir_type_done:
 
     ; ---- build struct dirent in KBUF_WR ----
 ; macro: GET_CURR_TASK_IDX R4
-0x00008844   LI R1 CURRENT_TASK
-0x0000884C   LDW R4 [R1]
+0x0000954C   LI R1 CURRENT_TASK
+0x00009554   LDW R4 [R1]
 ; macro: GET_TASK_PTR R5, R4
-0x00008850   LI R1 TASK_SIZE
-0x00008858   MUL R3 R4 R1
-0x0000885C   LI R5 tasks
-0x00008864   ADD R5 R5 R3
+0x00009558   LI R1 TASK_SIZE
+0x00009560   MUL R3 R4 R1
+0x00009564   LI R5 tasks
+0x0000956C   ADD R5 R5 R3
 ; macro: TASK_GET_KBUF_WR R1, R5
-0x00008868   LDW R1 [R5 + TASK_KBUF_WR_PTR]
+0x00009570   LDW R1 [R5 + TASK_KBUF_WR_PTR]
 
 
    ; GET_CURR_TASK_IDX R2
@@ -5841,95 +6070,95 @@ readdir_type_done:
    ; TASK_GET_KBUF_WR R5, R2    ; R5 = kernel write buffer
 
     ; d_ino = index + 1 (dummy); R1 = kernel write buffer - form dirent stuc with read dir-entry
-0x0000886C       ADD R3 R11 1
-0x00008870       STW R3 [R1 + DIRENT_INODE]
+0x00009574       ADD R3 R11 1
+0x00009578       STW R3 [R1 + DIRENT_INODE]
     ; d_type = DT_REG or DT_DIR
-0x00008874       STW R6 [R1 + DIRENT_TYPE]
+0x0000957C       STW R6 [R1 + DIRENT_TYPE]
 
     ; get size from tar entry
-0x00008878       LDW R2  [R7 + TAR_IDX_SIZE]  ; R12 = file size
+0x00009580       LDW R2  [R7 + TAR_IDX_SIZE]  ; R12 = file size
     ; d_size = file size
-0x0000887C       STW R2  [R1 + DIRENT_SIZE]
+0x00009584       STW R2  [R1 + DIRENT_SIZE]
 
     ; ---- update file offset to next entry ----
     ;ADD R6 R6 1
-0x00008880       STW R3 [R12 + FILE_OFFSET] ; store new index R11+1 for next read
+0x00009588       STW R3 [R12 + FILE_OFFSET] ; store new index R11+1 for next read
 
 
     ; d_name = component name (copy up to 64 bytes)
-0x00008884       MOV R2 R9                  ; source name R9 = component name (e.g., "motd" (file) or "network/ (subdir)")
-0x00008888       ADD R3 R1 DIRENT_NAME      ; destination dirent struc in KBUF_WR
-0x0000888C       LI  R6 0                   ; index
+0x0000958C       MOV R2 R9                  ; source name R9 = component name (e.g., "motd" (file) or "network/ (subdir)")
+0x00009590       ADD R3 R1 DIRENT_NAME      ; destination dirent struc in KBUF_WR
+0x00009594       LI  R6 0                   ; index
 
 readdir_copy_name:
-0x00008894       CMP R6 R8                  ;R8 = component name length
-0x00008898       BGE readdir_copy_name_done
-0x000088A0       LDB R10 [R2 + R6]
-0x000088A4       STB R10 [R3 + R6]
-0x000088A8       ADD R6 R6 1
-0x000088AC       B readdir_copy_name
+0x0000959C       CMP R6 R8                  ;R8 = component name length
+0x000095A0       BGE readdir_copy_name_done
+0x000095A8       LDB R10 [R2 + R6]
+0x000095AC       STB R10 [R3 + R6]
+0x000095B0       ADD R6 R6 1
+0x000095B4       B readdir_copy_name
 
 readdir_copy_name_done:
     ; NUL-terminate
-0x000088B4       LI R10 0
-0x000088BC       STB R10 [R3 + R6]
+0x000095BC       LI R10 0
+0x000095C4       STB R10 [R3 + R6]
 
     ; ---- copy whole dirent (DIRENT_SIZEOF bytes) to user buffer ----
 
-0x000088C0       LI  R2 DIRENT_SIZEOF      ; len dirent
-0x000088C8       MOV R4 R1                 ; kernel source (KBUF_WR)
-0x000088CC       POP R1                    ; user buffer (original)
+0x000095C8       LI  R2 DIRENT_SIZEOF      ; len dirent
+0x000095D0       MOV R4 R1                 ; kernel source (KBUF_WR)
+0x000095D4       POP R1                    ; user buffer (original)
     ;MOV R1 R8                 ; user buffer (original)
-0x000088D0       BL copy_to_user
-0x000088D8       CMP R1 DIRENT_SIZEOF
-0x000088DC       BNE readdir_fault
+0x000095D8       BL copy_to_user
+0x000095E0       CMP R1 DIRENT_SIZEOF
+0x000095E4       BNE readdir_fault
 
     ; return number of bytes written (DIRENT_SIZEOF)
-0x000088E4       MOV R1 DIRENT_SIZEOF
-0x000088E8       POP R12
-0x000088EC       POP R11
-0x000088F0       POP R10
-0x000088F4       POP R9
-0x000088F8       POP R8
-0x000088FC       POP LR
-0x00008900       RET
+0x000095EC       MOV R1 DIRENT_SIZEOF
+0x000095F0       POP R12
+0x000095F4       POP R11
+0x000095F8       POP R10
+0x000095FC       POP R9
+0x00009600       POP R8
+0x00009604       POP LR
+0x00009608       RET
 
 readdir_skip:
-0x00008904       ADD R6 R6 1
-0x00008908       B readdir_scan
+0x0000960C       ADD R6 R6 1
+0x00009610       B readdir_scan
 
 readdir_eof:
-0x00008910       Pop R1          ;bc we saved r8 inside loop
-0x00008914       LI R1 0
-0x0000891C       POP R12
-0x00008920       POP R11
-0x00008924       POP R10
-0x00008928       POP R9
-0x0000892C       POP R8
-0x00008930       POP LR
-0x00008934       RET
+0x00009618       Pop R1          ;bc we saved r8 inside loop
+0x0000961C       LI R1 0
+0x00009624       POP R12
+0x00009628       POP R11
+0x0000962C       POP R10
+0x00009630       POP R9
+0x00009634       POP R8
+0x00009638       POP LR
+0x0000963C       RET
 
 readdir_short:
-0x00008938       Pop R1
-0x0000893C       LI R1 ERR_FAULT
-0x00008944       POP R12
-0x00008948       POP R11
-0x0000894C       POP R10
-0x00008950       POP R9
-0x00008954       POP R8
-0x00008958       POP LR
-0x0000895C       RET
+0x00009640       Pop R1
+0x00009644       LI R1 ERR_FAULT
+0x0000964C       POP R12
+0x00009650       POP R11
+0x00009654       POP R10
+0x00009658       POP R9
+0x0000965C       POP R8
+0x00009660       POP LR
+0x00009664       RET
 
 readdir_fault:
-0x00008960       Pop R1
-0x00008964       LI R1 ERR_FAULT
-0x0000896C       POP R12
-0x00008970       POP R11
-0x00008974       POP R10
-0x00008978       POP R9
-0x0000897C       POP R8
-0x00008980       POP LR
-0x00008984       RET
+0x00009668       Pop R1
+0x0000966C       LI R1 ERR_FAULT
+0x00009674       POP R12
+0x00009678       POP R11
+0x0000967C       POP R10
+0x00009680       POP R9
+0x00009684       POP R8
+0x00009688       POP LR
+0x0000968C       RET
 
 
 ;==========================================================================
@@ -5948,57 +6177,57 @@ readdir_fault:
 
 tarfs_readdir1:
 
-0x00008988       PUSH LR
-0x0000898C       PUSH R8
-0x00008990       PUSH R9
-0x00008994       PUSH R10
-0x00008998       PUSH R11
+0x00009690       PUSH LR
+0x00009694       PUSH R8
+0x00009698       PUSH R9
+0x0000969C       PUSH R10
+0x000096A0       PUSH R11
 
-0x0000899C       MOV R8 R1              ; save directory path
-0x000089A0       LI R9 0                ; index
+0x000096A4       MOV R8 R1              ; save directory path
+0x000096A8       LI R9 0                ; index
 
-0x000089A8       LI R10 tar_count
-0x000089B0       LDW R10 [R10]
+0x000096B0       LI R10 tar_count
+0x000096B8       LDW R10 [R10]
 tr_loop:
-0x000089B4       CMP R9 R10
-0x000089B8       BGE tr_done                     ;if all tar index scanned
+0x000096BC       CMP R9 R10
+0x000096C0       BGE tr_done                     ;if all tar index scanned
 
     ; entry = &tar_index[i]
-0x000089C0       LI R1 tar_index
-0x000089C8       LI R2 TAR_IDX_SIZEOF
-0x000089D0       MUL R3 R9 R2
-0x000089D4       ADD R11 R1 R3
+0x000096C8       LI R1 tar_index
+0x000096D0       LI R2 TAR_IDX_SIZEOF
+0x000096D8       MUL R3 R9 R2
+0x000096DC       ADD R11 R1 R3
     ; entry name
-0x000089D8       LDW R1 [R11 + TAR_IDX_NAME]
-0x000089DC       MOV R2 R8                       ; src dirname "etc/"
-0x000089E0       BL str_prefix                   ; check if tar_index entry name ie etc/motd matches prefix etc/
-0x000089E8       CMP R1 1
-0x000089EC       BNE tr_next                     ;r1=0 no match
+0x000096E0       LDW R1 [R11 + TAR_IDX_NAME]
+0x000096E4       MOV R2 R8                       ; src dirname "etc/"
+0x000096E8       BL str_prefix                   ; check if tar_index entry name ie etc/motd matches prefix etc/
+0x000096F0       CMP R1 1
+0x000096F4       BNE tr_next                     ;r1=0 no match
 
     ; print matching name
-0x000089F4       LDW R1 [R11 + TAR_IDX_NAME]
-0x000089F8       MOV R2 R8                       ; prefix
-0x000089FC       BL skip_prefix                  ; omit prefix nd print just filename
+0x000096FC       LDW R1 [R11 + TAR_IDX_NAME]
+0x00009700       MOV R2 R8                       ; prefix
+0x00009704       BL skip_prefix                  ; omit prefix nd print just filename
 
-0x00008A04       MOV R12 R1         ; save component ptr
-0x00008A08       BL path_component_len ; out R1-length
-0x00008A10       MOV R2 R1
-0x00008A14       MOV R1 R12
-0x00008A18       BL kputsn   ; r1-ptr r2-len of string
+0x0000970C       MOV R12 R1         ; save component ptr
+0x00009710       BL path_component_len ; out R1-length
+0x00009718       MOV R2 R1
+0x0000971C       MOV R1 R12
+0x00009720       BL kputsn   ; r1-ptr r2-len of string
 
-0x00008A20       LI R1 newline
-0x00008A28       BL kputs
+0x00009728       LI R1 newline
+0x00009730       BL kputs
 
 tr_next:
-0x00008A30       ADD R9 R9 1                     ;to next entry for check
-0x00008A34       B tr_loop
+0x00009738       ADD R9 R9 1                     ;to next entry for check
+0x0000973C       B tr_loop
 tr_done:
-0x00008A3C       POP R11
-0x00008A40       POP R10
-0x00008A44       POP R9
-0x00008A48       POP R8
-0x00008A4C       POP LR
-0x00008A50       RET
+0x00009744       POP R11
+0x00009748       POP R10
+0x0000974C       POP R9
+0x00009750       POP R8
+0x00009754       POP LR
+0x00009758       RET
 
 ;==============================================================
 ; kputs - Simple kernel printf for debugging - prints a zero-terminated string
@@ -6008,26 +6237,26 @@ tr_done:
 
 kputs:
 
-0x00008A54       PUSH LR
-0x00008A58       PUSH R8
-0x00008A5C       MOV R8 R1
+0x0000975C       PUSH LR
+0x00009760       PUSH R8
+0x00009764       MOV R8 R1
 
 kputs_loop:
-0x00008A60       LDB R1 [R8]
+0x00009768       LDB R1 [R8]
 
-0x00008A64       CMP R1 0
-0x00008A68       BEQ kputs_done
+0x0000976C       CMP R1 0
+0x00009770       BEQ kputs_done
 
-0x00008A70       BL uart_putc
+0x00009778       BL uart_putc
 
-0x00008A78       ADD R8 R8 1
+0x00009780       ADD R8 R8 1
 
-0x00008A7C       B kputs_loop
+0x00009784       B kputs_loop
 
 kputs_done:
-0x00008A84       POP R8
-0x00008A88       POP LR
-0x00008A8C       RET
+0x0000978C       POP R8
+0x00009790       POP LR
+0x00009794       RET
 
 ;==============================================================
 ; kputsn - Simple kernel printf for debugging - prints n chars of string
@@ -6037,41 +6266,41 @@ kputs_done:
 ;==============================================================
 
 kputsn:
-0x00008A90       PUSH LR
-0x00008A94       PUSH R8
-0x00008A98       PUSH R9
-0x00008A9C       MOV R8 R1
-0x00008AA0       MOV R9 R2
+0x00009798       PUSH LR
+0x0000979C       PUSH R8
+0x000097A0       PUSH R9
+0x000097A4       MOV R8 R1
+0x000097A8       MOV R9 R2
 kputsn_loop:
-0x00008AA4       CMP R9 0
-0x00008AA8       BEQ kputsn_done
-0x00008AB0       LDB R1 [R8]
+0x000097AC       CMP R9 0
+0x000097B0       BEQ kputsn_done
+0x000097B8       LDB R1 [R8]
    ; CMP R1 0
    ; BEQ kputs_done
-0x00008AB4       BL uart_putc
-0x00008ABC       ADD R8 R8 1
-0x00008AC0       SUB R9 R9 1
-0x00008AC4       B kputsn_loop
+0x000097BC       BL uart_putc
+0x000097C4       ADD R8 R8 1
+0x000097C8       SUB R9 R9 1
+0x000097CC       B kputsn_loop
 kputsn_done:
-0x00008ACC       POP R9
-0x00008AD0       POP R8
-0x00008AD4       POP LR
-0x00008AD8       RET
+0x000097D4       POP R9
+0x000097D8       POP R8
+0x000097DC       POP LR
+0x000097E0       RET
 
 ;=====================================
 ; debug put char to uart from kernel
 ;=====================================
 uart_putc:
 
-0x00008ADC       LI R3 0x00100000  ; UART MMIO Base Address
+0x000097E4       LI R3 0x00100000  ; UART MMIO Base Address
 poll:
-0x00008AE4       LDW R2 [R3 + 4]   ; read UART status register
-0x00008AE8       AND R2 R2 2       ; check if TX ready (bit 1)
-0x00008AEC       CMP R2 0
-0x00008AF0       BEQ poll
+0x000097EC       LDW R2 [R3 + 4]   ; read UART status register
+0x000097F0       AND R2 R2 2       ; check if TX ready (bit 1)
+0x000097F4       CMP R2 0
+0x000097F8       BEQ poll
 
-0x00008AF8       STW R1 [R3 + 0]   ; R1 is the character value
-0x00008AFC       RET
+0x00009800       STW R1 [R3 + 0]   ; R1 is the character value
+0x00009804       RET
 
 
 
@@ -6089,47 +6318,47 @@ waitq_prepare_sleep:
     ; Device code must re-check hardware readiness after this call. If
     ; the condition is already true, call waitq_cancel_sleep_current.
     ;================================================================
-0x00008B00       PUSH R8
-0x00008B04       PUSH R9
-0x00008B08       PUSH R10
+0x00009808       PUSH R8
+0x0000980C       PUSH R9
+0x00009810       PUSH R10
 
-0x00008B0C       MOV R9 R1                  ; preserve wait queue pointer
-0x00008B10       MOV R10 R2                 ; preserve debug wait reason
-0x00008B14       MOV R8 R3                  ; preserve task state to set
+0x00009814       MOV R9 R1                  ; preserve wait queue pointer
+0x00009818       MOV R10 R2                 ; preserve debug wait reason
+0x0000981C       MOV R8 R3                  ; preserve task state to set
 
 ; macro: GET_CURR_TASK_IDX R2       ; R2 = current task index
-0x00008B18   LI R1 CURRENT_TASK
-0x00008B20   LDW R2 [R1]
+0x00009820   LI R1 CURRENT_TASK
+0x00009828   LDW R2 [R1]
 
-0x00008B24       LI R4 1
-0x00008B2C       SHL R4 R4 R2               ; R4 = bit for current task
-0x00008B30       LDW R5 [R9 + WQ_MASK]
-0x00008B34       OR R5 R5 R4
-0x00008B38       STW R5 [R9 + WQ_MASK]
+0x0000982C       LI R4 1
+0x00009834       SHL R4 R4 R2               ; R4 = bit for current task
+0x00009838       LDW R5 [R9 + WQ_MASK]
+0x0000983C       OR R5 R5 R4
+0x00009840       STW R5 [R9 + WQ_MASK]
 
 ; macro: GET_TASK_PTR R5, R2
-0x00008B3C   LI R1 TASK_SIZE
-0x00008B44   MUL R3 R2 R1
-0x00008B48   LI R5 tasks
-0x00008B50   ADD R5 R5 R3
+0x00009844   LI R1 TASK_SIZE
+0x0000984C   MUL R3 R2 R1
+0x00009850   LI R5 tasks
+0x00009858   ADD R5 R5 R3
 ; macro: TASK_SET_STATE R5, TASK_BLOCKED_IO
-0x00008B54   LI R1 TASK_BLOCKED_IO
-0x00008B5C   STW R1 [R5 + TASK_STATE]
+0x0000985C   LI R1 TASK_BLOCKED_IO
+0x00009864   STW R1 [R5 + TASK_STATE]
 ; macro: TASK_SET_WAIT R5, R10
-0x00008B60   STW R10 [R5 + TASK_WAIT]
+0x00009868   STW R10 [R5 + TASK_WAIT]
 
 ; addition trick if R3 is set as TASK_SLEEPING then we also set the state to TASK_SLEEPING for syscall sleep/waitpid
-0x00008B64       CMP R8 TASK_SLEEPING
-0x00008B68       BNE waitq_prepare_done
+0x0000986C       CMP R8 TASK_SLEEPING
+0x00009870       BNE waitq_prepare_done
 ; macro: TASK_SET_STATE R5, TASK_SLEEPING
-0x00008B70   LI R1 TASK_SLEEPING
-0x00008B78   STW R1 [R5 + TASK_STATE]
+0x00009878   LI R1 TASK_SLEEPING
+0x00009880   STW R1 [R5 + TASK_STATE]
 
 waitq_prepare_done:
-0x00008B7C       POP R10
-0x00008B80       POP R9
-0x00008B84       POP R8
-0x00008B88       RET
+0x00009884       POP R10
+0x00009888       POP R9
+0x0000988C       POP R8
+0x00009890       RET
 
 waitq_cancel_sleep_current:
     ;================================================================
@@ -6140,40 +6369,40 @@ waitq_cancel_sleep_current:
     ; ready before the task actually entered schedule_call.
     ;================================================================
 
-0x00008B8C       PUSH R9
+0x00009894       PUSH R9
 
-0x00008B90       MOV R9 R1
+0x00009898       MOV R9 R1
 
 ; macro: GET_CURR_TASK_IDX R2
-0x00008B94   LI R1 CURRENT_TASK
-0x00008B9C   LDW R2 [R1]
+0x0000989C   LI R1 CURRENT_TASK
+0x000098A4   LDW R2 [R1]
 
-0x00008BA0       LDW R4 [R9 + WQ_MASK]
+0x000098A8       LDW R4 [R9 + WQ_MASK]
 
-0x00008BA4       LI  R5 1
-0x00008BAC       SHL R5 R5 R2        ;shift to position of current task bit
+0x000098AC       LI  R5 1
+0x000098B4       SHL R5 R5 R2        ;shift to position of current task bit
 
-0x00008BB0       NOT R5 R5           ; invert to get mask for clearing this bit
+0x000098B8       NOT R5 R5           ; invert to get mask for clearing this bit
 
-0x00008BB4       AND R4 R4 R5        ; clear current task bit
+0x000098BC       AND R4 R4 R5        ; clear current task bit
 
-0x00008BB8       STW R4 [R9 + WQ_MASK]   ; store back updated bitmask
+0x000098C0       STW R4 [R9 + WQ_MASK]   ; store back updated bitmask
 
 ; macro: GET_TASK_PTR R5, R2
-0x00008BBC   LI R1 TASK_SIZE
-0x00008BC4   MUL R3 R2 R1
-0x00008BC8   LI R5 tasks
-0x00008BD0   ADD R5 R5 R3
+0x000098C4   LI R1 TASK_SIZE
+0x000098CC   MUL R3 R2 R1
+0x000098D0   LI R5 tasks
+0x000098D8   ADD R5 R5 R3
 
 ; macro: TASK_SET_STATE R5, TASK_READY   ;update task state to ready
-0x00008BD4   LI R1 TASK_READY
-0x00008BDC   STW R1 [R5 + TASK_STATE]
+0x000098DC   LI R1 TASK_READY
+0x000098E4   STW R1 [R5 + TASK_STATE]
 ; macro: TASK_SET_WAIT  R5, WAIT_NONE    ;clear wait reason
-0x00008BE0   LI R1 WAIT_NONE
-0x00008BE8   STW R1 [R5 + TASK_WAIT]
+0x000098E8   LI R1 WAIT_NONE
+0x000098F0   STW R1 [R5 + TASK_WAIT]
 
-0x00008BEC       POP R9
-0x00008BF0       RET
+0x000098F4       POP R9
+0x000098F8       RET
 
 waitq_sleep_current:
     ;================================================================
@@ -6182,10 +6411,10 @@ waitq_sleep_current:
     ; runnable and the scheduler switches back to it.
     ;================================================================
 
-0x00008BF4       PUSH LR
-0x00008BF8       BL schedule_call
-0x00008C00       POP LR
-0x00008C04       RET
+0x000098FC       PUSH LR
+0x00009900       BL schedule_call
+0x00009908       POP LR
+0x0000990C       RET
 
 waitq_wake_all:
     ;================================================================
@@ -6196,44 +6425,44 @@ waitq_wake_all:
     ; not keep waking stale entries.
     ;================================================================
 
-0x00008C08       PUSH LR
+0x00009910       PUSH LR
 
-0x00008C0C       MOV R9 R1
-0x00008C10       LDW R8 [R9 + WQ_MASK]      ; snapshot queued tasks
-0x00008C14       LI R10 0
-0x00008C1C       STW R10 [R9 + WQ_MASK]     ; consume all queue entries
+0x00009914       MOV R9 R1
+0x00009918       LDW R8 [R9 + WQ_MASK]      ; snapshot queued tasks
+0x0000991C       LI R10 0
+0x00009924       STW R10 [R9 + WQ_MASK]     ; consume all queue entries
 
-0x00008C20       LI R2 0                    ; task index
+0x00009928       LI R2 0                    ; task index
 
 wq_wake_loop:
-0x00008C28       CMP R2 MAX_TASKS           ;check if we processed all tasks in bitmask
-0x00008C2C       BGE wq_wake_done
+0x00009930       CMP R2 MAX_TASKS           ;check if we processed all tasks in bitmask
+0x00009934       BGE wq_wake_done
 
-0x00008C34       LI R3 1
-0x00008C3C       SHL R3 R3 R2               ; R3 = bit for task R2
-0x00008C40       AND R4 R8 R3
-0x00008C44       CMP R4 0
-0x00008C48       BEQ wq_wake_next
+0x0000993C       LI R3 1
+0x00009944       SHL R3 R3 R2               ; R3 = bit for task R2
+0x00009948       AND R4 R8 R3
+0x0000994C       CMP R4 0
+0x00009950       BEQ wq_wake_next
 
 ; macro: GET_TASK_PTR R5, R2
-0x00008C50   LI R1 TASK_SIZE
-0x00008C58   MUL R3 R2 R1
-0x00008C5C   LI R5 tasks
-0x00008C64   ADD R5 R5 R3
+0x00009958   LI R1 TASK_SIZE
+0x00009960   MUL R3 R2 R1
+0x00009964   LI R5 tasks
+0x0000996C   ADD R5 R5 R3
 ; macro: TASK_SET_STATE R5, TASK_READY
-0x00008C68   LI R1 TASK_READY
-0x00008C70   STW R1 [R5 + TASK_STATE]
+0x00009970   LI R1 TASK_READY
+0x00009978   STW R1 [R5 + TASK_STATE]
 ; macro: TASK_SET_WAIT R5, WAIT_NONE
-0x00008C74   LI R1 WAIT_NONE
-0x00008C7C   STW R1 [R5 + TASK_WAIT]
+0x0000997C   LI R1 WAIT_NONE
+0x00009984   STW R1 [R5 + TASK_WAIT]
 
 wq_wake_next:
-0x00008C80       ADD R2 R2 1
-0x00008C84       B wq_wake_loop
+0x00009988       ADD R2 R2 1
+0x0000998C       B wq_wake_loop
 
 wq_wake_done:
-0x00008C8C       POP LR
-0x00008C90       RET
+0x00009994       POP LR
+0x00009998       RET
 
 waitq_wake_bitmask:
     ;================================================================
@@ -6242,47 +6471,47 @@ waitq_wake_bitmask:
     ; Wakes every task currently recorded in the R2 bitmask.
     ;================================================================
 
-0x00008C94       PUSH LR
+0x0000999C       PUSH LR
 
-0x00008C98       MOV R9 R1
-0x00008C9C       LDW R8 [R9 + WQ_MASK]      ; snapshot queued tasks
-0x00008CA0       MOV R10 R2                 ;
-0x00008CA4       NOT R10 R10                ; invert bitmask to clear only specified tasks
-0x00008CA8       AND R10 R8 R10             ; clear only specified tasks
-0x00008CAC       STW R10 [R9 + WQ_MASK]     ; update queue entries to remove (tobe) woken  tasks
+0x000099A0       MOV R9 R1
+0x000099A4       LDW R8 [R9 + WQ_MASK]      ; snapshot queued tasks
+0x000099A8       MOV R10 R2                 ;
+0x000099AC       NOT R10 R10                ; invert bitmask to clear only specified tasks
+0x000099B0       AND R10 R8 R10             ; clear only specified tasks
+0x000099B4       STW R10 [R9 + WQ_MASK]     ; update queue entries to remove (tobe) woken  tasks
 
-0x00008CB0       MOV R8 R2                  ; R8 = bitmask of tasks to wake
-0x00008CB4       LI R2 0                    ; task index
+0x000099B8       MOV R8 R2                  ; R8 = bitmask of tasks to wake
+0x000099BC       LI R2 0                    ; task index
 
 wq_wake_b_loop:
-0x00008CBC       CMP R2 MAX_TASKS           ; check if we processed all tasks in bitmask
-0x00008CC0       BGE wq_wake_b_done
+0x000099C4       CMP R2 MAX_TASKS           ; check if we processed all tasks in bitmask
+0x000099C8       BGE wq_wake_b_done
 
-0x00008CC8       LI R3 1
-0x00008CD0       SHL R3 R3 R2               ; R3 = bit for task R2
-0x00008CD4       AND R4 R8 R3               ; check if this task is in the wake bitmask
-0x00008CD8       CMP R4 0
-0x00008CDC       BEQ wq_wake_b_next
+0x000099D0       LI R3 1
+0x000099D8       SHL R3 R3 R2               ; R3 = bit for task R2
+0x000099DC       AND R4 R8 R3               ; check if this task is in the wake bitmask
+0x000099E0       CMP R4 0
+0x000099E4       BEQ wq_wake_b_next
 
 ; macro: GET_TASK_PTR R5, R2        ; wake task R2 if its in the bitmask
-0x00008CE4   LI R1 TASK_SIZE
-0x00008CEC   MUL R3 R2 R1
-0x00008CF0   LI R5 tasks
-0x00008CF8   ADD R5 R5 R3
+0x000099EC   LI R1 TASK_SIZE
+0x000099F4   MUL R3 R2 R1
+0x000099F8   LI R5 tasks
+0x00009A00   ADD R5 R5 R3
 ; macro: TASK_SET_STATE R5, TASK_READY
-0x00008CFC   LI R1 TASK_READY
-0x00008D04   STW R1 [R5 + TASK_STATE]
+0x00009A04   LI R1 TASK_READY
+0x00009A0C   STW R1 [R5 + TASK_STATE]
 ; macro: TASK_SET_WAIT R5, WAIT_NONE
-0x00008D08   LI R1 WAIT_NONE
-0x00008D10   STW R1 [R5 + TASK_WAIT]
+0x00009A10   LI R1 WAIT_NONE
+0x00009A18   STW R1 [R5 + TASK_WAIT]
 
 wq_wake_b_next:
-0x00008D14       ADD R2 R2 1
-0x00008D18       B wq_wake_b_loop
+0x00009A1C       ADD R2 R2 1
+0x00009A20       B wq_wake_b_loop
 
 wq_wake_b_done:
-0x00008D20       POP LR
-0x00008D24       RET
+0x00009A28       POP LR
+0x00009A2C       RET
 
 ;==============================================================
 ; Stack tops
@@ -6340,37 +6569,37 @@ inode_used:
 ;      R1 = 0 if none
 ;=================================================================
 inode_alloc:
-0x00009328       LI R2 0                      ; index
+0x0000A030       LI R2 0                      ; index
 
 ia_loop:
-0x00009330       CMP R2 MAX_INODES
-0x00009334       BGE ia_fail
+0x0000A038       CMP R2 MAX_INODES
+0x0000A03C       BGE ia_fail
 
-0x0000933C       SHL R3 R2 2                   ; index * 4 (inode_used is u32 array)
-0x00009340       LI R4 inode_used
-0x00009348       ADD R4 R4 R3                  ; &inode_used[index]
+0x0000A044       SHL R3 R2 2                   ; index * 4 (inode_used is u32 array)
+0x0000A048       LI R4 inode_used
+0x0000A050       ADD R4 R4 R3                  ; &inode_used[index]
 
-0x0000934C       LDW R5 [R4]                   ; load used marker
-0x00009350       CMP R5 0
-0x00009354       BEQ ia_found
+0x0000A054       LDW R5 [R4]                   ; load used marker
+0x0000A058       CMP R5 0
+0x0000A05C       BEQ ia_found
 
-0x0000935C       ADD R2 R2 1
-0x00009360       B ia_loop
+0x0000A064       ADD R2 R2 1
+0x0000A068       B ia_loop
 
 ia_found:
-0x00009368       LI R5 1
-0x00009370       STW R5 [R4]                  ; mark used
+0x0000A070       LI R5 1
+0x0000A078       STW R5 [R4]                  ; mark used
 
-0x00009374       LI R3 INODE_SIZEOF
-0x0000937C       MUL R6 R2 R3                 ; offset bytes into inode_pool
+0x0000A07C       LI R3 INODE_SIZEOF
+0x0000A084       MUL R6 R2 R3                 ; offset bytes into inode_pool
 
-0x00009380       LI R1 inode_pool
-0x00009388       ADD R1 R1 R6                 ; return inode ptr
-0x0000938C       RET
+0x0000A088       LI R1 inode_pool
+0x0000A090       ADD R1 R1 R6                 ; return inode ptr
+0x0000A094       RET
 
 ia_fail:
-0x00009390       LI R1 0
-0x00009398       RET
+0x0000A098       LI R1 0
+0x0000A0A0       RET
 
 ;=================================================================
 ;
@@ -6393,20 +6622,20 @@ ia_fail:
 inode_free:
     ; in R1 = inode ptr
 
-0x0000939C       LI R2 inode_pool
-0x000093A4       SUB R3 R1 R2                  ; offset from pool base
+0x0000A0A4       LI R2 inode_pool
+0x0000A0AC       SUB R3 R1 R2                  ; offset from pool base
 
-0x000093A8       LI R4 INODE_SIZEOF
-0x000093B0       DIV R5 R3 R4                 ; index
+0x0000A0B0       LI R4 INODE_SIZEOF
+0x0000A0B8       DIV R5 R3 R4                 ; index
 
-0x000093B4       SHL R5 R5 2                  ; index * 4 (u32 array)
-0x000093B8       LI R6 inode_used
-0x000093C0       ADD R6 R6 R5                 ; &inode_used[index]
+0x0000A0BC       SHL R5 R5 2                  ; index * 4 (u32 array)
+0x0000A0C0       LI R6 inode_used
+0x0000A0C8       ADD R6 R6 R5                 ; &inode_used[index]
 
-0x000093C4       LI R7 0
-0x000093CC       STW R7 [R6]                  ; mark free
+0x0000A0CC       LI R7 0
+0x0000A0D4       STW R7 [R6]                  ; mark free
 
-0x000093D0       RET
+0x0000A0D8       RET
 
 ;=================================================================
 ; inode_init
@@ -6422,13 +6651,13 @@ inode_free:
 ;=================================================================
 inode_init:
 
-0x000093D4       STW R2 [R1 + INODE_OPS]
-0x000093D8       STW R3 [R1 + INODE_PRIVATE]
-0x000093DC       STW R4 [R1 + INODE_TYPE]
-0x000093E0       STW R5 [R1 + INODE_SIZE]
-0x000093E4       LI R2 1
-0x000093EC       STW R2 [R1 + INODE_REFCNT]
-0x000093F0       RET
+0x0000A0DC       STW R2 [R1 + INODE_OPS]
+0x0000A0E0       STW R3 [R1 + INODE_PRIVATE]
+0x0000A0E4       STW R4 [R1 + INODE_TYPE]
+0x0000A0E8       STW R5 [R1 + INODE_SIZE]
+0x0000A0EC       LI R2 1
+0x0000A0F4       STW R2 [R1 + INODE_REFCNT]
+0x0000A0F8       RET
 
 ;=================================================================
 ; inode_get
@@ -6443,10 +6672,10 @@ inode_init:
 ;=================================================================
 
 inode_get:
-0x000093F4       LDW R2 [R1 + INODE_REFCNT]
-0x000093F8       ADD R2 R2 1
-0x000093FC       STW R2 [R1 + INODE_REFCNT]
-0x00009400       RET
+0x0000A0FC       LDW R2 [R1 + INODE_REFCNT]
+0x0000A100       ADD R2 R2 1
+0x0000A104       STW R2 [R1 + INODE_REFCNT]
+0x0000A108       RET
 
 ;=================================================================
 ; inode_put
@@ -6459,46 +6688,46 @@ inode_get:
 ;=================================================================
 
 inode_put:
-0x00009404       PUSH LR
-0x00009408       LDW R2 [R1 + INODE_REFCNT]
-0x0000940C       SUB R2 R2 1
-0x00009410       STW R2 [R1 + INODE_REFCNT]
-0x00009414       CMP R2 0
-0x00009418       BNE inode_put_done
+0x0000A10C       PUSH LR
+0x0000A110       LDW R2 [R1 + INODE_REFCNT]
+0x0000A114       SUB R2 R2 1
+0x0000A118       STW R2 [R1 + INODE_REFCNT]
+0x0000A11C       CMP R2 0
+0x0000A120       BNE inode_put_done
     ; destroy inode
-0x00009420       BL inode_free
+0x0000A128       BL inode_free
 
 inode_put_done:
-0x00009428       POP LR
-0x0000942C       RET
+0x0000A130       POP LR
+0x0000A134       RET
 
 ; ----------------------------------
 ; file_get - increase file refcnt++
 ; in R1-file*
 ; ----------------------------------
 file_get:
-0x00009430       LDW R2 [R1 + FILE_REFCNT]
-0x00009434       ADD R2 R2 1
-0x00009438       STW R2 [R1 + FILE_REFCNT]
-0x0000943C       RET
+0x0000A138       LDW R2 [R1 + FILE_REFCNT]
+0x0000A13C       ADD R2 R2 1
+0x0000A140       STW R2 [R1 + FILE_REFCNT]
+0x0000A144       RET
 ; ----------------------------------
 ; file_put - decrease file refcnt--
 ; in R1-file*. (if file.refcnt=0 - free_file and its inode (if inode.refcnt also =0))
 ; ----------------------------------
 file_put:
-0x00009440       PUSH LR
-0x00009444       LDW R2 [R1 + FILE_REFCNT]
-0x00009448       SUB R2 R2 1
-0x0000944C       STW R2 [R1 + FILE_REFCNT]
-0x00009450       CMP R2 0
-0x00009454       BNE file_put_done
+0x0000A148       PUSH LR
+0x0000A14C       LDW R2 [R1 + FILE_REFCNT]
+0x0000A150       SUB R2 R2 1
+0x0000A154       STW R2 [R1 + FILE_REFCNT]
+0x0000A158       CMP R2 0
+0x0000A15C       BNE file_put_done
     ; file refcnt=0 - destroy file
     ; R1-file*
-0x0000945C       BL file_free
+0x0000A164       BL file_free
 
 file_put_done:
-0x00009464       POP LR
-0x00009468       RET
+0x0000A16C       POP LR
+0x0000A170       RET
 
 
 ; ----------------------------------
@@ -6512,32 +6741,32 @@ file_put_done:
 ; ----------------------------------
 
 vfs_lookup:
-0x0000946C       PUSH LR
-0x00009470       MOV R8 R1          ; pathname
+0x0000A174       PUSH LR
+0x0000A178       MOV R8 R1          ; pathname
 
-0x00009474       BL devfs_lookup    ; 1 check among /dev/.. "files"
-0x0000947C       CMP R1 0
-0x00009480       BNE vfs_done
+0x0000A17C       BL devfs_lookup    ; 1 check among /dev/.. "files"
+0x0000A184       CMP R1 0
+0x0000A188       BNE vfs_done
 
-0x00009488       MOV R1 R8
-0x0000948C       BL nsfs_lookup     ; 2 writable overlay above tarfs
-0x00009494       CMP R1 0
-0x00009498       BNE vfs_done
+0x0000A190       MOV R1 R8
+0x0000A194       BL nsfs_lookup     ; 2 writable overlay above tarfs
+0x0000A19C       CMP R1 0
+0x0000A1A0       BNE vfs_done
 
-0x000094A0       MOV R1 R8
+0x0000A1A8       MOV R1 R8
 
-0x000094A4       BL tarfs_lookup     ; 3 check in rootfs-tarfs /... (both funcs in R1-pathname)
-0x000094AC       CMP R1 0
-0x000094B0       BEQ vfs_not_found
+0x0000A1AC       BL tarfs_lookup     ; 3 check in rootfs-tarfs /... (both funcs in R1-pathname)
+0x0000A1B4       CMP R1 0
+0x0000A1B8       BEQ vfs_not_found
 
 vfs_done:
-0x000094B8       POP LR          ;3 R1 - return inode
-0x000094BC       RET
+0x0000A1C0       POP LR          ;3 R1 - return inode
+0x0000A1C4       RET
 
 vfs_not_found:
-0x000094C0       LI R1 0         ;it can be just ret but i added it for result clarity
-0x000094C8       POP LR          ;or R1 - Nul
-0x000094CC       RET
+0x0000A1C8       LI R1 0         ;it can be just ret but i added it for result clarity
+0x0000A1D0       POP LR          ;or R1 - Nul
+0x0000A1D4       RET
 
 ;=================================================================
 ; vfs_open - open pathname file
@@ -6547,80 +6776,80 @@ vfs_not_found:
 ;=================================================================
 
 vfs_open:
-0x000094D0       PUSH LR
-0x000094D4       PUSH R8
-0x000094D8       PUSH R9
-0x000094DC       PUSH R10
-0x000094E0       MOV R10 R2      ; flags
+0x0000A1D8       PUSH LR
+0x0000A1DC       PUSH R8
+0x0000A1E0       PUSH R9
+0x0000A1E4       PUSH R10
+0x0000A1E8       MOV R10 R2      ; flags
 
     ;check file R1=pathname ptr in kernel space
-0x000094E4       BL vfs_lookup        ; vfs lookup (selects fs finds file/device and creates inited inode to put in file object)
-0x000094EC       CMP R1 0
-0x000094F0       BEQ fail_noent
+0x0000A1EC       BL vfs_lookup        ; vfs lookup (selects fs finds file/device and creates inited inode to put in file object)
+0x0000A1F4       CMP R1 0
+0x0000A1F8       BEQ fail_noent
     ;out: R1 new inited inode ptr
-0x000094F8       MOV R8 R1            ; save inode ptr
+0x0000A200       MOV R8 R1            ; save inode ptr
 
-0x000094FC       LDW R2 [R8 + INODE_TYPE]
-0x00009500       LI R3 INODE_DIR
-0x00009508       CMP R2 R3
+0x0000A204       LDW R2 [R8 + INODE_TYPE]
+0x0000A208       LI R3 INODE_DIR
+0x0000A210       CMP R2 R3
 
     ;BEQ fail_isdir            ; if pathname is a dir -implemented readdir
 
-0x0000950C       BL file_alloc        ; out: R1 = pointer to new FILE object in file_pool
-0x00009514       CMP R1 0
-0x00009518       BEQ fail_nfile
+0x0000A214       BL file_alloc        ; out: R1 = pointer to new FILE object in file_pool
+0x0000A21C       CMP R1 0
+0x0000A220       BEQ fail_nfile
 
-0x00009520       MOV R9 R1                ; save file*
+0x0000A228       MOV R9 R1                ; save file*
 
     ; initialize file object ;
-0x00009524       MOV R1 R9                ; R1 file*
-0x00009528       MOV R2 R8                ; inode*
-0x0000952C       MOV R3 R10               ; flags
-0x00009530       BL file_init
+0x0000A22C       MOV R1 R9                ; R1 file*
+0x0000A230       MOV R2 R8                ; inode*
+0x0000A234       MOV R3 R10               ; flags
+0x0000A238       BL file_init
 
-0x00009538       MOV R1 R9
-0x0000953C       BL fd_alloc             ; R1 inited file ptr
-0x00009544       LI R2 ERR_MFILE
-0x0000954C       CMP R1 R2
-0x00009550       BEQ fail_fd
+0x0000A240       MOV R1 R9
+0x0000A244       BL fd_alloc             ; R1 inited file ptr
+0x0000A24C       LI R2 ERR_MFILE
+0x0000A254       CMP R1 R2
+0x0000A258       BEQ fail_fd
                             ; R1 - holds fd
-0x00009558       POP R10
-0x0000955C       POP R9
-0x00009560       POP R8
-0x00009564       POP LR
-0x00009568       RET
+0x0000A260       POP R10
+0x0000A264       POP R9
+0x0000A268       POP R8
+0x0000A26C       POP LR
+0x0000A270       RET
 
 fail_fd:
-0x0000956C       MOV R1 R9
+0x0000A274       MOV R1 R9
     ; FILE_GET_INODE R2, R1    ;
     ; R2 = [R1 file->inode] = inode
-0x00009570       LDW R2 [R1 + FILE_INODE]
+0x0000A278       LDW R2 [R1 + FILE_INODE]
 
-0x00009574       MOV R1 R2
-0x00009578       BL inode_put             ; close inode refcnt--
+0x0000A27C       MOV R1 R2
+0x0000A280       BL inode_put             ; close inode refcnt--
 
-0x00009580       MOV R1 R9
-0x00009584       BL file_free
-0x0000958C       LI R1 ERR_MFILE
-0x00009594       B  vfs_exit
+0x0000A288       MOV R1 R9
+0x0000A28C       BL file_free
+0x0000A294       LI R1 ERR_MFILE
+0x0000A29C       B  vfs_exit
 
 fail_noent:
-0x0000959C       LI R1 ERR_NOENT
-0x000095A4       B  vfs_exit
+0x0000A2A4       LI R1 ERR_NOENT
+0x0000A2AC       B  vfs_exit
 fail_nfile:
-0x000095AC       LI R1 ERR_NFILE
-0x000095B4       B  vfs_exit
+0x0000A2B4       LI R1 ERR_NFILE
+0x0000A2BC       B  vfs_exit
 fail_isdir:
-0x000095BC       LI R1 ERR_ISDIR
-0x000095C4       B  vfs_exit
+0x0000A2C4       LI R1 ERR_ISDIR
+0x0000A2CC       B  vfs_exit
 fail_acces:
-0x000095CC       LI R1 ERR_ACCES
+0x0000A2D4       LI R1 ERR_ACCES
 vfs_exit:
-0x000095D4       POP R10
-0x000095D8       POP R9
-0x000095DC       POP R8
-0x000095E0       POP LR
-0x000095E4       RET
+0x0000A2DC       POP R10
+0x0000A2E0       POP R9
+0x0000A2E4       POP R8
+0x0000A2E8       POP LR
+0x0000A2EC       RET
 
 ;================================================================
 ; vfs_close - close opened file
@@ -6635,25 +6864,25 @@ vfs_exit:
 ;inode_put() — destroys the inode when the last FILE releases it.
 ;================================================================
 vfs_close:
-0x000095E8       PUSH LR
-0x000095EC       BL fd_remove    ;in: R1-fd out: R1-file ptr for this fd
+0x0000A2F0       PUSH LR
+0x0000A2F4       BL fd_remove    ;in: R1-fd out: R1-file ptr for this fd
 
-0x000095F4       CMP R1 0
-0x000095F8       BEQ badf_fail
+0x0000A2FC       CMP R1 0
+0x0000A300       BEQ badf_fail
 
-0x00009600       MOV R8 R1          ; save file*
+0x0000A308       MOV R8 R1          ; save file*
 
-0x00009604       MOV R1 R8
-0x00009608       BL  file_put    ;in R1 file_ptr in file_pool it
+0x0000A30C       MOV R1 R8
+0x0000A310       BL  file_put    ;in R1 file_ptr in file_pool it
                     ;marks it as free (NULL) if file.refcnt==0 see doc
-0x00009610       LI  R1 0        ; success
-0x00009618       POP LR
-0x0000961C       RET
+0x0000A318       LI  R1 0        ; success
+0x0000A320       POP LR
+0x0000A324       RET
 
 badf_fail:
-0x00009620       LI R1 ERR_BADF
-0x00009628       POP LR
-0x0000962C       RET
+0x0000A328       LI R1 ERR_BADF
+0x0000A330       POP LR
+0x0000A334       RET
 
 
 ;=================================================================
@@ -6670,45 +6899,45 @@ badf_fail:
 
 file_alloc:
 
-0x00009630       LI R2 0                      ; index
+0x0000A338       LI R2 0                      ; index
 
 fa_loop:
-0x00009638       CMP R2 MAX_FILES
-0x0000963C       BGE fa_fail
+0x0000A340       CMP R2 MAX_FILES
+0x0000A344       BGE fa_fail
 
-0x00009644       SHL R3 R2 2                  ; index * 4
-0x00009648       LI R4 file_used              ; look in file_used list 0 free 1 used
-0x00009650       ADD R4 R4 R3
+0x0000A34C       SHL R3 R2 2                  ; index * 4
+0x0000A350       LI R4 file_used              ; look in file_used list 0 free 1 used
+0x0000A358       ADD R4 R4 R3
 
-0x00009654       LDW R5 [R4]
-0x00009658       CMP R5 0
-0x0000965C       BEQ fa_found
+0x0000A35C       LDW R5 [R4]
+0x0000A360       CMP R5 0
+0x0000A364       BEQ fa_found
 
-0x00009664       ADD R2 R2 1
-0x00009668       B fa_loop
+0x0000A36C       ADD R2 R2 1
+0x0000A370       B fa_loop
 
 fa_found:
-0x00009670       LI R5 1
-0x00009678       STW R5 [R4]                  ; mark slot used
+0x0000A378       LI R5 1
+0x0000A380       STW R5 [R4]                  ; mark slot used
 
-0x0000967C       LI R4 FILE_SIZE
-0x00009684       MUL R6 R2 R4
+0x0000A384       LI R4 FILE_SIZE
+0x0000A38C       MUL R6 R2 R4
 
-0x00009688       LI R1 file_pool
-0x00009690       ADD R1 R1 R6                 ; R1 = file object pointer
+0x0000A390       LI R1 file_pool
+0x0000A398       ADD R1 R1 R6                 ; R1 = file object pointer
 
     ;clean this slot
-0x00009694       LI R7 0
+0x0000A39C       LI R7 0
 
-0x0000969C       STW R7 [R1 + FILE_INODE]
-0x000096A0       STW R7 [R1 + FILE_OFFSET]
-0x000096A4       STW R7 [R1 + FILE_FLAGS]
+0x0000A3A4       STW R7 [R1 + FILE_INODE]
+0x0000A3A8       STW R7 [R1 + FILE_OFFSET]
+0x0000A3AC       STW R7 [R1 + FILE_FLAGS]
 
-0x000096A8       RET
+0x0000A3B0       RET
 
 fa_fail:
-0x000096AC       LI R1 0
-0x000096B4       RET
+0x0000A3B4       LI R1 0
+0x0000A3BC       RET
 
 ;=================================================================
 ; file_free: - destroy file object
@@ -6722,35 +6951,35 @@ fa_fail:
 file_free:
 
  ; release inode first
-0x000096B8       PUSH LR
-0x000096BC       PUSH R10
-0x000096C0       MOV  R10 R1
-0x000096C4       LDW  R2 [R1 + FILE_INODE]
+0x0000A3C0       PUSH LR
+0x0000A3C4       PUSH R10
+0x0000A3C8       MOV  R10 R1
+0x0000A3CC       LDW  R2 [R1 + FILE_INODE]
 
-0x000096C8       CMP R2 0
-0x000096CC       BEQ no_inode
+0x0000A3D0       CMP R2 0
+0x0000A3D4       BEQ no_inode
 
-0x000096D4       MOV R1 R2
-0x000096D8       BL  inode_put    ; destroys inode if inode.refcnt=0
+0x0000A3DC       MOV R1 R2
+0x0000A3E0       BL  inode_put    ; destroys inode if inode.refcnt=0
 
 no_inode:
-0x000096E0       MOV R1 R10
-0x000096E4       LI  R2 file_pool
-0x000096EC       SUB R3 R1 R2                 ; offset from pool base
+0x0000A3E8       MOV R1 R10
+0x0000A3EC       LI  R2 file_pool
+0x0000A3F4       SUB R3 R1 R2                 ; offset from pool base
 
-0x000096F0       LI  R4 FILE_SIZE
-0x000096F8       DIV R5 R3 R4                 ; slot number
+0x0000A3F8       LI  R4 FILE_SIZE
+0x0000A400       DIV R5 R3 R4                 ; slot number
 
-0x000096FC       SHL R5 R5 2                  ; slot * 4
+0x0000A404       SHL R5 R5 2                  ; slot * 4
 
-0x00009700       LI  R6 file_used
-0x00009708       ADD R6 R6 R5                 ; address of slot in file_used
+0x0000A408       LI  R6 file_used
+0x0000A410       ADD R6 R6 R5                 ; address of slot in file_used
 
-0x0000970C       LI R7 0
-0x00009714       STW R7 [R6]                  ; mark free
-0x00009718       POP R10
-0x0000971C       POP LR
-0x00009720       RET
+0x0000A414       LI R7 0
+0x0000A41C       STW R7 [R6]                  ; mark free
+0x0000A420       POP R10
+0x0000A424       POP LR
+0x0000A428       RET
 
 
 ; ================================================================
@@ -6771,41 +7000,41 @@ init_scheduler:
 
     ;MOV R12 SP ;important we save kernel sp becuse we form stack frame at tasks SPs
 
-0x00009724       PUSH LR
+0x0000A42C       PUSH LR
 
     ;---------------------------------
     ;init task table - we can do it with mem_zero since it's all zeros and we want it clean slate
     ;---------------------------------
 
-0x00009728       LI  R1 tasks
-0x00009730       LI  R2 TASK_SIZE
-0x00009738       LI  R3 MAX_TASKS
-0x00009740       MUL R3 R2 R3
-0x00009744       BL  mem_zero          ;zero (bytes) the whole task table for clean slate
+0x0000A430       LI  R1 tasks
+0x0000A438       LI  R2 TASK_SIZE
+0x0000A440       LI  R3 MAX_TASKS
+0x0000A448       MUL R3 R2 R3
+0x0000A44C       BL  mem_zero          ;zero (bytes) the whole task table for clean slate
 
     ; ----------------------------------
     ; idle task
     ; ----------------------------------
 
-0x0000974C       LI R1 idle_task
-0x00009754       LI R2 0
-0x0000975C       LI R3 0
-0x00009764       BL task_create
+0x0000A454       LI R1 idle_task
+0x0000A45C       LI R2 0
+0x0000A464       LI R3 0
+0x0000A46C       BL task_create
 
-0x0000976C       CMP R1 0
-0x00009770       BEQ init_scheduler_fail
+0x0000A474       CMP R1 0
+0x0000A478       BEQ init_scheduler_fail
 
     ; ----------------------------------
     ; task_init
     ; ----------------------------------
 
-0x00009778       LI R1 TASK_INIT_START
-0x00009780       LI R2 1
-0x00009788       LI R3 0
-0x00009790       BL task_create
+0x0000A480       LI R1 TASK_INIT_START
+0x0000A488       LI R2 1
+0x0000A490       LI R3 0
+0x0000A498       BL task_create
 
-0x00009798       CMP R1 0
-0x0000979C       BEQ init_scheduler_fail
+0x0000A4A0       CMP R1 0
+0x0000A4A4       BEQ init_scheduler_fail
 
     ; ----------------------------------
     ; task A
@@ -6844,31 +7073,31 @@ init_scheduler:
     ;BEQ init_scheduler_fail
 
     ; Initialize the dynamic fork PID allocator after bootstrap tasks.
-0x000097A4       LI R1 task_count
-0x000097AC       LI R2 2                     ; last task_pid+1 for now (task 0 and task 1) next id is 2
-0x000097B4       STW R2 [R1]
+0x0000A4AC       LI R1 task_count
+0x0000A4B4       LI R2 2                     ; last task_pid+1 for now (task 0 and task 1) next id is 2
+0x0000A4BC       STW R2 [R1]
 
     ; ------------------------------------------------
     ; CURRENT_TASK = 0 - init 0 task idx to scheduler first
     ; ------------------------------------------------
 
-0x000097B8       LI R2 0
+0x0000A4C0       LI R2 0
 ; macro: SET_CURR_TASK_IDX R2
-0x000097C0   LI R1 CURRENT_TASK
-0x000097C8   STW R2 [R1]
+0x0000A4C8   LI R1 CURRENT_TASK
+0x0000A4D0   STW R2 [R1]
 
-0x000097CC       POP LR
+0x0000A4D4       POP LR
 
     ;MOV SP R12 ;restore kernel SP after finsh dealing with tasks SPs
-0x000097D0       RET
+0x0000A4D8       RET
 
 
 init_scheduler_fail:
 
-0x000097D4       DEBUG 99
+0x0000A4DC       DEBUG 99
 
 halt:
-0x000097D8       B halt
+0x0000A4E0       B halt
 
 ; ================================================================
 ; SCHEDULE + SWITCH
@@ -6881,40 +7110,40 @@ schedule_and_switch:
     ; ------------------------------------------------
 
 ; macro: GET_CURR_TASK_IDX R2       ; R2 = old task index
-0x000097E0   LI R1 CURRENT_TASK
-0x000097E8   LDW R2 [R1]
+0x0000A4E8   LI R1 CURRENT_TASK
+0x0000A4F0   LDW R2 [R1]
 
     ; ------------------------------------------------
     ; Find next task
     ; ------------------------------------------------
 
-0x000097EC       ADD R3 R2 1
+0x0000A4F4       ADD R3 R2 1
 
 wrap_check:
 
-0x000097F0       CMP R3 MAX_TASKS     ;check if we processed all tasks in list - i
-0x000097F4       BLT check_task
-0x000097FC       LI R3 0              ;R3 next task (1) ;R2 current task (0) for eg
+0x0000A4F8       CMP R3 MAX_TASKS     ;check if we processed all tasks in list - i
+0x0000A4FC       BLT check_task
+0x0000A504       LI R3 0              ;R3 next task (1) ;R2 current task (0) for eg
 check_task:
     ; ------------------------------------------------
     ; Compute address of tasks[R3]
     ; ------------------------------------------------
-0x00009804       LI R4 TASK_SIZE
-0x0000980C       MUL R5 R3 R4
-0x00009810       LI R6 tasks
-0x00009818       ADD R5 R5 R6               ; R5 = &tasks[R3]
+0x0000A50C       LI R4 TASK_SIZE
+0x0000A514       MUL R5 R3 R4
+0x0000A518       LI R6 tasks
+0x0000A520       ADD R5 R5 R6               ; R5 = &tasks[R3]
 
     ; ------------------------------------------------
     ; Check READY state of this task
     ; ------------------------------------------------
 
-0x0000981C       LDW R7 [R5 + TASK_STATE]
+0x0000A524       LDW R7 [R5 + TASK_STATE]
 
-0x00009820       CMP R7 1
-0x00009824       BEQ do_switch
+0x0000A528       CMP R7 1
+0x0000A52C       BEQ do_switch
     ; if not ready go to next task in list
-0x0000982C       ADD R3 R3 1
-0x00009830       B wrap_check
+0x0000A534       ADD R3 R3 1
+0x0000A538       B wrap_check
 
 ; R3 next task is ready - switch to it
 ; R2 current task
@@ -6934,21 +7163,21 @@ do_switch:
     ; to find the current page table base for validation of user pointers
     ;
 ; macro: SET_CURR_TASK_IDX R3
-0x00009838   LI R1 CURRENT_TASK
-0x00009840   STW R3 [R1]
-0x00009844       MOV R8 R3
+0x0000A540   LI R1 CURRENT_TASK
+0x0000A548   STW R3 [R1]
+0x0000A54C       MOV R8 R3
 
     ; ------------------------------------------------
     ; Compute old task address
     ; ------------------------------------------------
     ; R2 - index of old/current task - get to its structure in mem
 ; macro: GET_TASK_PTR R5, R2        ; R5 = &tasks[old], clobbers R3
-0x00009848   LI R1 TASK_SIZE
-0x00009850   MUL R3 R2 R1
-0x00009854   LI R5 tasks
-0x0000985C   ADD R5 R5 R3
-0x00009860       MOV R3 R8
-0x00009864       MOV R9 R5                  ; preserve old task pointer for deferred reap
+0x0000A550   LI R1 TASK_SIZE
+0x0000A558   MUL R3 R2 R1
+0x0000A55C   LI R5 tasks
+0x0000A564   ADD R5 R5 R3
+0x0000A568       MOV R3 R8
+0x0000A56C       MOV R9 R5                  ; preserve old task pointer for deferred reap
 
     ; ------------------------------------------------
     ; Save old task context pointers
@@ -6957,17 +7186,17 @@ do_switch:
     ; interrupted task SP is an explicit trapframe slot, so keep a copy
     ; in the task table for debugging and future user/kernel separation.
 
-0x00009868       LDW R7 [SP + TF_USP]
+0x0000A570       LDW R7 [SP + TF_USP]
 ; macro: TASK_SET_USP R5, R7
-0x0000986C   STW R7 [R5 + TASK_USP]
+0x0000A574   STW R7 [R5 + TASK_USP]
 
-0x00009870       MOV R7 SP
+0x0000A578       MOV R7 SP
 ; macro: TASK_SET_KSP R5, R7
-0x00009874   STW R7 [R5 + TASK_KSP]
+0x0000A57C   STW R7 [R5 + TASK_KSP]
 
 ; macro: TASK_SET_RESUME R5, RESUME_TRAP ;save it as it was stopped by usual trap/irq not in kernel's syscall
-0x00009878   LI R1 RESUME_TRAP
-0x00009880   STW R1 [R5 + TASK_RESUME]
+0x0000A580   LI R1 RESUME_TRAP
+0x0000A588   STW R1 [R5 + TASK_RESUME]
 
     ; ------------------------------------------------
     ; Compute new task address
@@ -6975,42 +7204,42 @@ do_switch:
     ; now work with next task R3 - its index (+1) typic
 
 ; macro: GET_TASK_PTR R5, R8        ; R5 = &tasks[new]
-0x00009884   LI R1 TASK_SIZE
-0x0000988C   MUL R3 R8 R1
-0x00009890   LI R5 tasks
-0x00009898   ADD R5 R5 R3
-0x0000989C       MOV R3 R8
+0x0000A58C   LI R1 TASK_SIZE
+0x0000A594   MUL R3 R8 R1
+0x0000A598   LI R5 tasks
+0x0000A5A0   ADD R5 R5 R3
+0x0000A5A4       MOV R3 R8
 
     ; ------------------------------------------------
     ; Restore new task trap frame SP
     ; ------------------------------------------------
 
 ; macro: TASK_GET_PTBR R7, R5
-0x000098A0   LDW R7 [R5 + TASK_PTBR]
-0x000098A4       SETPTBR R7              ; switch address space; VM flushes non-global TLB entries
+0x0000A5A8   LDW R7 [R5 + TASK_PTBR]
+0x0000A5AC       SETPTBR R7              ; switch address space; VM flushes non-global TLB entries
 
 ; macro: TASK_GET_KSP SP, R5
-0x000098A8   LDW SP [R5 + TASK_KSP]
+0x0000A5B0   LDW SP [R5 + TASK_KSP]
 
     ; SP now belongs to the new task, so it is safe to release an exiting
     ; old task's kernel stack and remaining address-space resources.
 ; macro: TASK_GET_STATE R7, R9
-0x000098AC   LDW R7 [R9 + TASK_STATE]
-0x000098B0       CMP R7 TASK_ZOMBIE
-0x000098B4       BNE switch_old_reaped
-0x000098BC       PUSH R5
-0x000098C0       MOV R1 R9
-0x000098C4       BL task_destroy
-0x000098CC       POP R5
+0x0000A5B4   LDW R7 [R9 + TASK_STATE]
+0x0000A5B8       CMP R7 TASK_ZOMBIE
+0x0000A5BC       BNE switch_old_reaped
+0x0000A5C4       PUSH R5
+0x0000A5C8       MOV R1 R9
+0x0000A5CC       BL task_destroy
+0x0000A5D4       POP R5
 
 switch_old_reaped:
 ; macro: TASK_GET_RESUME R7, R5
-0x000098D0   LDW R7 [R5 + TASK_RESUME]
-0x000098D4       CMP R7 RESUME_KERNEL
-0x000098D8       BEQ restore_kernel_context  ;select how to run new task - depending where it was stopped usual
+0x0000A5D8   LDW R7 [R5 + TASK_RESUME]
+0x0000A5DC       CMP R7 RESUME_KERNEL
+0x0000A5E0       BEQ restore_kernel_context  ;select how to run new task - depending where it was stopped usual
                                 ; trap or in kernel inside a syscall
 
-0x000098E0       B trap_restore
+0x0000A5E8       B trap_restore
 
 ; ================================================================
 ; Callable scheduler for blocking inside syscall/device code.
@@ -7018,106 +7247,106 @@ switch_old_reaped:
 ; ================================================================
 
 schedule_call:
-0x000098E8       PUSH R1
-0x000098EC       PUSH R2
-0x000098F0       PUSH R3
-0x000098F4       PUSH R4
-0x000098F8       PUSH R5
-0x000098FC       PUSH R6
-0x00009900       PUSH R7
-0x00009904       PUSH R8
-0x00009908       PUSH R9
-0x0000990C       PUSH R10
-0x00009910       PUSH R11
-0x00009914       PUSH R12
-0x00009918       PUSH R14
-0x0000991C       PUSH R15
+0x0000A5F0       PUSH R1
+0x0000A5F4       PUSH R2
+0x0000A5F8       PUSH R3
+0x0000A5FC       PUSH R4
+0x0000A600       PUSH R5
+0x0000A604       PUSH R6
+0x0000A608       PUSH R7
+0x0000A60C       PUSH R8
+0x0000A610       PUSH R9
+0x0000A614       PUSH R10
+0x0000A618       PUSH R11
+0x0000A61C       PUSH R12
+0x0000A620       PUSH R14
+0x0000A624       PUSH R15
 
 ; macro: GET_CURR_TASK_IDX R2       ; R2 = old task index
-0x00009920   LI R1 CURRENT_TASK
-0x00009928   LDW R2 [R1]
+0x0000A628   LI R1 CURRENT_TASK
+0x0000A630   LDW R2 [R1]
 
-0x0000992C       ADD R3 R2 1
+0x0000A634       ADD R3 R2 1
 
 schedule_call_wrap_check:
-0x00009930       CMP R3 MAX_TASKS
-0x00009934       BLT schedule_call_check_task
-0x0000993C       LI R3 0
+0x0000A638       CMP R3 MAX_TASKS
+0x0000A63C       BLT schedule_call_check_task
+0x0000A644       LI R3 0
                                 ; R3 idx of next task
 schedule_call_check_task:
-0x00009944       MOV R8 R3
+0x0000A64C       MOV R8 R3
 ; macro: GET_TASK_PTR R5, R8        ; R5 = &tasks[R3] ptr on next task
-0x00009948   LI R1 TASK_SIZE
-0x00009950   MUL R3 R8 R1
-0x00009954   LI R5 tasks
-0x0000995C   ADD R5 R5 R3
-0x00009960       MOV R3 R8
+0x0000A650   LI R1 TASK_SIZE
+0x0000A658   MUL R3 R8 R1
+0x0000A65C   LI R5 tasks
+0x0000A664   ADD R5 R5 R3
+0x0000A668       MOV R3 R8
 
 ; macro: TASK_GET_STATE R7, R5
-0x00009964   LDW R7 [R5 + TASK_STATE]
-0x00009968       CMP R7 TASK_READY               ; check it can be run
-0x0000996C       BEQ schedule_call_do_switch
+0x0000A66C   LDW R7 [R5 + TASK_STATE]
+0x0000A670       CMP R7 TASK_READY               ; check it can be run
+0x0000A674       BEQ schedule_call_do_switch
 
-0x00009974       ADD R3 R3 1
-0x00009978       B schedule_call_wrap_check
+0x0000A67C       ADD R3 R3 1
+0x0000A680       B schedule_call_wrap_check
 
 schedule_call_do_switch:
 ; macro: SET_CURR_TASK_IDX R3            ; make next current (upd CURRENT_TASK)
-0x00009980   LI R1 CURRENT_TASK
-0x00009988   STW R3 [R1]
-0x0000998C       MOV R8 R3
+0x0000A688   LI R1 CURRENT_TASK
+0x0000A690   STW R3 [R1]
+0x0000A694       MOV R8 R3
 
 ; macro: GET_TASK_PTR R5, R2        ; R5 = &tasks[old] (r2 old task idx), clobbers R3
-0x00009990   LI R1 TASK_SIZE
-0x00009998   MUL R3 R2 R1
-0x0000999C   LI R5 tasks
-0x000099A4   ADD R5 R5 R3
-0x000099A8       MOV R3 R8
+0x0000A698   LI R1 TASK_SIZE
+0x0000A6A0   MUL R3 R2 R1
+0x0000A6A4   LI R5 tasks
+0x0000A6AC   ADD R5 R5 R3
+0x0000A6B0       MOV R3 R8
 
-0x000099AC       MOV R7 SP
+0x0000A6B4       MOV R7 SP
 ; macro: TASK_SET_KSP R5, R7        ; tasks[old].TASK_KSP = SP (when in trap)
-0x000099B0   STW R7 [R5 + TASK_KSP]
+0x0000A6B8   STW R7 [R5 + TASK_KSP]
 ; macro: TASK_SET_RESUME R5, RESUME_KERNEL
-0x000099B4   LI R1 RESUME_KERNEL
-0x000099BC   STW R1 [R5 + TASK_RESUME]
+0x0000A6BC   LI R1 RESUME_KERNEL
+0x0000A6C4   STW R1 [R5 + TASK_RESUME]
 
 ; macro: GET_TASK_PTR R5, R8        ; R5 = &tasks[new] (r3 new task idx)
-0x000099C0   LI R1 TASK_SIZE
-0x000099C8   MUL R3 R8 R1
-0x000099CC   LI R5 tasks
-0x000099D4   ADD R5 R5 R3
-0x000099D8       MOV R3 R8
+0x0000A6C8   LI R1 TASK_SIZE
+0x0000A6D0   MUL R3 R8 R1
+0x0000A6D4   LI R5 tasks
+0x0000A6DC   ADD R5 R5 R3
+0x0000A6E0       MOV R3 R8
 
 ; macro: TASK_GET_PTBR R7, R5       ; load new task's page table
-0x000099DC   LDW R7 [R5 + TASK_PTBR]
-0x000099E0       SETPTBR R7
+0x0000A6E4   LDW R7 [R5 + TASK_PTBR]
+0x0000A6E8       SETPTBR R7
 
 ; macro: TASK_GET_KSP SP, R5        ;restore new task KSP
-0x000099E4   LDW SP [R5 + TASK_KSP]
+0x0000A6EC   LDW SP [R5 + TASK_KSP]
 ; macro: TASK_GET_RESUME R7, R5     ;check if where new task was stopeed before
-0x000099E8   LDW R7 [R5 + TASK_RESUME]
-0x000099EC       CMP R7 RESUME_KERNEL
-0x000099F0       BEQ restore_kernel_context
+0x0000A6F0   LDW R7 [R5 + TASK_RESUME]
+0x0000A6F4       CMP R7 RESUME_KERNEL
+0x0000A6F8       BEQ restore_kernel_context
 
-0x000099F8       B trap_restore              ; if new task was not stopped in kernel side - do usual via SRET
+0x0000A700       B trap_restore              ; if new task was not stopped in kernel side - do usual via SRET
 
 restore_kernel_context:         ;in case new task was stopped in kernel jump to it via RET
-0x00009A00       DISABLEINT                  ; RET does jump by LR(R15)
-0x00009A04       POP R15                     ; LR=pc of next instuction of BL shedule_call in sys_read/write eg
-0x00009A08       POP R14                     ; (in kernel)
-0x00009A0C       POP R12                     ; DI - to avoid int nesting
-0x00009A10       POP R11
-0x00009A14       POP R10
-0x00009A18       POP R9
-0x00009A1C       POP R8
-0x00009A20       POP R7
-0x00009A24       POP R6
-0x00009A28       POP R5
-0x00009A2C       POP R4
-0x00009A30       POP R3
-0x00009A34       POP R2
-0x00009A38       POP R1
-0x00009A3C       RET
+0x0000A708       DISABLEINT                  ; RET does jump by LR(R15)
+0x0000A70C       POP R15                     ; LR=pc of next instuction of BL shedule_call in sys_read/write eg
+0x0000A710       POP R14                     ; (in kernel)
+0x0000A714       POP R12                     ; DI - to avoid int nesting
+0x0000A718       POP R11
+0x0000A71C       POP R10
+0x0000A720       POP R9
+0x0000A724       POP R8
+0x0000A728       POP R7
+0x0000A72C       POP R6
+0x0000A730       POP R5
+0x0000A734       POP R4
+0x0000A738       POP R3
+0x0000A73C       POP R2
+0x0000A740       POP R1
+0x0000A744       RET
 ; ================================================================
 ; Memory and user space layout
 ; ================================================================
@@ -7171,135 +7400,135 @@ page_bitmap:
 ;================================================================
 
 page_alloc0:
-0x00009AD0       PUSH  R5
-0x00009AD4       PUSH  R6
-0x00009AD8       PUSH  R7
-0x00009ADC       PUSH  R8
-0x00009AE0       PUSH  R9
+0x0000A7D8       PUSH  R5
+0x0000A7DC       PUSH  R6
+0x0000A7E0       PUSH  R7
+0x0000A7E4       PUSH  R8
+0x0000A7E8       PUSH  R9
 
-0x00009AE4       LI R2 0                  ; page index
+0x0000A7EC       LI R2 0                  ; page index
 
 pa_loop:
-0x00009AEC       LI R1 MAX_PHYS_PAGES
+0x0000A7F4       LI R1 MAX_PHYS_PAGES
 
-0x00009AF4       CMP R2 R1
-0x00009AF8       BGE pa_fail                 ; if we've checked all pages, fail
+0x0000A7FC       CMP R2 R1
+0x0000A800       BGE pa_fail                 ; if we've checked all pages, fail
 
     ; byte = index / 8
 
-0x00009B00       MOV R3 R2
-0x00009B04       SHR R3 R3 3                 ; divide by 8 to get byte index in bitmap
+0x0000A808       MOV R3 R2
+0x0000A80C       SHR R3 R3 3                 ; divide by 8 to get byte index in bitmap
 
     ; bit = index & 7
 
-0x00009B08       MOV R4 R2
-0x00009B0C       AND R4 R4 7                 ; modulo 8 to get bit index within the byte
+0x0000A810       MOV R4 R2
+0x0000A814       AND R4 R4 7                 ; modulo 8 to get bit index within the byte
 
     ; load bitmap byte
 
-0x00009B10       LI R5 page_bitmap
-0x00009B18       ADD R5 R5 R3                ; r3 is byte index, add to bitmap base
+0x0000A818       LI R5 page_bitmap
+0x0000A820       ADD R5 R5 R3                ; r3 is byte index, add to bitmap base
                                 ; to get address of byte containing this page's bit
 
-0x00009B1C       LDB R6 [R5]                 ; load the byte containing the bit for this page
+0x0000A824       LDB R6 [R5]                 ; load the byte containing the bit for this page
 
     ; mask = 1 << bit
 
-0x00009B20       LI R7 1
-0x00009B28       SHL R7 R7 R4                ; create a mask with a 1 in the position of the bit for this page
+0x0000A828       LI R7 1
+0x0000A830       SHL R7 R7 R4                ; create a mask with a 1 in the position of the bit for this page
 
     ; allocated ?
 
-0x00009B2C       AND R8 R6 R7                ; R8 = R6 & R7, will be 0 if the bit is not set (page is free),
+0x0000A834       AND R8 R6 R7                ; R8 = R6 & R7, will be 0 if the bit is not set (page is free),
                                 ; non-zero if allocated
-0x00009B30       CMP R8 0
-0x00009B34       BEQ pa_found                ; if bit is 0, page is free
+0x0000A838       CMP R8 0
+0x0000A83C       BEQ pa_found                ; if bit is 0, page is free
 
-0x00009B3C       ADD R2 R2 1                 ; increment page index and check next page
-0x00009B40       B pa_loop
+0x0000A844       ADD R2 R2 1                 ; increment page index and check next page
+0x0000A848       B pa_loop
 
 pa_found:
 
     ; mark page allocated
 
-0x00009B48       OR  R6 R6 R7
-0x00009B4C       STB R6 [R5]
+0x0000A850       OR  R6 R6 R7
+0x0000A854       STB R6 [R5]
 
     ; physical address = PAGE_ALLOC_BASE + page_index * PAGE_SIZE
 
-0x00009B50       LI  R9 PAGE_ALLOC_BASE
+0x0000A858       LI  R9 PAGE_ALLOC_BASE
 
-0x00009B58       MOV R1 R2
-0x00009B5C       SHL R1 R1 12          ; page_index * 4096
+0x0000A860       MOV R1 R2
+0x0000A864       SHL R1 R1 12          ; page_index * 4096
 
-0x00009B60       ADD R1 R1 R9
+0x0000A868       ADD R1 R1 R9
 
-0x00009B64       POP R9
-0x00009B68       POP R8
-0x00009B6C       POP R7
-0x00009B70       POP R6
-0x00009B74       POP R5
+0x0000A86C       POP R9
+0x0000A870       POP R8
+0x0000A874       POP R7
+0x0000A878       POP R6
+0x0000A87C       POP R5
 
-0x00009B78       RET
+0x0000A880       RET
 
 pa_fail:
 
-0x00009B7C       LI R1 0                     ; no free pages
+0x0000A884       LI R1 0                     ; no free pages
 
-0x00009B84       POP R9
-0x00009B88       POP R8
-0x00009B8C       POP R7
-0x00009B90       POP R6
-0x00009B94       POP R5
-0x00009B98       RET
+0x0000A88C       POP R9
+0x0000A890       POP R8
+0x0000A894       POP R7
+0x0000A898       POP R6
+0x0000A89C       POP R5
+0x0000A8A0       RET
 
 
 ;new page allocation routine with refcounts and bitmap for 128 pages of 4KB each (512KB total)
 
 page_alloc:
-0x00009B9C       PUSH R6
-0x00009BA0       PUSH R7
-0x00009BA4       PUSH R8
-0x00009BA8       PUSH R9
+0x0000A8A4       PUSH R6
+0x0000A8A8       PUSH R7
+0x0000A8AC       PUSH R8
+0x0000A8B0       PUSH R9
 
-0x00009BAC       LI R2 0                     ; page index
+0x0000A8B4       LI R2 0                     ; page index
 
 pa1_loop:
-0x00009BB4       LI R1 MAX_PHYS_PAGES
-0x00009BBC       CMP R2 R1
-0x00009BC0       BGE pa1_fail
+0x0000A8BC       LI R1 MAX_PHYS_PAGES
+0x0000A8C4       CMP R2 R1
+0x0000A8C8       BGE pa1_fail
 
-0x00009BC8       LI R1 page_refcounts
+0x0000A8D0       LI R1 page_refcounts
     ;ADD R5 R1 R2               ; address of refcount for this page
-0x00009BD0       LDB R6 [R1 + R2]           ; load refcount
-0x00009BD4       CMP R6 0
-0x00009BD8       BEQ pa1_found
+0x0000A8D8       LDB R6 [R1 + R2]           ; load refcount
+0x0000A8DC       CMP R6 0
+0x0000A8E0       BEQ pa1_found
 
-0x00009BE0       ADD R2 R2 1
-0x00009BE4       B pa1_loop
+0x0000A8E8       ADD R2 R2 1
+0x0000A8EC       B pa1_loop
 
 pa1_found:
-0x00009BEC       LI R6 1
-0x00009BF4       STB R6 [R1 + R2]          ; set refcount = 1
+0x0000A8F4       LI R6 1
+0x0000A8FC       STB R6 [R1 + R2]          ; set refcount = 1
 
-0x00009BF8       LI R9 PAGE_ALLOC_BASE
-0x00009C00       MOV R1 R2
-0x00009C04       SHL R1 R1 12                ; index * PAGE_SIZE (4kB)
-0x00009C08       ADD R1 R1 R9                ; physical address = PAGE_ALLOC_BASE + page_index * PAGE_SIZE
+0x0000A900       LI R9 PAGE_ALLOC_BASE
+0x0000A908       MOV R1 R2
+0x0000A90C       SHL R1 R1 12                ; index * PAGE_SIZE (4kB)
+0x0000A910       ADD R1 R1 R9                ; physical address = PAGE_ALLOC_BASE + page_index * PAGE_SIZE
 
-0x00009C0C       POP R9
-0x00009C10       POP R8
-0x00009C14       POP R7
-0x00009C18       POP R6                     ; R1 = physical address of allocated page
-0x00009C1C       RET
+0x0000A914       POP R9
+0x0000A918       POP R8
+0x0000A91C       POP R7
+0x0000A920       POP R6                     ; R1 = physical address of allocated page
+0x0000A924       RET
 
 pa1_fail:
-0x00009C20       LI R1 0                     ; no free pages
-0x00009C28       POP R9
-0x00009C2C       POP R8
-0x00009C30       POP R7
-0x00009C34       POP R6
-0x00009C38       RET
+0x0000A928       LI R1 0                     ; no free pages
+0x0000A930       POP R9
+0x0000A934       POP R8
+0x0000A938       POP R7
+0x0000A93C       POP R6
+0x0000A940       RET
 
 ;=================================================================
 ; page_get - increment refcount for a physical page
@@ -7310,30 +7539,30 @@ pa1_fail:
 page_get:
     ; R1 = physical address
     ; Returns nothing; ignores invalid addresses
-0x00009C3C       CMP R1 0
-0x00009C40       BEQ page_get_done
+0x0000A944       CMP R1 0
+0x0000A948       BEQ page_get_done
 
     ; Check lower bound
-0x00009C48       LI R2 PAGE_ALLOC_BASE
-0x00009C50       CMP R1 R2
-0x00009C54       BLT page_get_done
+0x0000A950       LI R2 PAGE_ALLOC_BASE
+0x0000A958       CMP R1 R2
+0x0000A95C       BLT page_get_done
 
     ; Check upper bound (exclusive)
-0x00009C5C       LI R2 PAGE_ALLOC_END
-0x00009C64       CMP R1 R2
-0x00009C68       BGE page_get_done
+0x0000A964       LI R2 PAGE_ALLOC_END
+0x0000A96C       CMP R1 R2
+0x0000A970       BGE page_get_done
 
     ; Calculate index
-0x00009C70       LI R2 PAGE_ALLOC_BASE
-0x00009C78       SUB R2 R1 R2       ; R1 pa
-0x00009C7C       SHR R2 R2 12       ; R2 = page index in refcounts array
-0x00009C80       LI R3 page_refcounts
-0x00009C88       ADD R3 R3 R2
-0x00009C8C       LDB R4 [R3]
-0x00009C90       ADD R4 R4 1                 ; increment refcount
-0x00009C94       STB R4 [R3]
+0x0000A978       LI R2 PAGE_ALLOC_BASE
+0x0000A980       SUB R2 R1 R2       ; R1 pa
+0x0000A984       SHR R2 R2 12       ; R2 = page index in refcounts array
+0x0000A988       LI R3 page_refcounts
+0x0000A990       ADD R3 R3 R2
+0x0000A994       LDB R4 [R3]
+0x0000A998       ADD R4 R4 1                 ; increment refcount
+0x0000A99C       STB R4 [R3]
 page_get_done:
-0x00009C98       RET
+0x0000A9A0       RET
 
 ;=================================================================
 ; page_put - decrement refcount for a physical page
@@ -7343,30 +7572,30 @@ page_get_done:
 
 page_put:
     ; R1 = physical address
-0x00009C9C       CMP R1 0                        ;if address is 0 - ignore
-0x00009CA0       BEQ page_put_done
+0x0000A9A4       CMP R1 0                        ;if address is 0 - ignore
+0x0000A9A8       BEQ page_put_done
 
-0x00009CA8       LI R2 PAGE_ALLOC_BASE           ;check R1 is valid
-0x00009CB0       CMP R1 R2
-0x00009CB4       BLT page_put_done
+0x0000A9B0       LI R2 PAGE_ALLOC_BASE           ;check R1 is valid
+0x0000A9B8       CMP R1 R2
+0x0000A9BC       BLT page_put_done
 
-0x00009CBC       LI R2 PAGE_ALLOC_END
-0x00009CC4       CMP R1 R2
-0x00009CC8       BGE page_put_done
+0x0000A9C4       LI R2 PAGE_ALLOC_END
+0x0000A9CC       CMP R1 R2
+0x0000A9D0       BGE page_put_done
 
-0x00009CD0       LI R2 PAGE_ALLOC_BASE
-0x00009CD8       SUB R2 R1 R2
-0x00009CDC       SHR R2 R2 12        ; R2 = page index in refcounts array
-0x00009CE0       LI R3 page_refcounts
-0x00009CE8       ADD R3 R3 R2
-0x00009CEC       LDB R4 [R3]
-0x00009CF0       CMP R4 0
-0x00009CF4       BEQ page_put_done               ;if refcount already 0 - ignore it was freed already
-0x00009CFC       SUB R4 R4 1                     ;decrement refcount
-0x00009D00       STB R4 [R3]
+0x0000A9D8       LI R2 PAGE_ALLOC_BASE
+0x0000A9E0       SUB R2 R1 R2
+0x0000A9E4       SHR R2 R2 12        ; R2 = page index in refcounts array
+0x0000A9E8       LI R3 page_refcounts
+0x0000A9F0       ADD R3 R3 R2
+0x0000A9F4       LDB R4 [R3]
+0x0000A9F8       CMP R4 0
+0x0000A9FC       BEQ page_put_done               ;if refcount already 0 - ignore it was freed already
+0x0000AA04       SUB R4 R4 1                     ;decrement refcount
+0x0000AA08       STB R4 [R3]
     ; If refcount becomes 0, the page is now free (no further action needed)
 page_put_done:
-0x00009D04       RET
+0x0000AA0C       RET
 
 ;==============================================================================
 ; TABLE-BASED PAGE MANAGEMENT (for multi-page executables)
@@ -7391,100 +7620,100 @@ page_put_done:
 ; On failure, all allocated pages are freed automatically.
 ;------------------------------------------------------------------------------
 pages_allocate_table:
-0x00009D08       PUSH LR
-0x00009D0C       PUSH R8
-0x00009D10       PUSH R9
-0x00009D14       PUSH R10
-0x00009D18       PUSH R11
-0x00009D1C       PUSH R12
+0x0000AA10       PUSH LR
+0x0000AA14       PUSH R8
+0x0000AA18       PUSH R9
+0x0000AA1C       PUSH R10
+0x0000AA20       PUSH R11
+0x0000AA24       PUSH R12
 
-0x00009D20       MOV R8 R1                 ; file size
-0x00009D24       LI  R2 PAGE_SIZE
+0x0000AA28       MOV R8 R1                 ; file size
+0x0000AA2C       LI  R2 PAGE_SIZE
     ; compute num_pages = ceil(size / PAGE_SIZE)
-0x00009D2C       ADD R1 R8 R2
-0x00009D30       SUB R1 R1 1               ; (fsz + 4095) / 4096
-0x00009D34       DIV R1 R1 R2              ; R1 = count
-0x00009D38       MOV R9 R1                 ; save count
+0x0000AA34       ADD R1 R8 R2
+0x0000AA38       SUB R1 R1 1               ; (fsz + 4095) / 4096
+0x0000AA3C       DIV R1 R1 R2              ; R1 = count
+0x0000AA40       MOV R9 R1                 ; save count
 
     ; ---- allocate table page ----
-0x00009D3C       BL page_alloc
-0x00009D44       CMP R1 0
-0x00009D48       BEQ table_alloc_fail
-0x00009D50       MOV R10 R1                ; table PA
-0x00009D54       LI R3 PAGE_SIZE
-0x00009D5C       BL mem_zero               ; zero table
-0x00009D64       STW R9 [R10]              ; store count
+0x0000AA44       BL page_alloc
+0x0000AA4C       CMP R1 0
+0x0000AA50       BEQ table_alloc_fail
+0x0000AA58       MOV R10 R1                ; table PA
+0x0000AA5C       LI R3 PAGE_SIZE
+0x0000AA64       BL mem_zero               ; zero table
+0x0000AA6C       STW R9 [R10]              ; store count
 
     ; ---- allocate code pages and fill table ----
-0x00009D68       LI R11 0                  ; index
-0x00009D70       LI R12 0                  ; error flag
+0x0000AA70       LI R11 0                  ; index
+0x0000AA78       LI R12 0                  ; error flag
 alloc_table_loop:
-0x00009D78       CMP R11 R9
-0x00009D7C       BGE alloc_table_done
-0x00009D84       BL page_alloc             ;get new page
-0x00009D8C       CMP R1 0
-0x00009D90       BEQ alloc_table_fail
-0x00009D98       SHL R3 R11 2
-0x00009D9C       ADD R4 R10 R3
-0x00009DA0       ADD R4 R4 4
-0x00009DA4       STW R1 [R4]               ; store R1 - new PA at table[4 + i*4]
-0x00009DA8       ADD R11 R11 1
-0x00009DAC       B alloc_table_loop
+0x0000AA80       CMP R11 R9
+0x0000AA84       BGE alloc_table_done
+0x0000AA8C       BL page_alloc             ;get new page
+0x0000AA94       CMP R1 0
+0x0000AA98       BEQ alloc_table_fail
+0x0000AAA0       SHL R3 R11 2
+0x0000AAA4       ADD R4 R10 R3
+0x0000AAA8       ADD R4 R4 4
+0x0000AAAC       STW R1 [R4]               ; store R1 - new PA at table[4 + i*4]
+0x0000AAB0       ADD R11 R11 1
+0x0000AAB4       B alloc_table_loop
 alloc_table_done:
     ; success
-0x00009DB4       MOV R1 R10                ; table PA
-0x00009DB8       MOV R2 R9                 ; count
-0x00009DBC       LI R3 0                   ; success
-0x00009DC4       POP R12
-0x00009DC8       POP R11
-0x00009DCC       POP R10
-0x00009DD0       POP R9
-0x00009DD4       POP R8
-0x00009DD8       POP LR
-0x00009DDC       RET
+0x0000AABC       MOV R1 R10                ; table PA
+0x0000AAC0       MOV R2 R9                 ; count
+0x0000AAC4       LI R3 0                   ; success
+0x0000AACC       POP R12
+0x0000AAD0       POP R11
+0x0000AAD4       POP R10
+0x0000AAD8       POP R9
+0x0000AADC       POP R8
+0x0000AAE0       POP LR
+0x0000AAE4       RET
 
 alloc_table_fail:
     ; free all already allocated code pages and the table
-0x00009DE0       MOV R12 R11               ; number allocated so far
-0x00009DE4       LI R11 0
+0x0000AAE8       MOV R12 R11               ; number allocated so far
+0x0000AAEC       LI R11 0
 rollback_loop:
-0x00009DEC       CMP R11 R12
-0x00009DF0       BGE rollback_done
-0x00009DF8       SHL R3 R11 2
-0x00009DFC       ADD R4 R10 R3
-0x00009E00       ADD R4 R4 4
-0x00009E04       LDW R1 [R4]
-0x00009E08       CMP R1 0
-0x00009E0C       BEQ rollback_next
-0x00009E14       BL page_put
+0x0000AAF4       CMP R11 R12
+0x0000AAF8       BGE rollback_done
+0x0000AB00       SHL R3 R11 2
+0x0000AB04       ADD R4 R10 R3
+0x0000AB08       ADD R4 R4 4
+0x0000AB0C       LDW R1 [R4]
+0x0000AB10       CMP R1 0
+0x0000AB14       BEQ rollback_next
+0x0000AB1C       BL page_put
 rollback_next:
-0x00009E1C       ADD R11 R11 1
-0x00009E20       B rollback_loop
+0x0000AB24       ADD R11 R11 1
+0x0000AB28       B rollback_loop
 rollback_done:
-0x00009E28       MOV R1 R10
-0x00009E2C       BL page_put               ; free table
-0x00009E34       LI R1 0
-0x00009E3C       LI R2 0
-0x00009E44       LI R3 ERR_NOMEM
-0x00009E4C       POP R12
-0x00009E50       POP R11
-0x00009E54       POP R10
-0x00009E58       POP R9
-0x00009E5C       POP R8
-0x00009E60       POP LR
-0x00009E64       RET
+0x0000AB30       MOV R1 R10
+0x0000AB34       BL page_put               ; free table
+0x0000AB3C       LI R1 0
+0x0000AB44       LI R2 0
+0x0000AB4C       LI R3 ERR_NOMEM
+0x0000AB54       POP R12
+0x0000AB58       POP R11
+0x0000AB5C       POP R10
+0x0000AB60       POP R9
+0x0000AB64       POP R8
+0x0000AB68       POP LR
+0x0000AB6C       RET
 
 table_alloc_fail:
-0x00009E68       LI R1 0
-0x00009E70       LI R2 0
-0x00009E78       LI R3 ERR_NOMEM
-0x00009E80       POP R12
-0x00009E84       POP R11
-0x00009E88       POP R10
-0x00009E8C       POP R9
-0x00009E90       POP R8
-0x00009E94       POP LR
-0x00009E98       RET
+0x0000AB70       LI R1 0
+0x0000AB78       LI R2 0
+0x0000AB80       LI R3 ERR_NOMEM
+0x0000AB88       POP R12
+0x0000AB8C       POP R11
+0x0000AB90       POP R10
+0x0000AB94       POP R9
+0x0000AB98       POP R8
+0x0000AB9C       POP LR
+0x0000ABA0       RET
 
 ;------------------------------------------------------------------------------
 ; pages_free_table - Free a table and all its code pages.
@@ -7493,38 +7722,38 @@ table_alloc_fail:
 ; OUT:  none
 ;------------------------------------------------------------------------------
 pages_free_table:
-0x00009E9C       PUSH LR
-0x00009EA0       PUSH R8
-0x00009EA4       PUSH R9
-0x00009EA8       PUSH R10
+0x0000ABA4       PUSH LR
+0x0000ABA8       PUSH R8
+0x0000ABAC       PUSH R9
+0x0000ABB0       PUSH R10
 
-0x00009EAC       CMP R1 0
-0x00009EB0       BEQ free_table_done
-0x00009EB8       MOV R8 R1                 ; table PA
-0x00009EBC       LDW R9 [R8]               ; count
-0x00009EC0       LI R10 0
+0x0000ABB4       CMP R1 0
+0x0000ABB8       BEQ free_table_done
+0x0000ABC0       MOV R8 R1                 ; table PA
+0x0000ABC4       LDW R9 [R8]               ; count
+0x0000ABC8       LI R10 0
 free_table_loop:
-0x00009EC8       CMP R10 R9
-0x00009ECC       BGE free_table_done_pages
-0x00009ED4       SHL R3 R10 2
-0x00009ED8       ADD R4 R8 R3
-0x00009EDC       ADD R4 R4 4
-0x00009EE0       LDW R1 [R4]
-0x00009EE4       CMP R1 0
-0x00009EE8       BEQ free_table_next
-0x00009EF0       BL page_put
+0x0000ABD0       CMP R10 R9
+0x0000ABD4       BGE free_table_done_pages
+0x0000ABDC       SHL R3 R10 2
+0x0000ABE0       ADD R4 R8 R3
+0x0000ABE4       ADD R4 R4 4
+0x0000ABE8       LDW R1 [R4]
+0x0000ABEC       CMP R1 0
+0x0000ABF0       BEQ free_table_next
+0x0000ABF8       BL page_put
 free_table_next:
-0x00009EF8       ADD R10 R10 1
-0x00009EFC       B free_table_loop
+0x0000AC00       ADD R10 R10 1
+0x0000AC04       B free_table_loop
 free_table_done_pages:
-0x00009F04       MOV R1 R8
-0x00009F08       BL page_put               ; free the table page itself
+0x0000AC0C       MOV R1 R8
+0x0000AC10       BL page_put               ; free the table page itself
 free_table_done:
-0x00009F10       POP R10
-0x00009F14       POP R9
-0x00009F18       POP R8
-0x00009F1C       POP LR
-0x00009F20       RET
+0x0000AC18       POP R10
+0x0000AC1C       POP R9
+0x0000AC20       POP R8
+0x0000AC24       POP LR
+0x0000AC28       RET
 
 ;------------------------------------------------------------------------------
 ; pages_map_table - Map all code pages from a table to consecutive virtual addresses.
@@ -7539,48 +7768,48 @@ free_table_done:
 ; Clobbers: R5-R11
 ;------------------------------------------------------------------------------
 pages_map_table:
-0x00009F24       PUSH LR
-0x00009F28       PUSH R5
-0x00009F2C       PUSH R6
-0x00009F30       PUSH R7
-0x00009F34       PUSH R8
-0x00009F38       PUSH R9
-0x00009F3C       PUSH R10
-0x00009F40       PUSH R11
+0x0000AC2C       PUSH LR
+0x0000AC30       PUSH R5
+0x0000AC34       PUSH R6
+0x0000AC38       PUSH R7
+0x0000AC3C       PUSH R8
+0x0000AC40       PUSH R9
+0x0000AC44       PUSH R10
+0x0000AC48       PUSH R11
 
-0x00009F44       MOV R8 R1                 ; table PA
-0x00009F48       MOV R9 R2                 ; PTBR
-0x00009F4C       MOV R10 R3                ; VA start
-0x00009F50       MOV R11 R4                ; flags
-0x00009F54       LDW R6 [R8]               ; count
-0x00009F58       LI R7 0
+0x0000AC4C       MOV R8 R1                 ; table PA
+0x0000AC50       MOV R9 R2                 ; PTBR
+0x0000AC54       MOV R10 R3                ; VA start
+0x0000AC58       MOV R11 R4                ; flags
+0x0000AC5C       LDW R6 [R8]               ; count
+0x0000AC60       LI R7 0
 map_table_loop:
-0x00009F60       CMP R7 R6
-0x00009F64       BGE map_table_done
-0x00009F6C       SHL R3 R7 2
-0x00009F70       ADD R4 R8 R3
-0x00009F74       ADD R4 R4 4
-0x00009F78       LDW R5 [R4]            ; physical address
-0x00009F7C       MOV R1 R9                 ; PTBR
-0x00009F80       LI  R3 PAGE_SIZE
-0x00009F88       MUL R3 R7 R3              ; offset = index * PAGE_SIZE
-0x00009F8C       MOV R2 R10
-0x00009F90       ADD R2 R2 R3              ; VA for this page
-0x00009F94       MOV R3 R5                 ; restore physical page after calculating VA offset
-0x00009F98       MOV R4 R11
-0x00009F9C       BL map_page_rt
-0x00009FA4       ADD R7 R7 1
-0x00009FA8       B map_table_loop
+0x0000AC68       CMP R7 R6
+0x0000AC6C       BGE map_table_done
+0x0000AC74       SHL R3 R7 2
+0x0000AC78       ADD R4 R8 R3
+0x0000AC7C       ADD R4 R4 4
+0x0000AC80       LDW R5 [R4]            ; physical address
+0x0000AC84       MOV R1 R9                 ; PTBR
+0x0000AC88       LI  R3 PAGE_SIZE
+0x0000AC90       MUL R3 R7 R3              ; offset = index * PAGE_SIZE
+0x0000AC94       MOV R2 R10
+0x0000AC98       ADD R2 R2 R3              ; VA for this page
+0x0000AC9C       MOV R3 R5                 ; restore physical page after calculating VA offset
+0x0000ACA0       MOV R4 R11
+0x0000ACA4       BL map_page_rt
+0x0000ACAC       ADD R7 R7 1
+0x0000ACB0       B map_table_loop
 map_table_done:
-0x00009FB0       POP R11
-0x00009FB4       POP R10
-0x00009FB8       POP R9
-0x00009FBC       POP R8
-0x00009FC0       POP R7
-0x00009FC4       POP R6
-0x00009FC8       POP R5
-0x00009FCC       POP LR
-0x00009FD0       RET
+0x0000ACB8       POP R11
+0x0000ACBC       POP R10
+0x0000ACC0       POP R9
+0x0000ACC4       POP R8
+0x0000ACC8       POP R7
+0x0000ACCC       POP R6
+0x0000ACD0       POP R5
+0x0000ACD4       POP LR
+0x0000ACD8       RET
 
 
 ;================================================================
@@ -7590,62 +7819,62 @@ map_table_done:
 ;================================================================
 
 page_free0:
-0x00009FD4       PUSH  R5
-0x00009FD8       PUSH  R6
-0x00009FDC       PUSH  R7
-0x00009FE0       PUSH  R8
-0x00009FE4       PUSH  R9
+0x0000ACDC       PUSH  R5
+0x0000ACE0       PUSH  R6
+0x0000ACE4       PUSH  R7
+0x0000ACE8       PUSH  R8
+0x0000ACEC       PUSH  R9
 
 
-0x00009FE8       LI R2 PAGE_ALLOC_BASE
-0x00009FF0       SUB R3 R1 R2         ; calculate offset from base
+0x0000ACF0       LI R2 PAGE_ALLOC_BASE
+0x0000ACF8       SUB R3 R1 R2         ; calculate offset from base
 
-0x00009FF4       SHR R3 R3 12         ; page index = (addr - BASE)/4096
+0x0000ACFC       SHR R3 R3 12         ; page index = (addr - BASE)/4096
 
-0x00009FF8       MOV R4 R3
-0x00009FFC       SHR R4 R4 3          ; byte index in bitmap = page index / 8
+0x0000AD00       MOV R4 R3
+0x0000AD04       SHR R4 R4 3          ; byte index in bitmap = page index / 8
 
-0x0000A000       MOV R5 R3
-0x0000A004       AND R5 R5 7          ; bit index in byte = page index % 8
+0x0000AD08       MOV R5 R3
+0x0000AD0C       AND R5 R5 7          ; bit index in byte = page index % 8
 
-0x0000A008       LI R6 page_bitmap
-0x0000A010       ADD R6 R6 R4         ; address of byte in bitmap containing this page's bit
+0x0000AD10       LI R6 page_bitmap
+0x0000AD18       ADD R6 R6 R4         ; address of byte in bitmap containing this page's bit
 
-0x0000A014       LDB R7 [R6]
+0x0000AD1C       LDB R7 [R6]
 
-0x0000A018       LI R8 1
-0x0000A020       SHL R8 R8 R5         ; mask for this page's bit
+0x0000AD20       LI R8 1
+0x0000AD28       SHL R8 R8 R5         ; mask for this page's bit
 
-0x0000A024       NOT R8 R8            ; invert mask to have 0 in the page's bit position and 1s elsewhere
+0x0000AD2C       NOT R8 R8            ; invert mask to have 0 in the page's bit position and 1s elsewhere
 
-0x0000A028       AND R7 R7 R8         ; clear the bit to mark the page as free by ANDing with the inverted mask
+0x0000AD30       AND R7 R7 R8         ; clear the bit to mark the page as free by ANDing with the inverted mask
                          ; which has a 0 in the position of the page's bit
 
 
-0x0000A02C       STB R7 [R6]          ; store the updated byte with the cleared bit back to the bitmap
+0x0000AD34       STB R7 [R6]          ; store the updated byte with the cleared bit back to the bitmap
 
-0x0000A030       POP R9
-0x0000A034       POP R8
-0x0000A038       POP R7
-0x0000A03C       POP R6
-0x0000A040       POP R5
-0x0000A044       RET
+0x0000AD38       POP R9
+0x0000AD3C       POP R8
+0x0000AD40       POP R7
+0x0000AD44       POP R6
+0x0000AD48       POP R5
+0x0000AD4C       RET
 
 ;=================================================================
 ; Zero out a page of memory at the given address (R1) R3 = PAGE_SIZE / amount to zero out
 ;=================================================================
 
 mem_zero:
-0x0000A048       LI R2 0
+0x0000AD50       LI R2 0
 pz_loop:
-0x0000A050       CMP R3 0
-0x0000A054       BEQ pz_done
-0x0000A05C       STB R2 [R1]
-0x0000A060       ADD R1 R1 1
-0x0000A064       SUB R3 R3 1
-0x0000A068       B pz_loop
+0x0000AD58       CMP R3 0
+0x0000AD5C       BEQ pz_done
+0x0000AD64       STB R2 [R1]
+0x0000AD68       ADD R1 R1 1
+0x0000AD6C       SUB R3 R3 1
+0x0000AD70       B pz_loop
 pz_done:
-0x0000A070       RET
+0x0000AD78       RET
 
 ;=================================================================
 ; memory copy at the given address (R1)<(R2) R3 = amount
@@ -7654,16 +7883,16 @@ pz_done:
 memcpy:
 
 cpy_loop:
-0x0000A074       CMP R3 0
-0x0000A078       BEQ cpy_done
-0x0000A080       LDB R4 [R2]
-0x0000A084       STB R4 [R1]
-0x0000A088       ADD R1 R1 1
-0x0000A08C       ADD R2 R2 1
-0x0000A090       SUB R3 R3 1
-0x0000A094       B cpy_loop
+0x0000AD7C       CMP R3 0
+0x0000AD80       BEQ cpy_done
+0x0000AD88       LDB R4 [R2]
+0x0000AD8C       STB R4 [R1]
+0x0000AD90       ADD R1 R1 1
+0x0000AD94       ADD R2 R2 1
+0x0000AD98       SUB R3 R3 1
+0x0000AD9C       B cpy_loop
 cpy_done:
-0x0000A09C       RET
+0x0000ADA4       RET
 
 ; ================================================================
 ; Copy a memory page (or other multiple of 4 bytes) by physical address.
@@ -7675,17 +7904,17 @@ cpy_done:
 page_copy:
 
 page_copy_loop:
-0x0000A0A0       CMP R3 0
-0x0000A0A4       BEQ page_copy_done
-0x0000A0AC       LDW R4 [R1]
-0x0000A0B0       STW R4 [R2]
-0x0000A0B4       ADD R1 R1 4
-0x0000A0B8       ADD R2 R2 4
-0x0000A0BC       SUB R3 R3 4
-0x0000A0C0       B page_copy_loop
+0x0000ADA8       CMP R3 0
+0x0000ADAC       BEQ page_copy_done
+0x0000ADB4       LDW R4 [R1]
+0x0000ADB8       STW R4 [R2]
+0x0000ADBC       ADD R1 R1 4
+0x0000ADC0       ADD R2 R2 4
+0x0000ADC4       SUB R3 R3 4
+0x0000ADC8       B page_copy_loop
 
 page_copy_done:
-0x0000A0C8       RET
+0x0000ADD0       RET
 
 ; ================================================================
 ; Task management
@@ -7711,121 +7940,121 @@ task_count:
 
 task_create:
 
-0x0000A5D0       PUSH LR
+0x0000B2D8       PUSH LR
 
-0x0000A5D4       MOV R8 R1          ; entry
-0x0000A5D8       MOV R9 R2          ; pid
-0x0000A5DC       LI R10 0           ; task pointer, kept zero until task_alloc succeeds
+0x0000B2DC       MOV R8 R1          ; entry
+0x0000B2E0       MOV R9 R2          ; pid
+0x0000B2E4       LI R10 0           ; task pointer, kept zero until task_alloc succeeds
 
     ; ----------------------------------
     ; allocate task slot
     ; ----------------------------------
 
-0x0000A5E4       BL task_alloc       ; R1 = task pointer or 0 if no free slots
+0x0000B2EC       BL task_alloc       ; R1 = task pointer or 0 if no free slots
 
-0x0000A5EC       CMP R1 0
-0x0000A5F0       BEQ task_create_fail
+0x0000B2F4       CMP R1 0
+0x0000B2F8       BEQ task_create_fail
 
-0x0000A5F8       MOV R10 R1         ; R10 = task pointer
+0x0000B300       MOV R10 R1         ; R10 = task pointer
 
     ; A recycled slot may still contain pointers from its previous owner.
     ; Clear it before recording resources so failure cleanup is reliable.
-0x0000A5FC       MOV R1 R10
-0x0000A600       LI R3 TASK_SIZE
-0x0000A608       BL mem_zero
+0x0000B304       MOV R1 R10
+0x0000B308       LI R3 TASK_SIZE
+0x0000B310       BL mem_zero
 ; macro: TASK_SET_PC R10, R8
-0x0000A610   STW R8 [R10 + TASK_PC]
+0x0000B318   STW R8 [R10 + TASK_PC]
 ; macro: TASK_SET_PID R10, R9
-0x0000A614   STW R9 [R10 + TASK_PID]
+0x0000B31C   STW R9 [R10 + TASK_PID]
 
     ; ----------------------------------
     ; allocate PTBR page
     ; ----------------------------------
 
-0x0000A618       BL page_alloc
-0x0000A620       CMP R1 0
-0x0000A624       BEQ task_create_fail
+0x0000B320       BL page_alloc
+0x0000B328       CMP R1 0
+0x0000B32C       BEQ task_create_fail
 
-0x0000A62C       MOV R12 R1
+0x0000B334       MOV R12 R1
 
 ; macro: TASK_SET_PTBR R10, R1          ; set task page table base
-0x0000A630   STW R1 [R10 + TASK_PTBR]
+0x0000B338   STW R1 [R10 + TASK_PTBR]
 
-0x0000A634       MOV R1 R12
-0x0000A638       LI  R3 PAGE_SIZE
-0x0000A640       BL  mem_zero                   ; zero out the sensitive new page table
+0x0000B33C       MOV R1 R12
+0x0000B340       LI  R3 PAGE_SIZE
+0x0000B348       BL  mem_zero                   ; zero out the sensitive new page table
 
-0x0000A648       MOV R1 R12
-0x0000A64C       BL map_common_kernel        ; map kernel space into new page table so task can run in it
+0x0000B350       MOV R1 R12
+0x0000B354       BL map_common_kernel        ; map kernel space into new page table so task can run in it
         ;and call kernel functions and access kernel data structures when needed
 
     ; Map only this task's executable page. User programs currently retain
     ; their assembled entry VAs; data and stack VAs are common to all tasks.
 ; macro: TASK_GET_PC R8, R10
-0x0000A654   LDW R8 [R10 + TASK_PC]
+0x0000B35C   LDW R8 [R10 + TASK_PC]
 ; macro: TASK_GET_PID R9, R10
-0x0000A658   LDW R9 [R10 + TASK_PID]
+0x0000B360   LDW R9 [R10 + TASK_PID]
 ; macro: TASK_GET_PTBR R1, R10
-0x0000A65C   LDW R1 [R10 + TASK_PTBR]
-0x0000A660       MOV R2 R8
-0x0000A664       LI R3 0xFFFFF000
-0x0000A66C       AND R2 R2 R3
-0x0000A670       MOV R3 R2
-0x0000A674       CMP R9 0
-0x0000A678       BEQ task_create_map_kernel_entry
-0x0000A680       LI R4 USER_RX
-0x0000A688       B task_create_map_entry
+0x0000B364   LDW R1 [R10 + TASK_PTBR]
+0x0000B368       MOV R2 R8
+0x0000B36C       LI R3 0xFFFFF000
+0x0000B374       AND R2 R2 R3
+0x0000B378       MOV R3 R2
+0x0000B37C       CMP R9 0
+0x0000B380       BEQ task_create_map_kernel_entry
+0x0000B388       LI R4 USER_RX
+0x0000B390       B task_create_map_entry
 task_create_map_kernel_entry:
-0x0000A690       LI R4 KERNEL_FLAGS
+0x0000B398       LI R4 KERNEL_FLAGS
 task_create_map_entry:
-0x0000A698       BL map_page
+0x0000B3A0       BL map_page
 
     ; ----------------------------------
     ; allocate user stack page
     ; ----------------------------------
 
-0x0000A6A0       BL page_alloc
-0x0000A6A8       CMP R1 0
-0x0000A6AC       BEQ task_create_fail
+0x0000B3A8       BL page_alloc
+0x0000B3B0       CMP R1 0
+0x0000B3B4       BEQ task_create_fail
 
-0x0000A6B4       MOV R12 R1
+0x0000B3BC       MOV R12 R1
 ; macro: TASK_SET_USTACK_PAGE R10, R12
-0x0000A6B8   STW R12 [R10 + TASK_USTACK_PAGE]
+0x0000B3C0   STW R12 [R10 + TASK_USTACK_PAGE]
 
-0x0000A6BC       LI R11 USER_STACK_TOP
+0x0000B3C4       LI R11 USER_STACK_TOP
 ; macro: TASK_SET_USP R10, R11           ; all tasks use the same virtual stack top
-0x0000A6C4   STW R11 [R10 + TASK_USP]
+0x0000B3CC   STW R11 [R10 + TASK_USP]
 
 ; macro: TASK_GET_PTBR R1, R10       ; get task page table base to map user stack page into it
-0x0000A6C8   LDW R1 [R10 + TASK_PTBR]
+0x0000B3D0   LDW R1 [R10 + TASK_PTBR]
 
-0x0000A6CC       LI  R2 USER_STACK_VA
-0x0000A6D4       MOV R3 R12
-0x0000A6D8       LI  R4 USER_RW
+0x0000B3D4       LI  R2 USER_STACK_VA
+0x0000B3DC       MOV R3 R12
+0x0000B3E0       LI  R4 USER_RW
     ;R1 = page table base R2=va to map R3=pa of page to map R4=permissions
-0x0000A6E0       BL map_page                 ; map user stack page into task page table with RW permissions for user
+0x0000B3E8       BL map_page                 ; map user stack page into task page table with RW permissions for user
 
     ; ----------------------------------
     ; allocate kernel stack page
     ; ----------------------------------
 
-0x0000A6E8       BL page_alloc
-0x0000A6F0       CMP R1 0
-0x0000A6F4       BEQ task_create_fail
+0x0000B3F0       BL page_alloc
+0x0000B3F8       CMP R1 0
+0x0000B3FC       BEQ task_create_fail
 
 ; macro: TASK_SET_KSTACK_PAGE R10, R1
-0x0000A6FC   STW R1 [R10 + TASK_KSTACK_PAGE]
-0x0000A700       LI R2 PAGE_SIZE
+0x0000B404   STW R1 [R10 + TASK_KSTACK_PAGE]
+0x0000B408       LI R2 PAGE_SIZE
 
-0x0000A708       MOV R12 SP             ; save kernel SP before we mess with it for stack frame setup
+0x0000B410       MOV R12 SP             ; save kernel SP before we mess with it for stack frame setup
 
-0x0000A70C       ADD SP R1 R2           ; last address of the new allocated physical
+0x0000B414       ADD SP R1 R2           ; last address of the new allocated physical
                            ; page for kernel stack top
 
 ; macro: TASK_GET_PC R8, R10
-0x0000A710   LDW R8 [R10 + TASK_PC]
+0x0000B418   LDW R8 [R10 + TASK_PC]
 ; macro: TASK_GET_PID R9, R10
-0x0000A714   LDW R9 [R10 + TASK_PID]
+0x0000B41C   LDW R9 [R10 + TASK_PID]
 
     ; ----------------------------------
     ; build initial trap frame
@@ -7833,161 +8062,161 @@ task_create_map_entry:
     ; into that new page
     ; ----------------------------------
 
-0x0000A718       LI R1 0
+0x0000B420       LI R1 0
 
-0x0000A720       PUSH R1            ; R1
-0x0000A724       PUSH R1            ; R2
-0x0000A728       PUSH R1            ; R3
-0x0000A72C       PUSH R1            ; R4
-0x0000A730       PUSH R1            ; R5
-0x0000A734       PUSH R1            ; R6
-0x0000A738       PUSH R1            ; R7
-0x0000A73C       PUSH R1            ; R8
-0x0000A740       PUSH R1            ; R9
-0x0000A744       PUSH R1            ; R10
-0x0000A748       PUSH R1            ; R11
-0x0000A74C       PUSH R1            ; R12
-0x0000A750       PUSH R1            ; R14 (FP)
-0x0000A754       PUSH R1            ; R15 (LR)
+0x0000B428       PUSH R1            ; R1
+0x0000B42C       PUSH R1            ; R2
+0x0000B430       PUSH R1            ; R3
+0x0000B434       PUSH R1            ; R4
+0x0000B438       PUSH R1            ; R5
+0x0000B43C       PUSH R1            ; R6
+0x0000B440       PUSH R1            ; R7
+0x0000B444       PUSH R1            ; R8
+0x0000B448       PUSH R1            ; R9
+0x0000B44C       PUSH R1            ; R10
+0x0000B450       PUSH R1            ; R11
+0x0000B454       PUSH R1            ; R12
+0x0000B458       PUSH R1            ; R14 (FP)
+0x0000B45C       PUSH R1            ; R15 (LR)
 
-0x0000A758       PUSH R11           ; R11 - user SP top
+0x0000B460       PUSH R11           ; R11 - user SP top
 
-0x0000A75C       MOV R1 R8
-0x0000A760       PUSH R1            ; sepc = entry
+0x0000B464       MOV R1 R8
+0x0000B468       PUSH R1            ; sepc = entry
 
-0x0000A764       LI R1 0
-0x0000A76C       PUSH R1            ; sflags
+0x0000B46C       LI R1 0
+0x0000B474       PUSH R1            ; sflags
 
-0x0000A770       CMP R9 0
-0x0000A774       BEQ task_create_kernel_status
-0x0000A77C       LI R1 0x20
-0x0000A784       B task_create_status_ready
+0x0000B478       CMP R9 0
+0x0000B47C       BEQ task_create_kernel_status
+0x0000B484       LI R1 0x20
+0x0000B48C       B task_create_status_ready
 task_create_kernel_status:
-0x0000A78C       LI R1 0x120
+0x0000B494       LI R1 0x120
 task_create_status_ready:
-0x0000A794       PUSH R1            ; sstatus
+0x0000B49C       PUSH R1            ; sstatus
 
-0x0000A798       LI R1 0
-0x0000A7A0       PUSH R1            ; scause
-0x0000A7A4       PUSH R1            ; stval
+0x0000B4A0       LI R1 0
+0x0000B4A8       PUSH R1            ; scause
+0x0000B4AC       PUSH R1            ; stval
 
     ; ----------------------------------
     ; task structure
     ; ----------------------------------
 
-0x0000A7A8       MOV R1 SP
+0x0000B4B0       MOV R1 SP
 ; macro: TASK_SET_KSP R10, R1                    ; save kernel trapframe SP in task struct
-0x0000A7AC   STW R1 [R10 + TASK_KSP]
+0x0000B4B4   STW R1 [R10 + TASK_KSP]
 
-0x0000A7B0       MOV SP R12         ; restore kernel SP after stack frame setup
+0x0000B4B8       MOV SP R12         ; restore kernel SP after stack frame setup
 
 ; macro: TASK_SET_WAIT R10, WAIT_NONE            ; set wait reason to none (not sleeping)
-0x0000A7B4   LI R1 WAIT_NONE
-0x0000A7BC   STW R1 [R10 + TASK_WAIT]
+0x0000B4BC   LI R1 WAIT_NONE
+0x0000B4C4   STW R1 [R10 + TASK_WAIT]
 
 ; macro: TASK_SET_RESUME R10, RESUME_TRAP        ; set resume switch to trap - this means
-0x0000A7C0   LI R1 RESUME_TRAP
-0x0000A7C8   STW R1 [R10 + TASK_RESUME]
+0x0000B4C8   LI R1 RESUME_TRAP
+0x0000B4D0   STW R1 [R10 + TASK_RESUME]
     ;when we schedule to this task it will run via trap restore path (usual case)
 
     ; ----------------------------------
     ; fd table
     ; ----------------------------------
 
-0x0000A7CC       BL page_alloc
-0x0000A7D4       CMP R1 0
-0x0000A7D8       BEQ task_create_fail
+0x0000B4D4       BL page_alloc
+0x0000B4DC       CMP R1 0
+0x0000B4E0       BEQ task_create_fail
 
     ; set task fd_table ptr to new page
 
     ; R1 = newly allocated fd table page
 
-0x0000A7E0       MOV R12 R1
+0x0000B4E8       MOV R12 R1
 
-0x0000A7E4       LI  R3 PAGE_SIZE
-0x0000A7EC       MOV R1 R12
-0x0000A7F0       BL  mem_zero
+0x0000B4EC       LI  R3 PAGE_SIZE
+0x0000B4F4       MOV R1 R12
+0x0000B4F8       BL  mem_zero
 
     ; stdin
-0x0000A7F8       LI  R2 file_stdin
-0x0000A800       STW R2 [R12 + 0]
+0x0000B500       LI  R2 file_stdin
+0x0000B508       STW R2 [R12 + 0]
 
     ; stdout
-0x0000A804       LI  R2 file_stdout
-0x0000A80C       STW R2 [R12 + 4]
+0x0000B50C       LI  R2 file_stdout
+0x0000B514       STW R2 [R12 + 4]
 
     ; stderr
-0x0000A810       LI  R2 file_stderr
-0x0000A818       STW R2 [R12 + 8]
+0x0000B518       LI  R2 file_stderr
+0x0000B520       STW R2 [R12 + 8]
 
 ; macro: TASK_SET_FD_TABLE R10, R12
-0x0000A81C   STW R12 [R10 + TASK_FD_TABLE]
+0x0000B524   STW R12 [R10 + TASK_FD_TABLE]
 
     ; ----------------------------------
     ; kernel buffers
     ; ----------------------------------
 
-0x0000A820       BL page_alloc
-0x0000A828       CMP R1 0
-0x0000A82C       BEQ task_create_fail
+0x0000B528       BL page_alloc
+0x0000B530       CMP R1 0
+0x0000B534       BEQ task_create_fail
 
 ; macro: TASK_SET_KBUF_WR R10, R1                ; set task kernel write buffer (upto whole page for now)
-0x0000A834   STW R1 [R10 + TASK_KBUF_WR_PTR]
+0x0000B53C   STW R1 [R10 + TASK_KBUF_WR_PTR]
 
-0x0000A838       BL page_alloc
-0x0000A840       CMP R1 0
-0x0000A844       BEQ task_create_fail
+0x0000B540       BL page_alloc
+0x0000B548       CMP R1 0
+0x0000B54C       BEQ task_create_fail
 
 ; macro: TASK_SET_KBUF_RD R10, R1                ; set task kernel read buffer
-0x0000A84C   STW R1 [R10 + TASK_KBUF_RD_PTR]
+0x0000B554   STW R1 [R10 + TASK_KBUF_RD_PTR]
 
     ; ----------------------------------
     ; data page - for user buffers and heap
     ; ----------------------------------
 
-0x0000A850       BL page_alloc
-0x0000A858       CMP R1 0
-0x0000A85C       BEQ task_create_fail
+0x0000B558       BL page_alloc
+0x0000B560       CMP R1 0
+0x0000B564       BEQ task_create_fail
 
 ; macro: TASK_SET_DATA_PAGE R10, R1              ; set task data page
-0x0000A864   STW R1 [R10 + TASK_DATA_PAGE]
+0x0000B56C   STW R1 [R10 + TASK_DATA_PAGE]
 
-0x0000A868       MOV R12 R1
+0x0000B570       MOV R12 R1
 
 ; macro: TASK_GET_PTBR R1, R10
-0x0000A86C   LDW R1 [R10 + TASK_PTBR]
-0x0000A870       LI  R2 USER_DATA_VA
-0x0000A878       MOV R3 R12
-0x0000A87C       LI  R4 USER_RW
-0x0000A884       BL map_page                 ; map task data page into task page table with RW permissions for user
+0x0000B574   LDW R1 [R10 + TASK_PTBR]
+0x0000B578       LI  R2 USER_DATA_VA
+0x0000B580       MOV R3 R12
+0x0000B584       LI  R4 USER_RW
+0x0000B58C       BL map_page                 ; map task data page into task page table with RW permissions for user
 
     ; initialize code page pointer to zero until execve or static code assignment
     ; This means the task currently has no execve-loaded program image.
     ; When execve runs, TASK_CODE_PAGE will be updated to point to the
     ; physical page currently mapped at USER_CODE_VA.
-0x0000A88C       LI R1 0
+0x0000B594       LI R1 0
 ; macro: TASK_SET_CODE_PAGE R10, R1
-0x0000A894   STW R1 [R10 + TASK_CODE_PAGE]
+0x0000B59C   STW R1 [R10 + TASK_CODE_PAGE]
 
     ; Publish the task only after every required resource and mapping exists.
 ; macro: TASK_SET_STATE R10, TASK_READY
-0x0000A898   LI R1 TASK_READY
-0x0000A8A0   STW R1 [R10 + TASK_STATE]
+0x0000B5A0   LI R1 TASK_READY
+0x0000B5A8   STW R1 [R10 + TASK_STATE]
 
     ; Initialize program break pointer to HEAP_START in User_Data_VA
-0x0000A8A4       LI R1 HEAP_START
+0x0000B5AC       LI R1 HEAP_START
 ; macro: TASK_SET_BREAK R10, R1
-0x0000A8AC   STW R1 [R10 + TASK_BREAK]
+0x0000B5B4   STW R1 [R10 + TASK_BREAK]
 
     ; Initialize parent PID to 0 by default
-0x0000A8B0       LI R1 0
+0x0000B5B8       LI R1 0
 ; macro: TASK_SET_PPID R10, R1
-0x0000A8B8   STW R1 [R10 + TASK_PPID]
+0x0000B5C0   STW R1 [R10 + TASK_PPID]
 
-0x0000A8BC       MOV R1 R10                              ; return created task pointer
+0x0000B5C4       MOV R1 R10                              ; return created task pointer
 
-0x0000A8C0       POP LR
-0x0000A8C4       RET
+0x0000B5C8       POP LR
+0x0000B5CC       RET
 
 
 task_create_fail:
@@ -7995,68 +8224,68 @@ task_create_fail:
     ; so far and return 0.
 
     ; task_alloc can fail before R10 is assigned.
-0x0000A8C8       CMP R10 0
-0x0000A8CC       BEQ task_create_fail_return
+0x0000B5D0       CMP R10 0
+0x0000B5D4       BEQ task_create_fail_return
 
     ; Release every resource already attached to the unpublished task.
 ; macro: TASK_GET_PTBR R1, R10
-0x0000A8D4   LDW R1 [R10 + TASK_PTBR]
-0x0000A8D8       CMP R1 0
-0x0000A8DC       BEQ task_create_free_ustack
-0x0000A8E4       BL page_put
+0x0000B5DC   LDW R1 [R10 + TASK_PTBR]
+0x0000B5E0       CMP R1 0
+0x0000B5E4       BEQ task_create_free_ustack
+0x0000B5EC       BL page_put
 
 task_create_free_ustack:
 ; macro: TASK_GET_USTACK_PAGE R1, R10
-0x0000A8EC   LDW R1 [R10 + TASK_USTACK_PAGE]
-0x0000A8F0       CMP R1 0
-0x0000A8F4       BEQ task_create_free_kstack
-0x0000A8FC       BL page_put
+0x0000B5F4   LDW R1 [R10 + TASK_USTACK_PAGE]
+0x0000B5F8       CMP R1 0
+0x0000B5FC       BEQ task_create_free_kstack
+0x0000B604       BL page_put
 
 task_create_free_kstack:
 ; macro: TASK_GET_KSTACK_PAGE R1, R10
-0x0000A904   LDW R1 [R10 + TASK_KSTACK_PAGE]
-0x0000A908       CMP R1 0
-0x0000A90C       BEQ task_create_free_fd
-0x0000A914       BL page_put
+0x0000B60C   LDW R1 [R10 + TASK_KSTACK_PAGE]
+0x0000B610       CMP R1 0
+0x0000B614       BEQ task_create_free_fd
+0x0000B61C       BL page_put
 
 task_create_free_fd:
 ; macro: TASK_GET_FD_TABLE R1, R10
-0x0000A91C   LDW R1 [R10 + TASK_FD_TABLE]
-0x0000A920       CMP R1 0
-0x0000A924       BEQ task_create_free_kwr
-0x0000A92C       BL page_put
+0x0000B624   LDW R1 [R10 + TASK_FD_TABLE]
+0x0000B628       CMP R1 0
+0x0000B62C       BEQ task_create_free_kwr
+0x0000B634       BL page_put
 
 task_create_free_kwr:
 ; macro: TASK_GET_KBUF_WR R1, R10
-0x0000A934   LDW R1 [R10 + TASK_KBUF_WR_PTR]
-0x0000A938       CMP R1 0
-0x0000A93C       BEQ task_create_free_krd
-0x0000A944       BL page_put
+0x0000B63C   LDW R1 [R10 + TASK_KBUF_WR_PTR]
+0x0000B640       CMP R1 0
+0x0000B644       BEQ task_create_free_krd
+0x0000B64C       BL page_put
 
 task_create_free_krd:
 ; macro: TASK_GET_KBUF_RD R1, R10
-0x0000A94C   LDW R1 [R10 + TASK_KBUF_RD_PTR]
-0x0000A950       CMP R1 0
-0x0000A954       BEQ task_create_free_data
-0x0000A95C       BL page_put
+0x0000B654   LDW R1 [R10 + TASK_KBUF_RD_PTR]
+0x0000B658       CMP R1 0
+0x0000B65C       BEQ task_create_free_data
+0x0000B664       BL page_put
 
 task_create_free_data:
 ; macro: TASK_GET_DATA_PAGE R1, R10
-0x0000A964   LDW R1 [R10 + TASK_DATA_PAGE]
-0x0000A968       CMP R1 0
-0x0000A96C       BEQ task_create_clear_slot
-0x0000A974       BL page_put
+0x0000B66C   LDW R1 [R10 + TASK_DATA_PAGE]
+0x0000B670       CMP R1 0
+0x0000B674       BEQ task_create_clear_slot
+0x0000B67C       BL page_put
 
 task_create_clear_slot:
-0x0000A97C       MOV R1 R10
-0x0000A980       LI R3 TASK_SIZE
-0x0000A988       BL mem_zero
+0x0000B684       MOV R1 R10
+0x0000B688       LI R3 TASK_SIZE
+0x0000B690       BL mem_zero
 
 task_create_fail_return:
-0x0000A990       LI R1 0
+0x0000B698       LI R1 0
 
-0x0000A998       POP LR
-0x0000A99C       RET
+0x0000B6A0       POP LR
+0x0000B6A4       RET
 
 ;================================================================
 ; task_clone_current - clone the currently running task for fork
@@ -8072,108 +8301,108 @@ task_create_fail_return:
 ; - preserve the current trapframe and return 0 in the child
 ;================================================================
 task_clone_current:
-0x0000A9A0       MOV  R8 SP ;save sp to point to task trapframe!
-0x0000A9A4       PUSH LR
+0x0000B6A8       MOV  R8 SP ;save sp to point to task trapframe!
+0x0000B6AC       PUSH LR
 
     ; Get the current task slot and parent task pointer.
 ; macro: GET_CURR_TASK_IDX R6
-0x0000A9A8   LI R1 CURRENT_TASK
-0x0000A9B0   LDW R6 [R1]
+0x0000B6B0   LI R1 CURRENT_TASK
+0x0000B6B8   LDW R6 [R1]
 ; macro: GET_TASK_PTR R7, R6           ; R7 = parent task*
-0x0000A9B4   LI R1 TASK_SIZE
-0x0000A9BC   MUL R3 R6 R1
-0x0000A9C0   LI R7 tasks
-0x0000A9C8   ADD R7 R7 R3
+0x0000B6BC   LI R1 TASK_SIZE
+0x0000B6C4   MUL R3 R6 R1
+0x0000B6C8   LI R7 tasks
+0x0000B6D0   ADD R7 R7 R3
 
     ; Allocate a fresh child task slot.
-0x0000A9CC       BL task_alloc
-0x0000A9D4       CMP R1 0
-0x0000A9D8       BEQ clone_fail
-0x0000A9E0       MOV R10 R1                    ; R10 = child task*
+0x0000B6D4       BL task_alloc
+0x0000B6DC       CMP R1 0
+0x0000B6E0       BEQ clone_fail
+0x0000B6E8       MOV R10 R1                    ; R10 = child task*
 
     ; Clear the new child task slot before use.
-0x0000A9E4       MOV R1 R10
-0x0000A9E8       LI R3 TASK_SIZE
-0x0000A9F0       BL mem_zero
+0x0000B6EC       MOV R1 R10
+0x0000B6F0       LI R3 TASK_SIZE
+0x0000B6F8       BL mem_zero
 
     ; Assign a new PID from the dynamic pid counter.
-0x0000A9F8       LI R1 task_count
-0x0000AA00       LDW R2 [R1]
+0x0000B700       LI R1 task_count
+0x0000B708       LDW R2 [R1]
 
 ; macro: TASK_SET_PID R10, R2        ; set new child task Pid to child task (current task_count value)
-0x0000AA04   STW R2 [R10 + TASK_PID]
-0x0000AA08       ADD R2 R2 1
-0x0000AA0C       STW R2 [R1]                 ; update task_count as we created a new task
+0x0000B70C   STW R2 [R10 + TASK_PID]
+0x0000B710       ADD R2 R2 1
+0x0000B714       STW R2 [R1]                 ; update task_count as we created a new task
 
     ; Set child parent PID to the current task's PID.
 ; macro: TASK_GET_PID R2, R7
-0x0000AA10   LDW R2 [R7 + TASK_PID]
+0x0000B718   LDW R2 [R7 + TASK_PID]
 ; macro: TASK_SET_PPID R10, R2       ; pid - new, ppid - parent task's pid (new task)
-0x0000AA14   STW R2 [R10 + TASK_PPID]
+0x0000B71C   STW R2 [R10 + TASK_PPID]
 
     ; Copy the current task's program break.
 ; macro: TASK_GET_BREAK R2, R7
-0x0000AA18   LDW R2 [R7 + TASK_BREAK]
+0x0000B720   LDW R2 [R7 + TASK_BREAK]
 ; macro: TASK_SET_BREAK R10, R2
-0x0000AA1C   STW R2 [R10 + TASK_BREAK]
+0x0000B724   STW R2 [R10 + TASK_BREAK]
 
     ; Copy current task PC for debugging/metadata.
 ; macro: TASK_GET_PC R2, R7
-0x0000AA20   LDW R2 [R7 + TASK_PC]
+0x0000B728   LDW R2 [R7 + TASK_PC]
 ; macro: TASK_SET_PC R10, R2
-0x0000AA24   STW R2 [R10 + TASK_PC]
+0x0000B72C   STW R2 [R10 + TASK_PC]
 
     ; Allocate and initialize a fresh page table for the child.
-0x0000AA28       BL page_alloc
-0x0000AA30       CMP R1 0
-0x0000AA34       BEQ clone_fail
-0x0000AA3C       MOV R11 R1
+0x0000B730       BL page_alloc
+0x0000B738       CMP R1 0
+0x0000B73C       BEQ clone_fail
+0x0000B744       MOV R11 R1
 ; macro: TASK_SET_PTBR R10, R11
-0x0000AA40   STW R11 [R10 + TASK_PTBR]
+0x0000B748   STW R11 [R10 + TASK_PTBR]
 
     ; Clone the parent's entire page table into the child.
 ; macro: TASK_GET_PTBR R1, R7
-0x0000AA44   LDW R1 [R7 + TASK_PTBR]
-0x0000AA48       MOV R2 R11
-0x0000AA4C       LI R3 PAGE_SIZE
-0x0000AA54       BL page_copy
+0x0000B74C   LDW R1 [R7 + TASK_PTBR]
+0x0000B750       MOV R2 R11
+0x0000B754       LI R3 PAGE_SIZE
+0x0000B75C       BL page_copy
 
     ; child will inherit code page pa (tab+codepages) from parent
 ; macro: TASK_GET_CODE_PAGE R2, R7   ; R2 = parent's code page PA table
-0x0000AA5C   LDW R2 [R7 + TASK_CODE_PAGE]
-0x0000AA60       CMP R2 0
-0x0000AA64       BEQ skip_code_get
+0x0000B764   LDW R2 [R7 + TASK_CODE_PAGE]
+0x0000B768       CMP R2 0
+0x0000B76C       BEQ skip_code_get
     ; 1) allocate new table page
-0x0000AA6C       BL page_alloc
-0x0000AA74       CMP R1 0
-0x0000AA78       BEQ clone_fail
-0x0000AA80       MOV R12 R1
+0x0000B774       BL page_alloc
+0x0000B77C       CMP R1 0
+0x0000B780       BEQ clone_fail
+0x0000B788       MOV R12 R1
     ; 2) copy the table page parnt to child (it contins count and pointers to pa pages)
-0x0000AA84       MOV R1 R2
-0x0000AA88       MOV R2 R12
-0x0000AA8C       LI R3 PAGE_SIZE
-0x0000AA94       BL page_copy    ;4k
+0x0000B78C       MOV R1 R2
+0x0000B790       MOV R2 R12
+0x0000B794       LI R3 PAGE_SIZE
+0x0000B79C       BL page_copy    ;4k
 
 ; increment refcounts for each code page
-0x0000AA9C       LDW R8 [R12]               ; count: +0
-0x0000AAA0       LI R9 0                    ; page index in tab
+0x0000B7A4       LDW R8 [R12]               ; count: +0
+0x0000B7A8       LI R9 0                    ; page index in tab
 clone_inc_loop:
-0x0000AAA8       CMP R9 R8
-0x0000AAAC       BGE clone_inc_done
-0x0000AAB4       SHL R3 R9 2
-0x0000AAB8       ADD R4 R12 R3
-0x0000AABC       ADD R4 R4 4
-0x0000AAC0       LDW R1 [R4]                ;pa ptr: R4=R12(=+0) + 4+idx*4
-0x0000AAC4       CMP R1 0
-0x0000AAC8       BEQ clone_inc_next
-0x0000AAD0       BL page_get                ; refcount+1
+0x0000B7B0       CMP R9 R8
+0x0000B7B4       BGE clone_inc_done
+0x0000B7BC       SHL R3 R9 2
+0x0000B7C0       ADD R4 R12 R3
+0x0000B7C4       ADD R4 R4 4
+0x0000B7C8       LDW R1 [R4]                ;pa ptr: R4=R12(=+0) + 4+idx*4
+0x0000B7CC       CMP R1 0
+0x0000B7D0       BEQ clone_inc_next
+0x0000B7D8       BL page_get                ; refcount+1
 clone_inc_next:
-0x0000AAD8       ADD R9 R9 1
-0x0000AADC       B clone_inc_loop
+0x0000B7E0       ADD R9 R9 1
+0x0000B7E4       B clone_inc_loop
 clone_inc_done:
 
 ; macro: TASK_SET_CODE_PAGE R10, R12 ;  set child's code page PA (tab+pages)
-0x0000AAE4   STW R12 [R10 + TASK_CODE_PAGE]
+0x0000B7EC   STW R12 [R10 + TASK_CODE_PAGE]
 
    ; TASK_SET_CODE_PAGE R10, R2  ; set child's code page PA to parent's code page PA
     ; Now increment refcount for the shared code page (if code page is allocated).
@@ -8185,119 +8414,119 @@ skip_code_get:
     ; The child has inherited the parent's kernel and code mappings.
     ; We will override the user stack and data mappings below.
     ; Allocate and clone the user stack page.
-0x0000AAE8       BL page_alloc
-0x0000AAF0       CMP R1 0
-0x0000AAF4       BEQ clone_fail
-0x0000AAFC       MOV R12 R1
+0x0000B7F0       BL page_alloc
+0x0000B7F8       CMP R1 0
+0x0000B7FC       BEQ clone_fail
+0x0000B804       MOV R12 R1
 ; macro: TASK_SET_USTACK_PAGE R10, R12   ; set new page as child user stack page
-0x0000AB00   STW R12 [R10 + TASK_USTACK_PAGE]
+0x0000B808   STW R12 [R10 + TASK_USTACK_PAGE]
 
 ; macro: TASK_GET_PTBR R1, R10
-0x0000AB04   LDW R1 [R10 + TASK_PTBR]
-0x0000AB08       LI R2 USER_STACK_VA
-0x0000AB10       MOV R3 R12
-0x0000AB14       LI R4 USER_RW
-0x0000AB1C       BL map_page             ; map user stack page to child ptbr
+0x0000B80C   LDW R1 [R10 + TASK_PTBR]
+0x0000B810       LI R2 USER_STACK_VA
+0x0000B818       MOV R3 R12
+0x0000B81C       LI R4 USER_RW
+0x0000B824       BL map_page             ; map user stack page to child ptbr
 
 ; macro: TASK_GET_USTACK_PAGE R1, R7
-0x0000AB24   LDW R1 [R7 + TASK_USTACK_PAGE]
-0x0000AB28       MOV R2 R12
-0x0000AB2C       LI R3 PAGE_SIZE
-0x0000AB34       BL page_copy            ; copy parent user stack page -> child user stack page
+0x0000B82C   LDW R1 [R7 + TASK_USTACK_PAGE]
+0x0000B830       MOV R2 R12
+0x0000B834       LI R3 PAGE_SIZE
+0x0000B83C       BL page_copy            ; copy parent user stack page -> child user stack page
 
     ; Allocate and clone the user data page.
-0x0000AB3C       BL page_alloc
-0x0000AB44       CMP R1 0
-0x0000AB48       BEQ clone_fail
-0x0000AB50       MOV R12 R1
+0x0000B844       BL page_alloc
+0x0000B84C       CMP R1 0
+0x0000B850       BEQ clone_fail
+0x0000B858       MOV R12 R1
 ; macro: TASK_SET_DATA_PAGE R10, R12     ; set new page as child user data page
-0x0000AB54   STW R12 [R10 + TASK_DATA_PAGE]
+0x0000B85C   STW R12 [R10 + TASK_DATA_PAGE]
 
 ; macro: TASK_GET_PTBR R1, R10
-0x0000AB58   LDW R1 [R10 + TASK_PTBR]
-0x0000AB5C       LI R2 USER_DATA_VA
-0x0000AB64       MOV R3 R12
-0x0000AB68       LI R4 USER_RW
-0x0000AB70       BL map_page                     ; map user data page to child ptbr
+0x0000B860   LDW R1 [R10 + TASK_PTBR]
+0x0000B864       LI R2 USER_DATA_VA
+0x0000B86C       MOV R3 R12
+0x0000B870       LI R4 USER_RW
+0x0000B878       BL map_page                     ; map user data page to child ptbr
 
 ; macro: TASK_GET_DATA_PAGE R1, R7
-0x0000AB78   LDW R1 [R7 + TASK_DATA_PAGE]
-0x0000AB7C       MOV R2 R12
-0x0000AB80       LI R3 PAGE_SIZE
-0x0000AB88       BL page_copy                    ; copy parent user data page -> child user data page
+0x0000B880   LDW R1 [R7 + TASK_DATA_PAGE]
+0x0000B884       MOV R2 R12
+0x0000B888       LI R3 PAGE_SIZE
+0x0000B890       BL page_copy                    ; copy parent user data page -> child user data page
 
     ; Clone the fd table and honor open file refcounts.
-0x0000AB90       BL page_alloc
-0x0000AB98       CMP R1 0
-0x0000AB9C       BEQ clone_fail
+0x0000B898       BL page_alloc
+0x0000B8A0       CMP R1 0
+0x0000B8A4       BEQ clone_fail
 
-0x0000ABA4       MOV R12 R1
+0x0000B8AC       MOV R12 R1
 
 ; macro: TASK_SET_FD_TABLE R10, R12       ; set new page as child fd table page
-0x0000ABA8   STW R12 [R10 + TASK_FD_TABLE]
-0x0000ABAC       LI R3 PAGE_SIZE
-0x0000ABB4       MOV R1 R12
-0x0000ABB8       BL mem_zero                     ; clear the child fd table page just in case
+0x0000B8B0   STW R12 [R10 + TASK_FD_TABLE]
+0x0000B8B4       LI R3 PAGE_SIZE
+0x0000B8BC       MOV R1 R12
+0x0000B8C0       BL mem_zero                     ; clear the child fd table page just in case
 
 ; macro: TASK_GET_FD_TABLE R1, R7         ; R1 - parent fd table page
-0x0000ABC0   LDW R1 [R7 + TASK_FD_TABLE]
-0x0000ABC4       CMP R1 0
-0x0000ABC8       BEQ clone_fd_done                ; if parent has no fd table, skip fd cloning
+0x0000B8C8   LDW R1 [R7 + TASK_FD_TABLE]
+0x0000B8CC       CMP R1 0
+0x0000B8D0       BEQ clone_fd_done                ; if parent has no fd table, skip fd cloning
 
     ; parent → child copy FIRST
-0x0000ABD0       MOV R1 R1        ; parent fd page
-0x0000ABD4       MOV R2 R12       ; child fd page
-0x0000ABD8       LI R3 PAGE_SIZE
-0x0000ABE0       BL page_copy
+0x0000B8D8       MOV R1 R1        ; parent fd page
+0x0000B8DC       MOV R2 R12       ; child fd page
+0x0000B8E0       LI R3 PAGE_SIZE
+0x0000B8E8       BL page_copy
 
-0x0000ABE8       LI R4 3                      ; fd index loop + 3 stdin/out/err refcount=1, so start at 3
+0x0000B8F0       LI R4 3                      ; fd index loop + 3 stdin/out/err refcount=1, so start at 3
 
 clone_fd_loop:
-0x0000ABF0       CMP R4 MAX_FDS
-0x0000ABF4       BGE clone_fd_done
+0x0000B8F8       CMP R4 MAX_FDS
+0x0000B8FC       BGE clone_fd_done
 
-0x0000ABFC       SHL R5 R4 2                 ; multiply fd index by 4 to get byte offset
-0x0000AC00       ADD R6 R12 R5               ; R6 = &child_fd_table[i]
+0x0000B904       SHL R5 R4 2                 ; multiply fd index by 4 to get byte offset
+0x0000B908       ADD R6 R12 R5               ; R6 = &child_fd_table[i]
 
-0x0000AC04       LDW R7 [R6]                 ; R7 = file* from child fd table
-0x0000AC08       CMP R7 0
-0x0000AC0C       BEQ clone_fd_next           ; if fd slot is empty, skip to next
+0x0000B90C       LDW R7 [R6]                 ; R7 = file* from child fd table
+0x0000B910       CMP R7 0
+0x0000B914       BEQ clone_fd_next           ; if fd slot is empty, skip to next
 
-0x0000AC14       MOV R1 R7                   ; IMPORTANT: isolate argument
-0x0000AC18       BL file_get                 ; increment refcount of the file* in child fd table
+0x0000B91C       MOV R1 R7                   ; IMPORTANT: isolate argument
+0x0000B920       BL file_get                 ; increment refcount of the file* in child fd table
 
 clone_fd_next:
-0x0000AC20       ADD R4 R4 1
-0x0000AC24       B clone_fd_loop
+0x0000B928       ADD R4 R4 1
+0x0000B92C       B clone_fd_loop
 
 clone_fd_done:
     ; Allocate fresh kernel buffers for the child.
-0x0000AC2C       BL page_alloc
-0x0000AC34       CMP R1 0
-0x0000AC38       BEQ clone_fail
+0x0000B934       BL page_alloc
+0x0000B93C       CMP R1 0
+0x0000B940       BEQ clone_fail
 
 ; macro: TASK_SET_KBUF_WR R10, R1        ; set new page as child kernel write buffer
-0x0000AC40   STW R1 [R10 + TASK_KBUF_WR_PTR]
-0x0000AC44       LI R3 PAGE_SIZE
-0x0000AC4C       BL mem_zero                     ; zero out the child kernel write buffer
+0x0000B948   STW R1 [R10 + TASK_KBUF_WR_PTR]
+0x0000B94C       LI R3 PAGE_SIZE
+0x0000B954       BL mem_zero                     ; zero out the child kernel write buffer
 
-0x0000AC54       BL page_alloc
-0x0000AC5C       CMP R1 0
-0x0000AC60       BEQ clone_fail
+0x0000B95C       BL page_alloc
+0x0000B964       CMP R1 0
+0x0000B968       BEQ clone_fail
 ; macro: TASK_SET_KBUF_RD R10, R1        ; set new page as child kernel read buffer
-0x0000AC68   STW R1 [R10 + TASK_KBUF_RD_PTR]
-0x0000AC6C       LI R3 PAGE_SIZE
-0x0000AC74       BL mem_zero                     ; zero out the child kernel read buffer
+0x0000B970   STW R1 [R10 + TASK_KBUF_RD_PTR]
+0x0000B974       LI R3 PAGE_SIZE
+0x0000B97C       BL mem_zero                     ; zero out the child kernel read buffer
 
     ; Allocate and initialize the child's kernel stack.
-0x0000AC7C       BL page_alloc
-0x0000AC84       CMP R1 0
-0x0000AC88       BEQ clone_fail
-0x0000AC90       MOV R12 R1
+0x0000B984       BL page_alloc
+0x0000B98C       CMP R1 0
+0x0000B990       BEQ clone_fail
+0x0000B998       MOV R12 R1
 ; macro: TASK_SET_KSTACK_PAGE R10, R12   ; set new page as child kernel stack page
-0x0000AC94   STW R12 [R10 + TASK_KSTACK_PAGE]
-0x0000AC98       LI R3 PAGE_SIZE
-0x0000ACA0       ADD R12 R12 R3                  ; R12 = child kernel stack top
+0x0000B99C   STW R12 [R10 + TASK_KSTACK_PAGE]
+0x0000B9A0       LI R3 PAGE_SIZE
+0x0000B9A8       ADD R12 R12 R3                  ; R12 = child kernel stack top
 
 
     ; Copy the current kernel trapframe into the child's new kernel stack.
@@ -8306,54 +8535,54 @@ clone_fd_done:
     ; was reused for the code-page count above. eto pizdec nado decompose clone.
     ; issue is fixed by friend - it found SP is in balance here
     ; so SP+4 is what was in R8 here
-0x0000ACA4       MOV R1 SP
-0x0000ACA8       ADD R1 R1 4                   ; R1 = parent trapframe base
-0x0000ACAC       MOV R6 R12
-0x0000ACB0       LI R5 80                    ; trapframe size in bytes
-0x0000ACB8       SUB R6 R6 R5               ; R6 = child trapframe base inside new kernel stack
-0x0000ACBC       MOV R2 R6
-0x0000ACC0       LI R3 80
-0x0000ACC8       BL page_copy                ; so we copy 80 bytes from SP to R12-80 (child trapframe base)
+0x0000B9AC       MOV R1 SP
+0x0000B9B0       ADD R1 R1 4                   ; R1 = parent trapframe base
+0x0000B9B4       MOV R6 R12
+0x0000B9B8       LI R5 80                    ; trapframe size in bytes
+0x0000B9C0       SUB R6 R6 R5               ; R6 = child trapframe base inside new kernel stack
+0x0000B9C4       MOV R2 R6
+0x0000B9C8       LI R3 80
+0x0000B9D0       BL page_copy                ; so we copy 80 bytes from SP to R12-80 (child trapframe base)
 
     ; Return 0 in the child syscall result register.
-0x0000ACD0       LI R4 0
-0x0000ACD8       STW R4 [R6 + TF_R1]
+0x0000B9D8       LI R4 0
+0x0000B9E0       STW R4 [R6 + TF_R1]
 
 
     ; Preserve the user SP for later trap/schedule bookkeeping.
     ; User SP is already in the trapframe we copied
     ; But we also need to set it in the child's task struct
-0x0000ACDC       LDW R4 [R6 + TF_USP]
+0x0000B9E4       LDW R4 [R6 + TF_USP]
 ; macro: TASK_SET_USP R10, R4
-0x0000ACE0   STW R4 [R10 + TASK_USP]
+0x0000B9E8   STW R4 [R10 + TASK_USP]
 
     ; Save the child kernel trapframe pointer and make it runnable.
 ; macro: TASK_SET_KSP R10, R6                    ;R6 = child trapframe base inside new kernel stack
-0x0000ACE4   STW R6 [R10 + TASK_KSP]
+0x0000B9EC   STW R6 [R10 + TASK_KSP]
 ; macro: TASK_SET_RESUME R10, RESUME_TRAP
-0x0000ACE8   LI R1 RESUME_TRAP
-0x0000ACF0   STW R1 [R10 + TASK_RESUME]
+0x0000B9F0   LI R1 RESUME_TRAP
+0x0000B9F8   STW R1 [R10 + TASK_RESUME]
 ; macro: TASK_SET_WAIT R10, WAIT_NONE
-0x0000ACF4   LI R1 WAIT_NONE
-0x0000ACFC   STW R1 [R10 + TASK_WAIT]
+0x0000B9FC   LI R1 WAIT_NONE
+0x0000BA04   STW R1 [R10 + TASK_WAIT]
 ; macro: TASK_SET_STATE R10, TASK_READY
-0x0000AD00   LI R1 TASK_READY
-0x0000AD08   STW R1 [R10 + TASK_STATE]
+0x0000BA08   LI R1 TASK_READY
+0x0000BA10   STW R1 [R10 + TASK_STATE]
 
-0x0000AD0C       MOV R1 R10          ; return child task pointer
+0x0000BA14       MOV R1 R10          ; return child task pointer
 
-0x0000AD10       POP LR
-0x0000AD14       RET
+0x0000BA18       POP LR
+0x0000BA1C       RET
 
 clone_fail:
-0x0000AD18       CMP R10 0
-0x0000AD1C       BEQ clone_fail_return
-0x0000AD24       MOV R1 R10
-0x0000AD28       BL task_destroy
+0x0000BA20       CMP R10 0
+0x0000BA24       BEQ clone_fail_return
+0x0000BA2C       MOV R1 R10
+0x0000BA30       BL task_destroy
 clone_fail_return:
-0x0000AD30       LI R1 0
-0x0000AD38       POP LR
-0x0000AD3C       RET
+0x0000BA38       LI R1 0
+0x0000BA40       POP LR
+0x0000BA44       RET
 
 ;================================================================
 ; task_destroy - free all resources of a task and clear its slot in task table
@@ -8366,97 +8595,97 @@ clone_fail_return:
 ;================================================================
 task_destroy:
 
-0x0000AD40       PUSH LR
-0x0000AD44       push R12 ; preserve R12 which we use for temporary storage in this function
-0x0000AD48       mov  R12 R1 ; R12 = task pointer
+0x0000BA48       PUSH LR
+0x0000BA4C       push R12 ; preserve R12 which we use for temporary storage in this function
+0x0000BA50       mov  R12 R1 ; R12 = task pointer
 
 ; macro: TASK_GET_PTBR R2, R1
-0x0000AD4C   LDW R2 [R1 + TASK_PTBR]
-0x0000AD50       CMP R2 0
-0x0000AD54       BEQ td_skip_ptbr    ; if task has no page table, it also has no resources to free, so skip to clearing slot and returning
+0x0000BA54   LDW R2 [R1 + TASK_PTBR]
+0x0000BA58       CMP R2 0
+0x0000BA5C       BEQ td_skip_ptbr    ; if task has no page table, it also has no resources to free, so skip to clearing slot and returning
 
-0x0000AD5C       MOV R1 R2
-0x0000AD60       BL page_put        ; put-free process page table
+0x0000BA64       MOV R1 R2
+0x0000BA68       BL page_put        ; put-free process page table
 
 td_skip_ptbr:
 
 ; macro: TASK_GET_USTACK_PAGE R2, R12
-0x0000AD68   LDW R2 [R12 + TASK_USTACK_PAGE]
-0x0000AD6C       CMP R2 0
-0x0000AD70       BEQ td_skip_ustack  ; if task has no user stack page, it also has no kernel stack page, fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
-0x0000AD78       MOV R1 R2
-0x0000AD7C       BL page_put        ; put-free user stack page
+0x0000BA70   LDW R2 [R12 + TASK_USTACK_PAGE]
+0x0000BA74       CMP R2 0
+0x0000BA78       BEQ td_skip_ustack  ; if task has no user stack page, it also has no kernel stack page, fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
+0x0000BA80       MOV R1 R2
+0x0000BA84       BL page_put        ; put-free user stack page
 
 td_skip_ustack:
 
 ; macro: TASK_GET_KSTACK_PAGE R2, R12
-0x0000AD84   LDW R2 [R12 + TASK_KSTACK_PAGE]
-0x0000AD88       CMP R2 0
-0x0000AD8C       BEQ td_skip_kstack  ; if task has no kernel stack page, it also has no fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
-0x0000AD94       MOV R1 R2
-0x0000AD98       BL page_put        ; put-free kernel stack page
+0x0000BA8C   LDW R2 [R12 + TASK_KSTACK_PAGE]
+0x0000BA90       CMP R2 0
+0x0000BA94       BEQ td_skip_kstack  ; if task has no kernel stack page, it also has no fd table, user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
+0x0000BA9C       MOV R1 R2
+0x0000BAA0       BL page_put        ; put-free kernel stack page
 
 td_skip_kstack:
 
 ; macro: TASK_GET_FD_TABLE R2, R12
-0x0000ADA0   LDW R2 [R12 + TASK_FD_TABLE]
-0x0000ADA4       CMP R2 0
-0x0000ADA8       BEQ td_skip_fd    ; if task has no fd table page, it also has no user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
-0x0000ADB0       MOV R1 R2
-0x0000ADB4       BL page_put        ; put-free fd table page
+0x0000BAA8   LDW R2 [R12 + TASK_FD_TABLE]
+0x0000BAAC       CMP R2 0
+0x0000BAB0       BEQ td_skip_fd    ; if task has no fd table page, it also has no user buffers or kernel buffers to free, so skip to those and move to clearing slot and returning
+0x0000BAB8       MOV R1 R2
+0x0000BABC       BL page_put        ; put-free fd table page
 
 td_skip_fd:
 
 ; macro: TASK_GET_KBUF_WR R2, R12
-0x0000ADBC   LDW R2 [R12 + TASK_KBUF_WR_PTR]
-0x0000ADC0       CMP R2 0
-0x0000ADC4       BEQ td_skip_kwr   ; if task has no kernel write buffer page, it may still have kernel read buffer and user data page to free, but it has no user buffers to free because user buffers are allocated and mapped together in one page and there is no way to have user buffers without having kernel write buffer because we allocate kernel write buffer first before allocating and mapping user buffers in task_create, so if there is no kernel write buffer we can skip freeing user buffers and just move to checking and freeing kernel read buffer and user data page if they exist and then move to clearing slot and returning
-0x0000ADCC       MOV R1 R2
-0x0000ADD0       BL page_put       ; put free KBUF_WR Page
+0x0000BAC4   LDW R2 [R12 + TASK_KBUF_WR_PTR]
+0x0000BAC8       CMP R2 0
+0x0000BACC       BEQ td_skip_kwr   ; if task has no kernel write buffer page, it may still have kernel read buffer and user data page to free, but it has no user buffers to free because user buffers are allocated and mapped together in one page and there is no way to have user buffers without having kernel write buffer because we allocate kernel write buffer first before allocating and mapping user buffers in task_create, so if there is no kernel write buffer we can skip freeing user buffers and just move to checking and freeing kernel read buffer and user data page if they exist and then move to clearing slot and returning
+0x0000BAD4       MOV R1 R2
+0x0000BAD8       BL page_put       ; put free KBUF_WR Page
 
 td_skip_kwr:
 
 ; macro: TASK_GET_KBUF_RD R2, R12
-0x0000ADD8   LDW R2 [R12 + TASK_KBUF_RD_PTR]
-0x0000ADDC       CMP R2 0
-0x0000ADE0       BEQ td_skip_krd  ; if task has no kernel read buffer page, it may still have user data page to free, but it has no user buffers to free for the same reason as in td_skip_kwr, so if there is no kernel read buffer we can skip freeing user buffers and just move to checking and freeing user data page if it exists and then move to clearing slot and returning
-0x0000ADE8       MOV R1 R2
-0x0000ADEC       BL page_put       ; put free KBUF_RD Page
+0x0000BAE0   LDW R2 [R12 + TASK_KBUF_RD_PTR]
+0x0000BAE4       CMP R2 0
+0x0000BAE8       BEQ td_skip_krd  ; if task has no kernel read buffer page, it may still have user data page to free, but it has no user buffers to free for the same reason as in td_skip_kwr, so if there is no kernel read buffer we can skip freeing user buffers and just move to checking and freeing user data page if it exists and then move to clearing slot and returning
+0x0000BAF0       MOV R1 R2
+0x0000BAF4       BL page_put       ; put free KBUF_RD Page
 
 td_skip_krd:
 
 ; macro: TASK_GET_DATA_PAGE R2, R12
-0x0000ADF4   LDW R2 [R12 + TASK_DATA_PAGE]
-0x0000ADF8       CMP R2 0
-0x0000ADFC       BEQ td_skip_code
-0x0000AE04       MOV R1 R2
-0x0000AE08       BL page_put        ; put-free user data page
+0x0000BAFC   LDW R2 [R12 + TASK_DATA_PAGE]
+0x0000BB00       CMP R2 0
+0x0000BB04       BEQ td_skip_code
+0x0000BB0C       MOV R1 R2
+0x0000BB10       BL page_put        ; put-free user data page
 
 td_skip_code:
 
 ; macro: TASK_GET_CODE_PAGE R2, R12
-0x0000AE10   LDW R2 [R12 + TASK_CODE_PAGE]
-0x0000AE14       CMP R2 0
-0x0000AE18       BEQ td_done
+0x0000BB18   LDW R2 [R12 + TASK_CODE_PAGE]
+0x0000BB1C       CMP R2 0
+0x0000BB20       BEQ td_done
 
-0x0000AE20       MOV R1 R2
-0x0000AE24       BL pages_free_table ;codepage (tab+pages)
+0x0000BB28       MOV R1 R2
+0x0000BB2C       BL pages_free_table ;codepage (tab+pages)
 
     ;BL page_put        ; put-free user code page
 
 td_done:
 
-0x0000AE2C       MOV R1 R12
-0x0000AE30       LI  R3 TASK_SIZE
-0x0000AE38       BL  mem_zero    ; clear the whole task slot for clean slate,
+0x0000BB34       MOV R1 R12
+0x0000BB38       LI  R3 TASK_SIZE
+0x0000BB40       BL  mem_zero    ; clear the whole task slot for clean slate,
                     ;this also clears the state to TASK_DEAD which
                     ; is important to make sure scheduler won't schedule
                     ; this slot anymore and also to make sure task_create
                     ; can reuse this slot for a new task in the future
 
-0x0000AE40       POP R12         ; restore R12
-0x0000AE44       POP LR
-0x0000AE48       RET
+0x0000BB48       POP R12         ; restore R12
+0x0000BB4C       POP LR
+0x0000BB50       RET
 
 ;================================================================
 ; Closes all open file descriptors of a task by calling file_free on each of them.
@@ -8466,97 +8695,97 @@ td_done:
 
 task_close_fds:
 
-0x0000AE4C       PUSH LR
-0x0000AE50       PUSH R8
-0x0000AE54       PUSH R9
-0x0000AE58       PUSH R10
-0x0000AE5C       PUSH R11
-0x0000AE60       PUSH R12
+0x0000BB54       PUSH LR
+0x0000BB58       PUSH R8
+0x0000BB5C       PUSH R9
+0x0000BB60       PUSH R10
+0x0000BB64       PUSH R11
+0x0000BB68       PUSH R12
 
 ; macro: TASK_GET_FD_TABLE R4, R1
-0x0000AE64   LDW R4 [R1 + TASK_FD_TABLE]
-0x0000AE68       MOV R12 R4
+0x0000BB6C   LDW R4 [R1 + TASK_FD_TABLE]
+0x0000BB70       MOV R12 R4
 
-0x0000AE6C       LI R5 3              ; skip stdin/out/err
-0x0000AE74       MOV R11 R5
+0x0000BB74       LI R5 3              ; skip stdin/out/err
+0x0000BB7C       MOV R11 R5
 
 fd_loop:
 
-0x0000AE78       CMP R11 MAX_FDS
-0x0000AE7C       BGE fd_done         ; if we processed all fd slots, we are done
+0x0000BB80       CMP R11 MAX_FDS
+0x0000BB84       BGE fd_done         ; if we processed all fd slots, we are done
 
-0x0000AE84       SHL R6 R11 2
-0x0000AE88       ADD R10 R12 R6      ; R10 = &fd_table[fd]
+0x0000BB8C       SHL R6 R11 2
+0x0000BB90       ADD R10 R12 R6      ; R10 = &fd_table[fd]
 
-0x0000AE8C       LDW R8 [R10]
-0x0000AE90       CMP R8 0
-0x0000AE94       BEQ fd_next         ; if fd slot is empty, skip to next
+0x0000BB94       LDW R8 [R10]
+0x0000BB98       CMP R8 0
+0x0000BB9C       BEQ fd_next         ; if fd slot is empty, skip to next
 
-0x0000AE9C       MOV R1 R8
-0x0000AEA0       BL file_free
-0x0000AEA8       LI R9 0
-0x0000AEB0       STW R9 [R10]        ; mark fd slot as free in task's fd table
+0x0000BBA4       MOV R1 R8
+0x0000BBA8       BL file_free
+0x0000BBB0       LI R9 0
+0x0000BBB8       STW R9 [R10]        ; mark fd slot as free in task's fd table
 
 fd_next:
-0x0000AEB4       ADD R11 R11 1
-0x0000AEB8       B fd_loop
+0x0000BBBC       ADD R11 R11 1
+0x0000BBC0       B fd_loop
 
 fd_done:
-0x0000AEC0       POP R12
-0x0000AEC4       POP R11
-0x0000AEC8       POP R10
-0x0000AECC       POP R9
-0x0000AED0       POP R8
-0x0000AED4       POP LR
-0x0000AED8       RET
+0x0000BBC8       POP R12
+0x0000BBCC       POP R11
+0x0000BBD0       POP R10
+0x0000BBD4       POP R9
+0x0000BBD8       POP R8
+0x0000BBDC       POP LR
+0x0000BBE0       RET
 
 ;================================================================
 ; Reclaim zombie tasks from a safe stack.
 ; Must only be called by a live task; it never destroys CURRENT_TASK.
 ;================================================================
 task_reap_zombies:
-0x0000AEDC       PUSH LR
-0x0000AEE0       PUSH R8
-0x0000AEE4       PUSH R9
-0x0000AEE8       PUSH R10
+0x0000BBE4       PUSH LR
+0x0000BBE8       PUSH R8
+0x0000BBEC       PUSH R9
+0x0000BBF0       PUSH R10
 
 ; macro: GET_CURR_TASK_IDX R10
-0x0000AEEC   LI R1 CURRENT_TASK
-0x0000AEF4   LDW R10 [R1]
-0x0000AEF8       LI R8 0
+0x0000BBF4   LI R1 CURRENT_TASK
+0x0000BBFC   LDW R10 [R1]
+0x0000BC00       LI R8 0
 
 task_reap_loop:
-0x0000AF00       CMP R8 MAX_TASKS
-0x0000AF04       BGE task_reap_done
+0x0000BC08       CMP R8 MAX_TASKS
+0x0000BC0C       BGE task_reap_done
 
-0x0000AF0C       CMP R8 R10
-0x0000AF10       BEQ task_reap_next
+0x0000BC14       CMP R8 R10
+0x0000BC18       BEQ task_reap_next
 
 ; macro: GET_TASK_PTR R9, R8
-0x0000AF18   LI R1 TASK_SIZE
-0x0000AF20   MUL R3 R8 R1
-0x0000AF24   LI R9 tasks
-0x0000AF2C   ADD R9 R9 R3
+0x0000BC20   LI R1 TASK_SIZE
+0x0000BC28   MUL R3 R8 R1
+0x0000BC2C   LI R9 tasks
+0x0000BC34   ADD R9 R9 R3
 ; macro: TASK_GET_STATE R1, R9
-0x0000AF30   LDW R1 [R9 + TASK_STATE]
-0x0000AF34       CMP R1 TASK_ZOMBIE
-0x0000AF38       BNE task_reap_next
+0x0000BC38   LDW R1 [R9 + TASK_STATE]
+0x0000BC3C       CMP R1 TASK_ZOMBIE
+0x0000BC40       BNE task_reap_next
 
-0x0000AF40       PUSH R8
-0x0000AF44       MOV R1 R9
-0x0000AF48       BL task_destroy
-0x0000AF50       POP R8
+0x0000BC48       PUSH R8
+0x0000BC4C       MOV R1 R9
+0x0000BC50       BL task_destroy
+0x0000BC58       POP R8
 
 task_reap_next:
-0x0000AF54       ADD R8 R8 1
-0x0000AF58       B task_reap_loop
+0x0000BC5C       ADD R8 R8 1
+0x0000BC60       B task_reap_loop
 
 task_reap_done:
-0x0000AF60       POP R10
-0x0000AF64       POP R9
-0x0000AF68       POP R8
-0x0000AF6C       POP LR
-0x0000AF70       RET
+0x0000BC68       POP R10
+0x0000BC6C       POP R9
+0x0000BC70       POP R8
+0x0000BC74       POP LR
+0x0000BC78       RET
 
 ; ----------------------------------
 ; task_alloc
@@ -8568,30 +8797,30 @@ task_reap_done:
 
 task_alloc:
 
-0x0000AF74       LI R1 tasks
-0x0000AF7C       LI R2 MAX_TASKS
+0x0000BC7C       LI R1 tasks
+0x0000BC84       LI R2 MAX_TASKS
 
 task_alloc_loop:
 
 ; macro: TASK_GET_STATE R3, R1                   ; load task state into R3
-0x0000AF84   LDW R3 [R1 + TASK_STATE]
+0x0000BC8C   LDW R3 [R1 + TASK_STATE]
 
-0x0000AF88       CMP R3 TASK_DEAD                        ; check if this slot is free (0-dead)
-0x0000AF8C       BEQ task_alloc_found
+0x0000BC90       CMP R3 TASK_DEAD                        ; check if this slot is free (0-dead)
+0x0000BC94       BEQ task_alloc_found
 
-0x0000AF94       ADD R1 R1 TASK_SIZE                     ; move to next task slot
+0x0000BC9C       ADD R1 R1 TASK_SIZE                     ; move to next task slot
 
-0x0000AF98       SUB R2 R2 1
-0x0000AF9C       BNE task_alloc_loop
+0x0000BCA0       SUB R2 R2 1
+0x0000BCA4       BNE task_alloc_loop
 
 ; no free tasks slots
 
-0x0000AFA4       LI R1 0
-0x0000AFAC       RET
+0x0000BCAC       LI R1 0
+0x0000BCB4       RET
 
 task_alloc_found:                           ;R1 points to free task slot
 
-0x0000AFB0       RET
+0x0000BCB8       RET
 
 
 ; ================================================================
@@ -8616,14 +8845,14 @@ console_mutex:
 ; R1 = mutex pointer
 ; ================================================================
 mutex_init:
-0x0000AFBC       PUSH R2
+0x0000BCC4       PUSH R2
 
-0x0000AFC0       LI R2 0
-0x0000AFC8       STW R2 [R1 + MUTEX_OWNER]      ; owner = NULL
-0x0000AFCC       STW R2 [R1 + MUTEX_WAITQ]      ; waitq = 0 (empty)
+0x0000BCC8       LI R2 0
+0x0000BCD0       STW R2 [R1 + MUTEX_OWNER]      ; owner = NULL
+0x0000BCD4       STW R2 [R1 + MUTEX_WAITQ]      ; waitq = 0 (empty)
 
-0x0000AFD0       POP R2
-0x0000AFD4       RET
+0x0000BCD8       POP R2
+0x0000BCDC       RET
 
 ; ================================================================
 ; mutex_lock - Acquire a mutex (blocks if already locked)
@@ -8641,80 +8870,80 @@ mutex_init:
 
 mutex_lock:
 
-0x0000AFD8       PUSH LR
-0x0000AFDC       PUSH R8
-0x0000AFE0       PUSH R9
-0x0000AFE4       PUSH R10
+0x0000BCE0       PUSH LR
+0x0000BCE4       PUSH R8
+0x0000BCE8       PUSH R9
+0x0000BCEC       PUSH R10
 
-0x0000AFE8       MOV R8 R1                  ; save mutex pointer
+0x0000BCF0       MOV R8 R1                  ; save mutex pointer
 ; macro: GET_CURR_TASK_IDX R9
-0x0000AFEC   LI R1 CURRENT_TASK
-0x0000AFF4   LDW R9 [R1]
+0x0000BCF4   LI R1 CURRENT_TASK
+0x0000BCFC   LDW R9 [R1]
 ; macro: GET_TASK_PTR R9, R9        ; R9 = current task*
-0x0000AFF8   LI R1 TASK_SIZE
-0x0000B000   MUL R3 R9 R1
-0x0000B004   LI R9 tasks
-0x0000B00C   ADD R9 R9 R3
+0x0000BD00   LI R1 TASK_SIZE
+0x0000BD08   MUL R3 R9 R1
+0x0000BD0C   LI R9 tasks
+0x0000BD14   ADD R9 R9 R3
 
 mutex_lock_retry:
     ; Check if mutex is already locked
-0x0000B010       LDW R10 [R8 + MUTEX_OWNER]
-0x0000B014       CMP R10 0
-0x0000B018       BEQ mutex_lock_acquire      ; if unlocked, acquire it
+0x0000BD18       LDW R10 [R8 + MUTEX_OWNER]
+0x0000BD1C       CMP R10 0
+0x0000BD20       BEQ mutex_lock_acquire      ; if unlocked, acquire it
 
     ; this Mutex is locked by someone else - block
     ; Add current task to mutex wait queue
-0x0000B020       MOV R1 R8
-0x0000B024       ADD R1 R1 MUTEX_WAITQ
+0x0000BD28       MOV R1 R8
+0x0000BD2C       ADD R1 R1 MUTEX_WAITQ
 
-0x0000B028       LI R2 WAIT_MUTEX
-0x0000B030       LI R3 TASK_WAIT_MUTEX
-0x0000B038       BL waitq_prepare_sleep
+0x0000BD30       LI R2 WAIT_MUTEX
+0x0000BD38       LI R3 TASK_WAIT_MUTEX
+0x0000BD40       BL waitq_prepare_sleep
 
     ; Re-check if mutex became available while preparing sleep
-0x0000B040       LDW R10 [R8 + MUTEX_OWNER]
-0x0000B044       CMP R10 0
-0x0000B048       BEQ mutex_lock_wake
+0x0000BD48       LDW R10 [R8 + MUTEX_OWNER]
+0x0000BD4C       CMP R10 0
+0x0000BD50       BEQ mutex_lock_wake
 
     ; Still locked - go to sleep
-0x0000B050       BL waitq_sleep_current
+0x0000BD58       BL waitq_sleep_current
 
     ; Woken up - try to acquire again
-0x0000B058       B mutex_lock_retry
+0x0000BD60       B mutex_lock_retry
 
 mutex_lock_wake:
     ; Mutex became available, cancel sleep and acquire
-0x0000B060       MOV R1 R8
-0x0000B064       ADD R1 R1 MUTEX_WAITQ
-0x0000B068       BL waitq_cancel_sleep_current
+0x0000BD68       MOV R1 R8
+0x0000BD6C       ADD R1 R1 MUTEX_WAITQ
+0x0000BD70       BL waitq_cancel_sleep_current
 
-0x0000B070       B mutex_lock_retry
+0x0000BD78       B mutex_lock_retry
 
 mutex_lock_acquire:
     ; Disable interrupts to prevent race conditions
-0x0000B078       DISABLEINT
+0x0000BD80       DISABLEINT
 
     ; Double-check it's still unlocked
-0x0000B07C       LDW R10 [R8 + MUTEX_OWNER]
-0x0000B080       CMP R10 0
-0x0000B084       BNE mutex_lock_race
+0x0000BD84       LDW R10 [R8 + MUTEX_OWNER]
+0x0000BD88       CMP R10 0
+0x0000BD8C       BNE mutex_lock_race
 
     ; Set owner to current task
-0x0000B08C       STW R9 [R8 + MUTEX_OWNER]
+0x0000BD94       STW R9 [R8 + MUTEX_OWNER]
 
     ; Re-enable interrupts
-0x0000B090       ENABLEINT
+0x0000BD98       ENABLEINT
 
-0x0000B094       POP R10
-0x0000B098       POP R9
-0x0000B09C       POP R8
-0x0000B0A0       POP LR
-0x0000B0A4       RET
+0x0000BD9C       POP R10
+0x0000BDA0       POP R9
+0x0000BDA4       POP R8
+0x0000BDA8       POP LR
+0x0000BDAC       RET
 
 mutex_lock_race:
     ; Someone else acquired it while interrupts were disabled
-0x0000B0A8       ENABLEINT
-0x0000B0AC       B mutex_lock_retry
+0x0000BDB0       ENABLEINT
+0x0000BDB4       B mutex_lock_retry
 
 
 ; ================================================================
@@ -8727,128 +8956,128 @@ mutex_lock_race:
 ;        They will try to take the key
 ; ================================================================
 mutex_unlock:
-0x0000B0B4       PUSH LR
-0x0000B0B8       PUSH R8
-0x0000B0BC       PUSH R9
-0x0000B0C0       PUSH R10
+0x0000BDBC       PUSH LR
+0x0000BDC0       PUSH R8
+0x0000BDC4       PUSH R9
+0x0000BDC8       PUSH R10
 
-0x0000B0C4       MOV  R8 R1                  ; save mutex pointer
+0x0000BDCC       MOV  R8 R1                  ; save mutex pointer
 ; macro: GET_CURR_TASK_IDX R9
-0x0000B0C8   LI R1 CURRENT_TASK
-0x0000B0D0   LDW R9 [R1]
+0x0000BDD0   LI R1 CURRENT_TASK
+0x0000BDD8   LDW R9 [R1]
 ; macro: GET_TASK_PTR R9, R9        ; R9 = current task*
-0x0000B0D4   LI R1 TASK_SIZE
-0x0000B0DC   MUL R3 R9 R1
-0x0000B0E0   LI R9 tasks
-0x0000B0E8   ADD R9 R9 R3
+0x0000BDDC   LI R1 TASK_SIZE
+0x0000BDE4   MUL R3 R9 R1
+0x0000BDE8   LI R9 tasks
+0x0000BDF0   ADD R9 R9 R3
 
     ; Verify ownership
-0x0000B0EC       LDW  R10 [R8 + MUTEX_OWNER]
-0x0000B0F0       CMP  R10 R9
-0x0000B0F4       BNE  mutex_unlock_error     ; Not owner - error!
+0x0000BDF4       LDW  R10 [R8 + MUTEX_OWNER]
+0x0000BDF8       CMP  R10 R9
+0x0000BDFC       BNE  mutex_unlock_error     ; Not owner - error!
 
     ; Release the mutex
-0x0000B0FC       LI  R10 0
-0x0000B104       STW R10 [R8 + MUTEX_OWNER]
+0x0000BE04       LI  R10 0
+0x0000BE0C       STW R10 [R8 + MUTEX_OWNER]
 
     ; Wake one waiting task (if someone is waiting)
     ; waky next one (of any waiting)
-0x0000B108       MOV R1 R8
-0x0000B10C       ADD R1 R1 MUTEX_WAITQ
-0x0000B110       BL waitq_wake_one
+0x0000BE10       MOV R1 R8
+0x0000BE14       ADD R1 R1 MUTEX_WAITQ
+0x0000BE18       BL waitq_wake_one
 
 mutex_unlock_done:
-0x0000B118       POP R10
-0x0000B11C       POP R9
-0x0000B120       POP R8
-0x0000B124       POP LR
-0x0000B128       RET
+0x0000BE20       POP R10
+0x0000BE24       POP R9
+0x0000BE28       POP R8
+0x0000BE2C       POP LR
+0x0000BE30       RET
 
 mutex_unlock_error:
     ; Not owner - ignore (or panic)
-0x0000B12C       POP R10
-0x0000B130       POP R9
-0x0000B134       POP R8
-0x0000B138       POP LR
-0x0000B13C       RET
+0x0000BE34       POP R10
+0x0000BE38       POP R9
+0x0000BE3C       POP R8
+0x0000BE40       POP LR
+0x0000BE44       RET
 
 ; ================================================================
 ; waitq_wake_one - Wake exactly one task from the wait queue
 ; R1 = wait queue pointer
 ; ================================================================
 waitq_wake_one:
-0x0000B140       PUSH LR
-0x0000B144       PUSH R8
-0x0000B148       PUSH R9
-0x0000B14C       PUSH R10
-0x0000B150       PUSH R11
+0x0000BE48       PUSH LR
+0x0000BE4C       PUSH R8
+0x0000BE50       PUSH R9
+0x0000BE54       PUSH R10
+0x0000BE58       PUSH R11
 
-0x0000B154       MOV R8 R1                  ; wait queue pointer
-0x0000B158       LDW R9 [R8 + WQ_MASK]      ; current wait queue mask
+0x0000BE5C       MOV R8 R1                  ; wait queue pointer
+0x0000BE60       LDW R9 [R8 + WQ_MASK]      ; current wait queue mask
 
-0x0000B15C       CMP R9 0
-0x0000B160       BEQ waitq_wake_one_done    ; No waiters
+0x0000BE64       CMP R9 0
+0x0000BE68       BEQ waitq_wake_one_done    ; No waiters
 
     ; Find the first waiting task
-0x0000B168       LI R10 0                   ; task index
+0x0000BE70       LI R10 0                   ; task index
 
 waitq_wake_one_find:
-0x0000B170       CMP R10 MAX_TASKS
-0x0000B174       BGE waitq_wake_one_done
+0x0000BE78       CMP R10 MAX_TASKS
+0x0000BE7C       BGE waitq_wake_one_done
 
-0x0000B17C       LI R11 1
-0x0000B184       SHL R11 R11 R10            ; bit for this task
-0x0000B188       AND R2 R9 R11
-0x0000B18C       CMP R2 0
-0x0000B190       BNE waitq_wake_one_found
+0x0000BE84       LI R11 1
+0x0000BE8C       SHL R11 R11 R10            ; bit for this task
+0x0000BE90       AND R2 R9 R11
+0x0000BE94       CMP R2 0
+0x0000BE98       BNE waitq_wake_one_found
 
-0x0000B198       ADD R10 R10 1
-0x0000B19C       B waitq_wake_one_find
+0x0000BEA0       ADD R10 R10 1
+0x0000BEA4       B waitq_wake_one_find
 
 waitq_wake_one_found:
     ; Clear this task's bit from the wait queue
-0x0000B1A4       NOT R11 R11
-0x0000B1A8       AND R9 R9 R11
-0x0000B1AC       STW R9 [R8 + WQ_MASK]
+0x0000BEAC       NOT R11 R11
+0x0000BEB0       AND R9 R9 R11
+0x0000BEB4       STW R9 [R8 + WQ_MASK]
 
     ; Wake this task
 ; macro: GET_TASK_PTR R5, R10
-0x0000B1B0   LI R1 TASK_SIZE
-0x0000B1B8   MUL R3 R10 R1
-0x0000B1BC   LI R5 tasks
-0x0000B1C4   ADD R5 R5 R3
+0x0000BEB8   LI R1 TASK_SIZE
+0x0000BEC0   MUL R3 R10 R1
+0x0000BEC4   LI R5 tasks
+0x0000BECC   ADD R5 R5 R3
 ; macro: TASK_SET_STATE R5, TASK_READY
-0x0000B1C8   LI R1 TASK_READY
-0x0000B1D0   STW R1 [R5 + TASK_STATE]
+0x0000BED0   LI R1 TASK_READY
+0x0000BED8   STW R1 [R5 + TASK_STATE]
 ; macro: TASK_SET_WAIT R5, WAIT_NONE
-0x0000B1D4   LI R1 WAIT_NONE
-0x0000B1DC   STW R1 [R5 + TASK_WAIT]
+0x0000BEDC   LI R1 WAIT_NONE
+0x0000BEE4   STW R1 [R5 + TASK_WAIT]
 
 waitq_wake_one_done:
-0x0000B1E0       POP R11
-0x0000B1E4       POP R10
-0x0000B1E8       POP R9
-0x0000B1EC       POP R8
-0x0000B1F0       POP LR
-0x0000B1F4       RET
+0x0000BEE8       POP R11
+0x0000BEEC       POP R10
+0x0000BEF0       POP R9
+0x0000BEF4       POP R8
+0x0000BEF8       POP LR
+0x0000BEFC       RET
 
 ; ================================================================
 ; CONSOLE MUTEX WRAPPER FUNCTIONS
 ; ================================================================
 
 console_lock:
-0x0000B1F8       PUSH LR
-0x0000B1FC       LI R1 console_mutex
-0x0000B204       BL mutex_lock
-0x0000B20C       POP LR
-0x0000B210       RET
+0x0000BF00       PUSH LR
+0x0000BF04       LI R1 console_mutex
+0x0000BF0C       BL mutex_lock
+0x0000BF14       POP LR
+0x0000BF18       RET
 
 console_unlock:
-0x0000B214       PUSH LR
-0x0000B218       LI R1 console_mutex
-0x0000B220       BL mutex_unlock
-0x0000B228       POP LR
-0x0000B22C       RET
+0x0000BF1C       PUSH LR
+0x0000BF20       LI R1 console_mutex
+0x0000BF28       BL mutex_unlock
+0x0000BF30       POP LR
+0x0000BF34       RET
 
 ;------------------------------------------------------
 ; bmi_call
@@ -8863,60 +9092,60 @@ console_unlock:
 ;------------------------------------------------------
 
 bmi_call:
-0x0000B230       PUSH LR
-0x0000B234       PUSH R6
-0x0000B238       PUSH R7
-0x0000B23C       PUSH R8
-0x0000B240       PUSH R9
+0x0000BF38       PUSH LR
+0x0000BF3C       PUSH R6
+0x0000BF40       PUSH R7
+0x0000BF44       PUSH R8
+0x0000BF48       PUSH R9
 
     ;------------------------------------
     ; Fill BMI packet
     ;------------------------------------
-0x0000B244       LI  R6 BMI_BUF_WRITE
+0x0000BF4C       LI  R6 BMI_BUF_WRITE
 
-0x0000B24C       STH R1 [R6 + BMI_HDR_OPCODE]
+0x0000BF54       STH R1 [R6 + BMI_HDR_OPCODE]
 
-0x0000B250       LI  R7 0
-0x0000B258       STH R7 [R6 + BMI_HDR_FLAGS]
+0x0000BF58       LI  R7 0
+0x0000BF60       STH R7 [R6 + BMI_HDR_FLAGS]
 
-0x0000B25C       STW R4 [R6 + BMI_HDR_NAMESPACE]
-0x0000B260       STW R3 [R6 + BMI_HDR_PAYLOAD_LEN]
+0x0000BF64       STW R4 [R6 + BMI_HDR_NAMESPACE]
+0x0000BF68       STW R3 [R6 + BMI_HDR_PAYLOAD_LEN]
 
     ; Copy payload
 
-0x0000B264       ADD R7 R6 BMI_HDR_SIZEOF
+0x0000BF6C       ADD R7 R6 BMI_HDR_SIZEOF
 
-0x0000B268       MOV R1 R7          ; dst
-0x0000B26C       MOV R2 R2          ; src
-0x0000B270       MOV R3 R3          ; len
+0x0000BF70       MOV R1 R7          ; dst
+0x0000BF74       MOV R2 R2          ; src
+0x0000BF78       MOV R3 R3          ; len
 
-0x0000B274       BL memcpy
+0x0000BF7C       BL memcpy
 
     ;------------------------------------
     ; Ring doorbell
     ;------------------------------------
 
-0x0000B27C       LI  R6 BMI_REG_BASE
+0x0000BF84       LI  R6 BMI_REG_BASE
 
-0x0000B284       LI  R7 BMI_READY
-0x0000B28C       STW R7 [R6 + BMI_STATUS]
+0x0000BF8C       LI  R7 BMI_READY
+0x0000BF94       STW R7 [R6 + BMI_STATUS]
 
-0x0000B290       LI  R7 1
-0x0000B298       STW R7 [R6 + BMI_DOORBELL]
+0x0000BF98       LI  R7 1
+0x0000BFA0       STW R7 [R6 + BMI_DOORBELL]
 
 wait_reply:
 
-0x0000B29C       LDW R7 [R6 + BMI_STATUS]
+0x0000BFA4       LDW R7 [R6 + BMI_STATUS]
 
     ;DEBUG 2
 
-0x0000B2A0       CMP R7 BMI_DONE
-0x0000B2A4       BEQ bmi_call_done
+0x0000BFA8       CMP R7 BMI_DONE
+0x0000BFAC       BEQ bmi_call_done
 
-0x0000B2AC       CMP R7 BMI_ERROR
-0x0000B2B0       BEQ bmi_call_error
+0x0000BFB4       CMP R7 BMI_ERROR
+0x0000BFB8       BEQ bmi_call_error
 
-0x0000B2B8       B wait_reply
+0x0000BFC0       B wait_reply
 
 bmi_call_done:
 
@@ -8924,42 +9153,42 @@ bmi_call_done:
     ; Read BMI reply packet
     ;----------------------------------------
 
-0x0000B2C0       LI  R8 BMI_BUF_READ
+0x0000BFC8       LI  R8 BMI_BUF_READ
 
-0x0000B2C8       LDH R1 [R8 + BMI_HDR_OPCODE]
-0x0000B2CC       LDH R2 [R8 + BMI_HDR_FLAGS]
-0x0000B2D0       LDW R3 [R8 + BMI_HDR_NAMESPACE]
-0x0000B2D4       LDW R4 [R8 + BMI_HDR_PAYLOAD_LEN]
+0x0000BFD0       LDH R1 [R8 + BMI_HDR_OPCODE]
+0x0000BFD4       LDH R2 [R8 + BMI_HDR_FLAGS]
+0x0000BFD8       LDW R3 [R8 + BMI_HDR_NAMESPACE]
+0x0000BFDC       LDW R4 [R8 + BMI_HDR_PAYLOAD_LEN]
 
     ; R8 + BMI_HDR_SIZEOF points to reply payload
 
 
-0x0000B2D8       LDW R1 [R6 + BMI_REPLY]
+0x0000BFE0       LDW R1 [R6 + BMI_REPLY]
 
     ; reset state
 
-0x0000B2DC       LI R7 BMI_IDLE
-0x0000B2E4       STW R7 [R6 + BMI_STATUS]
+0x0000BFE4       LI R7 BMI_IDLE
+0x0000BFEC       STW R7 [R6 + BMI_STATUS]
 
-0x0000B2E8       POP R9
-0x0000B2EC       POP R8
-0x0000B2F0       POP R7
-0x0000B2F4       POP R6
-0x0000B2F8       POP LR
-0x0000B2FC       RET
+0x0000BFF0       POP R9
+0x0000BFF4       POP R8
+0x0000BFF8       POP R7
+0x0000BFFC       POP R6
+0x0000C000       POP LR
+0x0000C004       RET
 
 bmi_call_error:
-0x0000B300       LI R1 -1
-0x0000B308       LI R7 BMI_IDLE
-0x0000B310       STW R7 [R6 + BMI_STATUS]
+0x0000C008       LI R1 -1
+0x0000C010       LI R7 BMI_IDLE
+0x0000C018       STW R7 [R6 + BMI_STATUS]
 
-0x0000B314       POP R9
-0x0000B318       POP R8
-0x0000B31C       POP R7
-0x0000B320       POP R6
-0x0000B324       POP LR
+0x0000C01C       POP R9
+0x0000C020       POP R8
+0x0000C024       POP R7
+0x0000C028       POP R6
+0x0000C02C       POP LR
 
-0x0000B328       RET
+0x0000C030       RET
 
 
 
@@ -9001,8 +9230,10 @@ bmi_call_error:
 .EQU NS_DELETE,   0x02
 .EQU FILE_CREATE, 0x10
 .EQU FILE_DELETE, 0x11
+.EQU FILE_APPEND, 0x12
 .EQU DIR_CREATE,  0x20
 .EQU DIR_DELETE,  0x21
+.EQU NSFS_INDEX,  0x30
 
 
 ; ==================================================
