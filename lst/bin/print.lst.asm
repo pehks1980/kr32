@@ -1473,51 +1473,71 @@ printf_string:
 
 printf_int:
 0x00043E24   CALL _fetch_arg_r2
-0x00043E2C       ADD R9 R9 1
-0x00043E30       MOV R1 R11          ; r11 is the conversion buffer (on stack)
-0x00043E34   CALL _print_number
-0x00043E3C       B   printf_continue
+
+0x00043E2C       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+0x00043E30   CALL atoi
+0x00043E38       MOV R2 R1
+
+0x00043E3C       ADD R9 R9 1
+0x00043E40       MOV R1 R11          ; r11 is the conversion buffer (on stack)
+0x00043E44   CALL _print_number
+0x00043E4C       B   printf_continue
 
 printf_hex:
-0x00043E44   CALL _fetch_arg_r2
-0x00043E4C       ADD R9 R9 1
-0x00043E50       MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
-0x00043E54   CALL _print_hex
-0x00043E5C       B   printf_continue
+0x00043E54   CALL _fetch_arg_r2
+
+0x00043E5C       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+0x00043E60   CALL atoi
+0x00043E68       MOV R2 R1
+
+0x00043E6C       ADD R9 R9 1
+0x00043E70       MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
+0x00043E74   CALL _print_hex
+0x00043E7C       B   printf_continue
 
 printf_char:
-0x00043E64   CALL _fetch_arg_r1
-0x00043E6C       ADD R9 R9 1
-0x00043E70   CALL putchar
-0x00043E78       B   printf_continue
-
-printf_bin:
-0x00043E80   CALL _fetch_arg_r2
-0x00043E88       ADD R9 R9 1
-0x00043E8C       MOV R1 R11
-0x00043E90   CALL _print_bin
+0x00043E84   CALL _fetch_arg_r1
+0x00043E8C       ADD R9 R9 1
+0x00043E90   CALL putchar
 0x00043E98       B   printf_continue
 
-printf_oct:
+printf_bin:
 0x00043EA0   CALL _fetch_arg_r2
-0x00043EA8       ADD R9 R9 1
-0x00043EAC       MOV R1 R11
-0x00043EB0   CALL _print_oct
-0x00043EB8       B   printf_continue
+
+0x00043EA8       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+0x00043EAC   CALL atoi
+0x00043EB4       MOV R2 R1
+
+0x00043EB8       ADD R9 R9 1
+0x00043EBC       MOV R1 R11
+0x00043EC0   CALL _print_bin
+0x00043EC8       B   printf_continue
+
+printf_oct:
+0x00043ED0   CALL _fetch_arg_r2
+
+0x00043ED8       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+0x00043EDC   CALL atoi
+0x00043EE4       MOV R2 R1
+
+0x00043EE8       ADD R9 R9 1
+0x00043EEC       MOV R1 R11
+0x00043EF0   CALL _print_oct
+0x00043EF8       B   printf_continue
 
 printf_continue:    ;to continue processing format string
-0x00043EC0       ADD R8 R8 1
-0x00043EC4       B   printf_loop
+0x00043F00       ADD R8 R8 1
+0x00043F04       B   printf_loop
 
 printf_done:
-0x00043ECC       ADD SP SP 80
-0x00043ED0       POP R12
-0x00043ED4       POP R11
-0x00043ED8       POP R10
-0x00043EDC       POP R9
-0x00043EE0       POP R8
-0x00043EE4       POP LR
-0x00043EE8       RET
+0x00043F0C       ADD SP SP 80
+0x00043F10       POP R12
+0x00043F14       POP R11
+0x00043F18       POP R10
+0x00043F1C       POP R9
+0x00043F20       POP R8
+0x00043F24       POP LR
+0x00043F28       RET
 
 ;------------------------------------------------------------------------------
 ; _print_string - Write a null‑terminated string to stdout (no newline)
@@ -1528,20 +1548,20 @@ printf_done:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_string:
-0x00043EEC       PUSH LR
-0x00043EF0       PUSH R8
-0x00043EF4       PUSH R9
-0x00043EF8       MOV R8 R1
-0x00043EFC   CALL strlen
-0x00043F04       MOV R9 R1
-0x00043F08       LI  R1 STDOUT_FD
-0x00043F10       MOV R2 R8
-0x00043F14       MOV R3 R9
-0x00043F18   CALL write
-0x00043F20       POP R9
-0x00043F24       POP R8
-0x00043F28       POP LR
-0x00043F2C       RET
+0x00043F2C       PUSH LR
+0x00043F30       PUSH R8
+0x00043F34       PUSH R9
+0x00043F38       MOV R8 R1
+0x00043F3C   CALL strlen
+0x00043F44       MOV R9 R1
+0x00043F48       LI  R1 STDOUT_FD
+0x00043F50       MOV R2 R8
+0x00043F54       MOV R3 R9
+0x00043F58   CALL write
+0x00043F60       POP R9
+0x00043F64       POP R8
+0x00043F68       POP LR
+0x00043F6C       RET
 
 
 ;------------------------------------------------------------------------------
@@ -1552,12 +1572,12 @@ _print_string:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_number:
-0x00043F30       PUSH LR
-0x00043F34   CALL itoa_dec
-0x00043F3C       MOV R1 R1                 ; R1 still points to buffer start
-0x00043F40   CALL _print_string
-0x00043F48       POP LR
-0x00043F4C       RET
+0x00043F70       PUSH LR
+0x00043F74   CALL itoa_dec
+0x00043F7C       MOV R1 R1                 ; R1 still points to buffer start
+0x00043F80   CALL _print_string
+0x00043F88       POP LR
+0x00043F8C       RET
 
 ;------------------------------------------------------------------------------
 ; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
@@ -1567,12 +1587,12 @@ _print_number:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_hex:
-0x00043F50       PUSH LR
-0x00043F54   CALL itoa_hex
-0x00043F5C       MOV R1 R1
-0x00043F60   CALL _print_string
-0x00043F68       POP LR
-0x00043F6C       RET
+0x00043F90       PUSH LR
+0x00043F94   CALL itoa_hex
+0x00043F9C       MOV R1 R1
+0x00043FA0   CALL _print_string
+0x00043FA8       POP LR
+0x00043FAC       RET
 
 ;------------------------------------------------------------------------------
 ; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
@@ -1582,12 +1602,12 @@ _print_hex:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_bin:
-0x00043F70       PUSH LR
-0x00043F74   CALL itoa_bin
-0x00043F7C       MOV R1 R1
-0x00043F80   CALL _print_string
-0x00043F88       POP LR
-0x00043F8C       RET
+0x00043FB0       PUSH LR
+0x00043FB4   CALL itoa_bin
+0x00043FBC       MOV R1 R1
+0x00043FC0   CALL _print_string
+0x00043FC8       POP LR
+0x00043FCC       RET
 
 ;------------------------------------------------------------------------------
 ; _print_oct - Format and print an unsigned integer in octal (uses itoa_oct)
@@ -1597,12 +1617,12 @@ _print_bin:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_oct:
-0x00043F90       PUSH LR
-0x00043F94   CALL itoa_oct
-0x00043F9C       MOV R1 R1
-0x00043FA0   CALL _print_string
-0x00043FA8       POP LR
-0x00043FAC       RET
+0x00043FD0       PUSH LR
+0x00043FD4   CALL itoa_oct
+0x00043FDC       MOV R1 R1
+0x00043FE0   CALL _print_string
+0x00043FE8       POP LR
+0x00043FEC       RET
 
 ;==============================================================================
 ; Data Section
@@ -1636,64 +1656,64 @@ ch_buf:
 ;------------------------------------------------------------------------------
 
 atoi:
-0x00043FB6       PUSH LR
-0x00043FBA       PUSH R8
-0x00043FBE       PUSH R9
-0x00043FC2       PUSH R10
+0x00043FF6       PUSH LR
+0x00043FFA       PUSH R8
+0x00043FFE       PUSH R9
+0x00044002       PUSH R10
 
-0x00043FC6       MOV R8 R1          ; R8 = string
-0x00043FCA       LI  R9 0           ; R9 = result
-0x00043FD2       LI  R10 0          ; R10 = negative flag
+0x00044006       MOV R8 R1          ; R8 = string
+0x0004400A       LI  R9 0           ; R9 = result
+0x00044012       LI  R10 0          ; R10 = negative flag
 
     ; Check '-'
-0x00043FDA       LDB R2 [R8]
-0x00043FDE       CMP R2 45          ; '-'
-0x00043FE2       BNE atoi_loop
-0x00043FEA       LI R10 1
-0x00043FF2       ADD R8 R8 1
+0x0004401A       LDB R2 [R8]
+0x0004401E       CMP R2 45          ; '-'
+0x00044022       BNE atoi_loop
+0x0004402A       LI R10 1
+0x00044032       ADD R8 R8 1
 atoi_loop:
-0x00043FF6       LDB R2 [R8]
+0x00044036       LDB R2 [R8]
     ; end of string
-0x00043FFA       CMP R2 0
-0x00043FFE       BEQ atoi_done
+0x0004403A       CMP R2 0
+0x0004403E       BEQ atoi_done
     ; only accept '0'..'9'
-0x00044006       CMP R2 48       ; '0'
-0x0004400A       BLT atoi_done
-0x00044012       CMP R2 57       ; '9'
-0x00044016       BGT atoi_done
+0x00044046       CMP R2 48       ; '0'
+0x0004404A       BLT atoi_done
+0x00044052       CMP R2 57       ; '9'
+0x00044056       BGT atoi_done
 
     ; digit = char - '0'
-0x0004401E       SUB R2 R2 48
+0x0004405E       SUB R2 R2 48
 
     ; result = result * 10 + digit
-0x00044022       LI  R3 10
-0x0004402A       MUL R9 R9 R3
-0x0004402E       ADD R9 R9 R2
-0x00044032       ADD R8 R8 1
-0x00044036       B atoi_loop
+0x00044062       LI  R3 10
+0x0004406A       MUL R9 R9 R3
+0x0004406E       ADD R9 R9 R2
+0x00044072       ADD R8 R8 1
+0x00044076       B atoi_loop
 atoi_done:
-0x0004403E       CMP R10 1
-0x00044042       BNE atoi_positive
+0x0004407E       CMP R10 1
+0x00044082       BNE atoi_positive
     ; negate NEG =)
-0x0004404A       NOT R9 R9
-0x0004404E       ADD R9 R9 1
+0x0004408A       NOT R9 R9
+0x0004408E       ADD R9 R9 1
 atoi_positive:
-0x00044052       MOV R1 R9
-0x00044056       POP R10
-0x0004405A       POP R9
-0x0004405E       POP R8
-0x00044062       POP LR
-0x00044066       RET
+0x00044092       MOV R1 R9
+0x00044096       POP R10
+0x0004409A       POP R9
+0x0004409E       POP R8
+0x000440A2       POP LR
+0x000440A6       RET
 
 main:
-0x0004406A       PUSH LR
-0x0004406E       PUSH R8
-0x00044072       PUSH R9
-0x00044076       PUSH R10
-0x0004407A       PUSH R11
+0x000440AA       PUSH LR
+0x000440AE       PUSH R8
+0x000440B2       PUSH R9
+0x000440B6       PUSH R10
+0x000440BA       PUSH R11
 
-0x0004407E       MOV R8 R1            ; argc
-0x00044082       MOV R9 R2            ; argv
+0x000440BE       MOV R8 R1            ; argc
+0x000440C2       MOV R9 R2            ; argv
 
     ;--------------------------------------------------
     ; Need at least:
@@ -1702,95 +1722,96 @@ main:
     ; argv[1] = format
     ;--------------------------------------------------
 
-0x00044086       CMP R8 2
-0x0004408A       BLT print_usage
+0x000440C6       CMP R8 2
+0x000440CA       BLT print_usage
 
     ;--------------------------------------------------
     ; R2 = argv[1] = format
     ;--------------------------------------------------
 
-0x00044092       LDW R1 [R9 + 4]
-0x00044096       MOV R10 R1           ; R10 = format string
+0x000440D2       LDW R1 [R9 + 4]
+0x000440D6       MOV R10 R1           ; R10 = save format string
 
     ;--------------------------------------------------
     ; Default parameters = 0
     ;--------------------------------------------------
 
-0x0004409A       LI R2 0
-0x000440A2       LI R3 0
-0x000440AA       LI R4 0
+0x000440DA       LI R2 0
+0x000440E2       LI R3 0
+0x000440EA       LI R4 0
 
     ;--------------------------------------------------
-    ; argv[2]
+    ; argv[2]-1st arg after fmt
     ;--------------------------------------------------
 
-0x000440B2       CMP R8 3
-0x000440B6       BLT print_arg2_done
+0x000440F2       LDW R1 [R9 + 8]      ;1st-arg
+0x000440F6       MOV R2 R1
 
-0x000440BE       LDW R1 [R9 + 8]
-0x000440C2       BL atoi             ;that is only in this first version assume args are numbers!
-0x000440CA       MOV R2 R1
-
-print_arg2_done:
+0x000440FA       CMP R8 3                ; +0name +4fmt +8(1st-arg)
+0x000440FE       BEQ printf_go
 
     ;--------------------------------------------------
     ; argv[3]
     ;--------------------------------------------------
 
-0x000440CE       CMP R8 4
-0x000440D2       BLT print_arg3_done
-
-0x000440DA       LDW R1 [R9 + 12]
-0x000440DE       BL atoi
-0x000440E6       MOV R3 R1
-
-print_arg3_done:
+0x00044106       LDW R1 [R9 + 12]
+0x0004410A       MOV R3 R1
+0x0004410E       CMP R8 4                ; name fmt arg1 arg2
+0x00044112       BEQ printf_go
 
     ;--------------------------------------------------
     ; argv[4]
     ;--------------------------------------------------
 
-0x000440EA       CMP R8 5
-0x000440EE       BLT print_arg4_done
-
-0x000440F6       LDW R1 [R9 + 16]
-0x000440FA       BL atoi
-0x00044102       MOV R4 R1
-
-print_arg4_done:
+0x0004411A       LDW R1 [R9 + 16]
+0x0004411E       MOV R4 R1
+0x00044122       CMP R8 5                ; name fmt arg1 arg2 arg3
+0x00044126       BEQ printf_go
 
     ;--------------------------------------------------
-    ; printf(format, arg1, arg2, arg3)
+    ; argv[5]               ; name fmt arg1 arg2 arg3 arg4
+    ;--------------------------------------------------
+
+0x0004412E       LDW R1 [R9 + 20]
+0x00044132       MOV R5 R1
+0x00044136       CMP R8 6                ;etc here we support upto printf with fmt + 4 args
+0x0004413A       BEQ printf_go
+
+printf_go:
+
+    ;--------------------------------------------------
+    ; printf(format, arg1, arg2, arg3, arg4)
     ;
     ; R1 = format
     ; R2 = arg1
     ; R3 = arg2
     ; R4 = arg3
+    ; R5 = arg4
     ;--------------------------------------------------
 
-0x00044106       MOV R1 R10
-0x0004410A       BL printf
+0x00044142       MOV R1 R10
+0x00044146       BL printf
 
-0x00044112       LI R1 0
-0x0004411A       B print_done
+0x0004414E       LI R1 0
+0x00044156       B print_done
 
 
 print_usage:
 
-0x00044122       LI R1 usage_msg
-0x0004412A       BL puts
+0x0004415E       LI R1 usage_msg
+0x00044166       BL puts
 
-0x00044132       LI R1 1
+0x0004416E       LI R1 1
 
 
 print_done:
 
-0x0004413A       POP R11
-0x0004413E       POP R10
-0x00044142       POP R9
-0x00044146       POP R8
-0x0004414A       POP LR
-0x0004414E       RET
+0x00044176       POP R11
+0x0004417A       POP R10
+0x0004417E       POP R9
+0x00044182       POP R8
+0x00044186       POP LR
+0x0004418A       RET
 
 
 ;==============================================================================
@@ -1798,4 +1819,4 @@ print_done:
 ;==============================================================================
 
 usage_msg:
-    .ASCIIZ "usage: print FORMAT [ARG1] [ARG2] [ARG3]"
+    .ASCIIZ "usage: print FORMAT [ARG1] [ARG2] [ARG3] [ARG4]"

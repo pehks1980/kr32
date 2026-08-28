@@ -45,7 +45,7 @@ main:
     ;--------------------------------------------------
 
     LDW R1 [R9 + 4]
-    MOV R10 R1           ; R10 = format string
+    MOV R10 R1           ; R10 = save format string
 
     ;--------------------------------------------------
     ; Default parameters = 0
@@ -56,51 +56,52 @@ main:
     LI R4 0
 
     ;--------------------------------------------------
-    ; argv[2]
+    ; argv[2]-1st arg after fmt
     ;--------------------------------------------------
 
-    CMP R8 3
-    BLT print_arg2_done
-
-    LDW R1 [R9 + 8]
-    BL atoi             ;that is only in this first version assume args are numbers!
+    LDW R1 [R9 + 8]      ;1st-arg
     MOV R2 R1
 
-print_arg2_done:
+    CMP R8 3                ; +0name +4fmt +8(1st-arg)
+    BEQ printf_go
 
     ;--------------------------------------------------
     ; argv[3]
     ;--------------------------------------------------
 
-    CMP R8 4
-    BLT print_arg3_done
-
     LDW R1 [R9 + 12]
-    BL atoi
     MOV R3 R1
-
-print_arg3_done:
+    CMP R8 4                ; name fmt arg1 arg2
+    BEQ printf_go
 
     ;--------------------------------------------------
     ; argv[4]
     ;--------------------------------------------------
 
-    CMP R8 5
-    BLT print_arg4_done
-
     LDW R1 [R9 + 16]
-    BL atoi
     MOV R4 R1
-
-print_arg4_done:
+    CMP R8 5                ; name fmt arg1 arg2 arg3
+    BEQ printf_go
 
     ;--------------------------------------------------
-    ; printf(format, arg1, arg2, arg3)
+    ; argv[5]               ; name fmt arg1 arg2 arg3 arg4
+    ;--------------------------------------------------
+
+    LDW R1 [R9 + 20]
+    MOV R5 R1
+    CMP R8 6                ;etc here we support upto printf with fmt + 4 args
+    BEQ printf_go
+
+printf_go:
+
+    ;--------------------------------------------------
+    ; printf(format, arg1, arg2, arg3, arg4)
     ;
     ; R1 = format
     ; R2 = arg1
     ; R3 = arg2
     ; R4 = arg3
+    ; R5 = arg4
     ;--------------------------------------------------
 
     MOV R1 R10
@@ -133,4 +134,4 @@ print_done:
 ;==============================================================================
 
 usage_msg:
-    .ASCIIZ "usage: print FORMAT [ARG1] [ARG2] [ARG3]"
+    .ASCIIZ "usage: print FORMAT [ARG1] [ARG2] [ARG3] [ARG4]"

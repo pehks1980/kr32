@@ -1458,51 +1458,71 @@ printf_string:
 
 printf_int:
 0x00043E24   CALL _fetch_arg_r2
-0x00043E2C       ADD R9 R9 1
-0x00043E30       MOV R1 R11          ; r11 is the conversion buffer (on stack)
-0x00043E34   CALL _print_number
-0x00043E3C       B   printf_continue
+
+0x00043E2C       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+0x00043E30   CALL atoi
+0x00043E38       MOV R2 R1
+
+0x00043E3C       ADD R9 R9 1
+0x00043E40       MOV R1 R11          ; r11 is the conversion buffer (on stack)
+0x00043E44   CALL _print_number
+0x00043E4C       B   printf_continue
 
 printf_hex:
-0x00043E44   CALL _fetch_arg_r2
-0x00043E4C       ADD R9 R9 1
-0x00043E50       MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
-0x00043E54   CALL _print_hex
-0x00043E5C       B   printf_continue
+0x00043E54   CALL _fetch_arg_r2
+
+0x00043E5C       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+0x00043E60   CALL atoi
+0x00043E68       MOV R2 R1
+
+0x00043E6C       ADD R9 R9 1
+0x00043E70       MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
+0x00043E74   CALL _print_hex
+0x00043E7C       B   printf_continue
 
 printf_char:
-0x00043E64   CALL _fetch_arg_r1
-0x00043E6C       ADD R9 R9 1
-0x00043E70   CALL putchar
-0x00043E78       B   printf_continue
-
-printf_bin:
-0x00043E80   CALL _fetch_arg_r2
-0x00043E88       ADD R9 R9 1
-0x00043E8C       MOV R1 R11
-0x00043E90   CALL _print_bin
+0x00043E84   CALL _fetch_arg_r1
+0x00043E8C       ADD R9 R9 1
+0x00043E90   CALL putchar
 0x00043E98       B   printf_continue
 
-printf_oct:
+printf_bin:
 0x00043EA0   CALL _fetch_arg_r2
-0x00043EA8       ADD R9 R9 1
-0x00043EAC       MOV R1 R11
-0x00043EB0   CALL _print_oct
-0x00043EB8       B   printf_continue
+
+0x00043EA8       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+0x00043EAC   CALL atoi
+0x00043EB4       MOV R2 R1
+
+0x00043EB8       ADD R9 R9 1
+0x00043EBC       MOV R1 R11
+0x00043EC0   CALL _print_bin
+0x00043EC8       B   printf_continue
+
+printf_oct:
+0x00043ED0   CALL _fetch_arg_r2
+
+0x00043ED8       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+0x00043EDC   CALL atoi
+0x00043EE4       MOV R2 R1
+
+0x00043EE8       ADD R9 R9 1
+0x00043EEC       MOV R1 R11
+0x00043EF0   CALL _print_oct
+0x00043EF8       B   printf_continue
 
 printf_continue:    ;to continue processing format string
-0x00043EC0       ADD R8 R8 1
-0x00043EC4       B   printf_loop
+0x00043F00       ADD R8 R8 1
+0x00043F04       B   printf_loop
 
 printf_done:
-0x00043ECC       ADD SP SP 80
-0x00043ED0       POP R12
-0x00043ED4       POP R11
-0x00043ED8       POP R10
-0x00043EDC       POP R9
-0x00043EE0       POP R8
-0x00043EE4       POP LR
-0x00043EE8       RET
+0x00043F0C       ADD SP SP 80
+0x00043F10       POP R12
+0x00043F14       POP R11
+0x00043F18       POP R10
+0x00043F1C       POP R9
+0x00043F20       POP R8
+0x00043F24       POP LR
+0x00043F28       RET
 
 ;------------------------------------------------------------------------------
 ; _print_string - Write a null‑terminated string to stdout (no newline)
@@ -1513,20 +1533,20 @@ printf_done:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_string:
-0x00043EEC       PUSH LR
-0x00043EF0       PUSH R8
-0x00043EF4       PUSH R9
-0x00043EF8       MOV R8 R1
-0x00043EFC   CALL strlen
-0x00043F04       MOV R9 R1
-0x00043F08       LI  R1 STDOUT_FD
-0x00043F10       MOV R2 R8
-0x00043F14       MOV R3 R9
-0x00043F18   CALL write
-0x00043F20       POP R9
-0x00043F24       POP R8
-0x00043F28       POP LR
-0x00043F2C       RET
+0x00043F2C       PUSH LR
+0x00043F30       PUSH R8
+0x00043F34       PUSH R9
+0x00043F38       MOV R8 R1
+0x00043F3C   CALL strlen
+0x00043F44       MOV R9 R1
+0x00043F48       LI  R1 STDOUT_FD
+0x00043F50       MOV R2 R8
+0x00043F54       MOV R3 R9
+0x00043F58   CALL write
+0x00043F60       POP R9
+0x00043F64       POP R8
+0x00043F68       POP LR
+0x00043F6C       RET
 
 
 ;------------------------------------------------------------------------------
@@ -1537,12 +1557,12 @@ _print_string:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_number:
-0x00043F30       PUSH LR
-0x00043F34   CALL itoa_dec
-0x00043F3C       MOV R1 R1                 ; R1 still points to buffer start
-0x00043F40   CALL _print_string
-0x00043F48       POP LR
-0x00043F4C       RET
+0x00043F70       PUSH LR
+0x00043F74   CALL itoa_dec
+0x00043F7C       MOV R1 R1                 ; R1 still points to buffer start
+0x00043F80   CALL _print_string
+0x00043F88       POP LR
+0x00043F8C       RET
 
 ;------------------------------------------------------------------------------
 ; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
@@ -1552,12 +1572,12 @@ _print_number:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_hex:
-0x00043F50       PUSH LR
-0x00043F54   CALL itoa_hex
-0x00043F5C       MOV R1 R1
-0x00043F60   CALL _print_string
-0x00043F68       POP LR
-0x00043F6C       RET
+0x00043F90       PUSH LR
+0x00043F94   CALL itoa_hex
+0x00043F9C       MOV R1 R1
+0x00043FA0   CALL _print_string
+0x00043FA8       POP LR
+0x00043FAC       RET
 
 ;------------------------------------------------------------------------------
 ; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
@@ -1567,12 +1587,12 @@ _print_hex:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_bin:
-0x00043F70       PUSH LR
-0x00043F74   CALL itoa_bin
-0x00043F7C       MOV R1 R1
-0x00043F80   CALL _print_string
-0x00043F88       POP LR
-0x00043F8C       RET
+0x00043FB0       PUSH LR
+0x00043FB4   CALL itoa_bin
+0x00043FBC       MOV R1 R1
+0x00043FC0   CALL _print_string
+0x00043FC8       POP LR
+0x00043FCC       RET
 
 ;------------------------------------------------------------------------------
 ; _print_oct - Format and print an unsigned integer in octal (uses itoa_oct)
@@ -1582,12 +1602,12 @@ _print_bin:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_oct:
-0x00043F90       PUSH LR
-0x00043F94   CALL itoa_oct
-0x00043F9C       MOV R1 R1
-0x00043FA0   CALL _print_string
-0x00043FA8       POP LR
-0x00043FAC       RET
+0x00043FD0       PUSH LR
+0x00043FD4   CALL itoa_oct
+0x00043FDC       MOV R1 R1
+0x00043FE0   CALL _print_string
+0x00043FE8       POP LR
+0x00043FEC       RET
 
 ;==============================================================================
 ; Data Section
@@ -1621,54 +1641,54 @@ ch_buf:
 ;------------------------------------------------------------------------------
 
 atoi:
-0x00043FB6       PUSH LR
-0x00043FBA       PUSH R8
-0x00043FBE       PUSH R9
-0x00043FC2       PUSH R10
+0x00043FF6       PUSH LR
+0x00043FFA       PUSH R8
+0x00043FFE       PUSH R9
+0x00044002       PUSH R10
 
-0x00043FC6       MOV R8 R1          ; R8 = string
-0x00043FCA       LI  R9 0           ; R9 = result
-0x00043FD2       LI  R10 0          ; R10 = negative flag
+0x00044006       MOV R8 R1          ; R8 = string
+0x0004400A       LI  R9 0           ; R9 = result
+0x00044012       LI  R10 0          ; R10 = negative flag
 
     ; Check '-'
-0x00043FDA       LDB R2 [R8]
-0x00043FDE       CMP R2 45          ; '-'
-0x00043FE2       BNE atoi_loop
-0x00043FEA       LI R10 1
-0x00043FF2       ADD R8 R8 1
+0x0004401A       LDB R2 [R8]
+0x0004401E       CMP R2 45          ; '-'
+0x00044022       BNE atoi_loop
+0x0004402A       LI R10 1
+0x00044032       ADD R8 R8 1
 atoi_loop:
-0x00043FF6       LDB R2 [R8]
+0x00044036       LDB R2 [R8]
     ; end of string
-0x00043FFA       CMP R2 0
-0x00043FFE       BEQ atoi_done
+0x0004403A       CMP R2 0
+0x0004403E       BEQ atoi_done
     ; only accept '0'..'9'
-0x00044006       CMP R2 48       ; '0'
-0x0004400A       BLT atoi_done
-0x00044012       CMP R2 57       ; '9'
-0x00044016       BGT atoi_done
+0x00044046       CMP R2 48       ; '0'
+0x0004404A       BLT atoi_done
+0x00044052       CMP R2 57       ; '9'
+0x00044056       BGT atoi_done
 
     ; digit = char - '0'
-0x0004401E       SUB R2 R2 48
+0x0004405E       SUB R2 R2 48
 
     ; result = result * 10 + digit
-0x00044022       LI  R3 10
-0x0004402A       MUL R9 R9 R3
-0x0004402E       ADD R9 R9 R2
-0x00044032       ADD R8 R8 1
-0x00044036       B atoi_loop
+0x00044062       LI  R3 10
+0x0004406A       MUL R9 R9 R3
+0x0004406E       ADD R9 R9 R2
+0x00044072       ADD R8 R8 1
+0x00044076       B atoi_loop
 atoi_done:
-0x0004403E       CMP R10 1
-0x00044042       BNE atoi_positive
+0x0004407E       CMP R10 1
+0x00044082       BNE atoi_positive
     ; negate NEG =)
-0x0004404A       NOT R9 R9
-0x0004404E       ADD R9 R9 1
+0x0004408A       NOT R9 R9
+0x0004408E       ADD R9 R9 1
 atoi_positive:
-0x00044052       MOV R1 R9
-0x00044056       POP R10
-0x0004405A       POP R9
-0x0004405E       POP R8
-0x00044062       POP LR
-0x00044066       RET
+0x00044092       MOV R1 R9
+0x00044096       POP R10
+0x0004409A       POP R9
+0x0004409E       POP R8
+0x000440A2       POP LR
+0x000440A6       RET
 
 .EQU STDIN_FD,  0
 .EQU MAX_ARGS,  8
@@ -1677,123 +1697,123 @@ atoi_positive:
 ; main() – shell loop
 ;---------------------------------------------------------------
 main:
-0x0004406A       PUSH LR
+0x000440AA       PUSH LR
 
 shell_loop:
     ; Print prompt
-0x0004406E       LI R1 STDOUT_FD
-0x00044076       LI R2 prompt
-0x0004407E       LI R3 2
-0x00044086   CALL write
+0x000440AE       LI R1 STDOUT_FD
+0x000440B6       LI R2 prompt
+0x000440BE       LI R3 2
+0x000440C6   CALL write
     ; Read command
-0x0004408E       LI R1 STDIN_FD
-0x00044096       LI R2 input_buf
-0x0004409E       LI R3 127
-0x000440A6   CALL read
-0x000440AE       CMP R1 0
-0x000440B2       BLE exit_shell
-0x000440BA       MOV R4 R1           ; R4 = bytes read
+0x000440CE       LI R1 STDIN_FD
+0x000440D6       LI R2 input_buf
+0x000440DE       LI R3 127
+0x000440E6   CALL read
+0x000440EE       CMP R1 0
+0x000440F2       BLE exit_shell
+0x000440FA       MOV R4 R1           ; R4 = bytes read
 
     ; ---- Normalize line editing characters before parsing ----
     ; Treat BS/DEL as a backspace in the current command buffer.
-0x000440BE       LI R8 input_buf
-0x000440C6       LI R9 input_buf
-0x000440CE       LI R10 0            ; source index
+0x000440FE       LI R8 input_buf
+0x00044106       LI R9 input_buf
+0x0004410E       LI R10 0            ; source index
 
 normalize_input_loop:
-0x000440D6       CMP R10 R4
-0x000440DA       BGE normalize_input_done
+0x00044116       CMP R10 R4
+0x0004411A       BGE normalize_input_done
 
-0x000440E2       ADD R5 R8 R10
-0x000440E6       LDB R6 [R5]
+0x00044122       ADD R5 R8 R10
+0x00044126       LDB R6 [R5]
 
-0x000440EA       CMP R6 10            ; LF
-0x000440EE       BEQ normalize_input_next
-0x000440F6       CMP R6 13            ; CR
-0x000440FA       BEQ normalize_input_next
-0x00044102       CMP R6 8             ; BS
-0x00044106       BEQ normalize_input_backspace
-0x0004410E       CMP R6 127           ; DEL
-0x00044112       BEQ normalize_input_backspace
+0x0004412A       CMP R6 10            ; LF
+0x0004412E       BEQ normalize_input_next
+0x00044136       CMP R6 13            ; CR
+0x0004413A       BEQ normalize_input_next
+0x00044142       CMP R6 8             ; BS
+0x00044146       BEQ normalize_input_backspace
+0x0004414E       CMP R6 127           ; DEL
+0x00044152       BEQ normalize_input_backspace
 
-0x0004411A       STB R6 [R9]
-0x0004411E       ADD R9 R9 1
-0x00044122       B normalize_input_next
+0x0004415A       STB R6 [R9]
+0x0004415E       ADD R9 R9 1
+0x00044162       B normalize_input_next
 
 normalize_input_backspace:
-0x0004412A       CMP R9 R8
-0x0004412E       BLE normalize_input_next
-0x00044136       SUB R9 R9 1
-0x0004413A       B normalize_input_next
+0x0004416A       CMP R9 R8
+0x0004416E       BLE normalize_input_next
+0x00044176       SUB R9 R9 1
+0x0004417A       B normalize_input_next
 
 normalize_input_next:
-0x00044142       ADD R10 R10 1
-0x00044146       B normalize_input_loop
+0x00044182       ADD R10 R10 1
+0x00044186       B normalize_input_loop
 
 normalize_input_done:
-0x0004414E       LI R6 0
-0x00044156       STB R6 [R9]
+0x0004418E       LI R6 0
+0x00044196       STB R6 [R9]
 
     ; Skip empty lines
-0x0004415A       LI R7 input_buf
-0x00044162       LDB R6 [R7]
-0x00044166       CMP R6 0
-0x0004416A       BEQ shell_loop
+0x0004419A       LI R7 input_buf
+0x000441A2       LDB R6 [R7]
+0x000441A6       CMP R6 0
+0x000441AA       BEQ shell_loop
 
-0x00044172   CALL parse_command
+0x000441B2   CALL parse_command
 
-0x0004417A       LI R1 input_buf
-0x00044182       LI R2 quit_cmd
-0x0004418A   CALL strcmp
-0x00044192       CMP R1 1
-0x00044196       BEQ exit_shell  ;if type "quit" exit shell
+0x000441BA       LI R1 input_buf
+0x000441C2       LI R2 quit_cmd
+0x000441CA   CALL strcmp
+0x000441D2       CMP R1 1
+0x000441D6       BEQ exit_shell  ;if type "quit" exit shell
 
     ; ---- Fork ----
-0x0004419E   CALL fork
-0x000441A6       CMP R1 0
-0x000441AA       BEQ child_process
-0x000441B2       BLT fork_error
+0x000441DE   CALL fork
+0x000441E6       CMP R1 0
+0x000441EA       BEQ child_process
+0x000441F2       BLT fork_error
 
     ;Debug 2
     ;POP LR
     ;RET
 
     ; ---- Parent: wait for child ----
-0x000441BA       LI R1 -1
-0x000441C2       LI R2 0
-0x000441CA   CALL waitpid
-0x000441D2       CMP R1 0
-0x000441D6       BLT wait_error
+0x000441FA       LI R1 -1
+0x00044202       LI R2 0
+0x0004420A   CALL waitpid
+0x00044212       CMP R1 0
+0x00044216       BLT wait_error
 
-0x000441DE       B shell_loop
+0x0004421E       B shell_loop
 
     ; ---- Child: execute command ----
 child_process:
     ; pathname = input_buf (copied early by kernel, before data page zeroed)
     ; argv = argv_buf
-0x000441E6       LI R1 input_buf
-0x000441EE       LI R2 argv_buf
-0x000441F6       LI R3 0
-0x000441FE   CALL execve
-0x00044206       LI R1 exec_failed_msg
-0x0004420E   CALL puts
+0x00044226       LI R1 input_buf
+0x0004422E       LI R2 argv_buf
+0x00044236       LI R3 0
+0x0004423E   CALL execve
+0x00044246       LI R1 exec_failed_msg
+0x0004424E   CALL puts
 
-0x00044216       POP LR
-0x0004421A       RET
+0x00044256       POP LR
+0x0004425A       RET
 
 fork_error:
-0x0004421E       LI R1 fork_error_msg
-0x00044226   CALL puts
-0x0004422E       B shell_loop
+0x0004425E       LI R1 fork_error_msg
+0x00044266   CALL puts
+0x0004426E       B shell_loop
 
 wait_error:
-0x00044236       LI R1 wait_error_msg
-0x0004423E   CALL puts
-0x00044246       B shell_loop
+0x00044276       LI R1 wait_error_msg
+0x0004427E   CALL puts
+0x00044286       B shell_loop
 
 exit_shell:
-0x0004424E       POP LR
-0x00044252       RET
+0x0004428E       POP LR
+0x00044292       RET
 
 ; ---------------------------------------------------------------
 ; parse_command() – parse input_buf into argv_buf
@@ -1884,18 +1904,18 @@ exit_shell:
 
 parse_command:
 
-0x00044256       PUSH LR
-0x0004425A       PUSH R8
-0x0004425E       PUSH R9
-0x00044262       PUSH R10
-0x00044266       PUSH R11
-0x0004426A       PUSH R12
+0x00044296       PUSH LR
+0x0004429A       PUSH R8
+0x0004429E       PUSH R9
+0x000442A2       PUSH R10
+0x000442A6       PUSH R11
+0x000442AA       PUSH R12
 
-0x0004426E       LI R8 input_buf
-0x00044276       LI R9 input_buf
+0x000442AE       LI R8 input_buf
+0x000442B6       LI R9 input_buf
 
-0x0004427E       LI R10 0              ; argc
-0x00044286       LI R12 0              ; quote state
+0x000442BE       LI R10 0              ; argc
+0x000442C6       LI R12 0              ; quote state
 
 
 ; ===============================================================
@@ -1904,16 +1924,16 @@ parse_command:
 
 parse_skip_spaces:
 
-0x0004428E       LDB R11 [R8]
+0x000442CE       LDB R11 [R8]
 
-0x00044292       CMP R11 0
-0x00044296       BEQ parse_done
+0x000442D2       CMP R11 0
+0x000442D6       BEQ parse_done
 
-0x0004429E       CMP R11 32            ; space
-0x000442A2       BNE parse_token_start
+0x000442DE       CMP R11 32            ; space
+0x000442E2       BNE parse_token_start
 
-0x000442AA       ADD R8 R8 1
-0x000442AE       B parse_skip_spaces
+0x000442EA       ADD R8 R8 1
+0x000442EE       B parse_skip_spaces
 
 
 ; ===============================================================
@@ -1922,26 +1942,26 @@ parse_skip_spaces:
 
 parse_token_start:
 
-0x000442B6       CMP R10 MAX_ARGS
-0x000442BA       BGE parse_done
+0x000442F6       CMP R10 MAX_ARGS
+0x000442FA       BGE parse_done
 
     ; ------------------------------------------------------------
     ; argv[argc] = current output pointer
     ; ------------------------------------------------------------
 
-0x000442C2       LI R7 argv_buf
+0x00044302       LI R7 argv_buf
 
-0x000442CA       MOV R6 R10
-0x000442CE       shl R6 R6 2
-0x000442D2       ADD R7 R7 R6
+0x0004430A       MOV R6 R10
+0x0004430E       shl R6 R6 2
+0x00044312       ADD R7 R7 R6
 
-0x000442D6       STW R9 [R7]
+0x00044316       STW R9 [R7]
 
-0x000442DA       ADD R10 R10 1
+0x0004431A       ADD R10 R10 1
 
-0x000442DE       LI R12 0              ; outside quotes
+0x0004431E       LI R12 0              ; outside quotes
 
-0x000442E6       B parse_token_body
+0x00044326       B parse_token_body
 
 
 ; ===============================================================
@@ -1950,48 +1970,48 @@ parse_token_start:
 
 parse_token_body:
 
-0x000442EE       LDB R11 [R8]
+0x0004432E       LDB R11 [R8]
 
     ; End of command
-0x000442F2       CMP R11 0
-0x000442F6       BEQ parse_token_done
+0x00044332       CMP R11 0
+0x00044336       BEQ parse_token_done
 
 
     ; ------------------------------------------------------------
     ; Outside quotes
     ; ------------------------------------------------------------
 
-0x000442FE       CMP R12 0
-0x00044302       BNE parse_inside_quotes
+0x0004433E       CMP R12 0
+0x00044342       BNE parse_inside_quotes
 
 
     ; Space terminates argument
-0x0004430A       CMP R11 32
-0x0004430E       BEQ parse_token_end
+0x0004434A       CMP R11 32
+0x0004434E       BEQ parse_token_end
 
 
     ; Double quote
-0x00044316       CMP R11 34
-0x0004431A       BEQ parse_start_double
+0x00044356       CMP R11 34
+0x0004435A       BEQ parse_start_double
 
 
     ; Single quote
-0x00044322       CMP R11 39
-0x00044326       BEQ parse_start_single
+0x00044362       CMP R11 39
+0x00044366       BEQ parse_start_single
 
 
     ; Backslash
-0x0004432E       CMP R11 92
-0x00044332       BEQ parse_escape
+0x0004436E       CMP R11 92
+0x00044372       BEQ parse_escape
 
 
     ; Normal character
-0x0004433A       STB R11 [R9]
+0x0004437A       STB R11 [R9]
 
-0x0004433E       ADD R8 R8 1
-0x00044342       ADD R9 R9 1
+0x0004437E       ADD R8 R8 1
+0x00044382       ADD R9 R9 1
 
-0x00044346       B parse_token_body
+0x00044386       B parse_token_body
 
 
 ; ===============================================================
@@ -2000,11 +2020,11 @@ parse_token_body:
 
 parse_start_double:
 
-0x0004434E       LI R12 34
+0x0004438E       LI R12 34
 
-0x00044356       ADD R8 R8 1
+0x00044396       ADD R8 R8 1
 
-0x0004435A       B parse_token_body
+0x0004439A       B parse_token_body
 
 
 ; ===============================================================
@@ -2013,11 +2033,11 @@ parse_start_double:
 
 parse_start_single:
 
-0x00044362       LI R12 39
+0x000443A2       LI R12 39
 
-0x0004436A       ADD R8 R8 1
+0x000443AA       ADD R8 R8 1
 
-0x0004436E       B parse_token_body
+0x000443AE       B parse_token_body
 
 
 ; ===============================================================
@@ -2027,22 +2047,22 @@ parse_start_single:
 parse_inside_quotes:
 
     ; Closing quote?
-0x00044376       CMP R11 R12
-0x0004437A       BEQ parse_close_quote
+0x000443B6       CMP R11 R12
+0x000443BA       BEQ parse_close_quote
 
 
     ; Backslash
-0x00044382       CMP R11 92
-0x00044386       BEQ parse_escape
+0x000443C2       CMP R11 92
+0x000443C6       BEQ parse_escape
 
 
     ; Normal character
-0x0004438E       STB R11 [R9]
+0x000443CE       STB R11 [R9]
 
-0x00044392       ADD R8 R8 1
-0x00044396       ADD R9 R9 1
+0x000443D2       ADD R8 R8 1
+0x000443D6       ADD R9 R9 1
 
-0x0004439A       B parse_token_body
+0x000443DA       B parse_token_body
 
 
 ; ===============================================================
@@ -2051,11 +2071,11 @@ parse_inside_quotes:
 
 parse_close_quote:
 
-0x000443A2       LI R12 0
+0x000443E2       LI R12 0
 
-0x000443AA       ADD R8 R8 1
+0x000443EA       ADD R8 R8 1
 
-0x000443AE       B parse_token_body
+0x000443EE       B parse_token_body
 
 
 ; ===============================================================
@@ -2067,61 +2087,61 @@ parse_close_quote:
 
 parse_escape:
 
-0x000443B6       ADD R8 R8 1
+0x000443F6       ADD R8 R8 1
 
-0x000443BA       LDB R11 [R8]
+0x000443FA       LDB R11 [R8]
 
     ; Backslash was last character
-0x000443BE       CMP R11 0
-0x000443C2       BEQ parse_token_done
+0x000443FE       CMP R11 0
+0x00044402       BEQ parse_token_done
 
 
     ; ------------------------------------------------------------
     ; \n
     ; ------------------------------------------------------------
 
-0x000443CA       CMP R11 110           ; 'n'
-0x000443CE       BEQ parse_escape_n
+0x0004440A       CMP R11 110           ; 'n'
+0x0004440E       BEQ parse_escape_n
 
 
     ; ------------------------------------------------------------
     ; \r
     ; ------------------------------------------------------------
 
-0x000443D6       CMP R11 114           ; 'r'
-0x000443DA       BEQ parse_escape_r
+0x00044416       CMP R11 114           ; 'r'
+0x0004441A       BEQ parse_escape_r
 
 
     ; ------------------------------------------------------------
     ; \t
     ; ------------------------------------------------------------
 
-0x000443E2       CMP R11 116           ; 't'
-0x000443E6       BEQ parse_escape_t
+0x00044422       CMP R11 116           ; 't'
+0x00044426       BEQ parse_escape_t
 
 
     ; ------------------------------------------------------------
     ; \\
     ; ------------------------------------------------------------
 
-0x000443EE       CMP R11 92
-0x000443F2       BEQ parse_escape_backslash
+0x0004442E       CMP R11 92
+0x00044432       BEQ parse_escape_backslash
 
 
     ; ------------------------------------------------------------
     ; \"
     ; ------------------------------------------------------------
 
-0x000443FA       CMP R11 34
-0x000443FE       BEQ parse_escape_quote
+0x0004443A       CMP R11 34
+0x0004443E       BEQ parse_escape_quote
 
 
     ; ------------------------------------------------------------
     ; \'
     ; ------------------------------------------------------------
 
-0x00044406       CMP R11 39
-0x0004440A       BEQ parse_escape_single
+0x00044446       CMP R11 39
+0x0004444A       BEQ parse_escape_single
 
 
     ; ------------------------------------------------------------
@@ -2130,12 +2150,12 @@ parse_escape:
     ; \x -> x
     ; ------------------------------------------------------------
 
-0x00044412       STB R11 [R9]
+0x00044452       STB R11 [R9]
 
-0x00044416       ADD R8 R8 1
-0x0004441A       ADD R9 R9 1
+0x00044456       ADD R8 R8 1
+0x0004445A       ADD R9 R9 1
 
-0x0004441E       B parse_token_body
+0x0004445E       B parse_token_body
 
 
 ; ===============================================================
@@ -2144,38 +2164,38 @@ parse_escape:
 
 parse_escape_n:
 
-0x00044426       LI R11 10
-0x0004442E       B parse_escape_store
+0x00044466       LI R11 10
+0x0004446E       B parse_escape_store
 
 
 parse_escape_r:
 
-0x00044436       LI R11 13
-0x0004443E       B parse_escape_store
+0x00044476       LI R11 13
+0x0004447E       B parse_escape_store
 
 
 parse_escape_t:
 
-0x00044446       LI R11 9
-0x0004444E       B parse_escape_store
+0x00044486       LI R11 9
+0x0004448E       B parse_escape_store
 
 
 parse_escape_backslash:
 
-0x00044456       LI R11 92
-0x0004445E       B parse_escape_store
+0x00044496       LI R11 92
+0x0004449E       B parse_escape_store
 
 
 parse_escape_quote:
 
-0x00044466       LI R11 34
-0x0004446E       B parse_escape_store
+0x000444A6       LI R11 34
+0x000444AE       B parse_escape_store
 
 
 parse_escape_single:
 
-0x00044476       LI R11 39
-0x0004447E       B parse_escape_store
+0x000444B6       LI R11 39
+0x000444BE       B parse_escape_store
 
 
 ; ===============================================================
@@ -2184,12 +2204,12 @@ parse_escape_single:
 
 parse_escape_store:
 
-0x00044486       STB R11 [R9]
+0x000444C6       STB R11 [R9]
 
-0x0004448A       ADD R8 R8 1
-0x0004448E       ADD R9 R9 1
+0x000444CA       ADD R8 R8 1
+0x000444CE       ADD R9 R9 1
 
-0x00044492       B parse_token_body
+0x000444D2       B parse_token_body
 
 
 ; ===============================================================
@@ -2199,13 +2219,13 @@ parse_escape_store:
 parse_token_end:
 
     ; terminate output string
-0x0004449A       LI R11 0
-0x000444A2       STB R11 [R9]
+0x000444DA       LI R11 0
+0x000444E2       STB R11 [R9]
 
-0x000444A6       ADD R9 R9 1
-0x000444AA       ADD R8 R8 1
+0x000444E6       ADD R9 R9 1
+0x000444EA       ADD R8 R8 1
 
-0x000444AE       B parse_skip_spaces
+0x000444EE       B parse_skip_spaces
 
 
 ; ===============================================================
@@ -2215,8 +2235,8 @@ parse_token_end:
 parse_token_done:
 
     ; terminate current string
-0x000444B6       LI R11 0
-0x000444BE       STB R11 [R9]
+0x000444F6       LI R11 0
+0x000444FE       STB R11 [R9]
 
 
 ; ===============================================================
@@ -2227,26 +2247,26 @@ parse_done:
 
     ; R7 = argv_buf + argc * 4
 
-0x000444C2       LI R7 argv_buf
+0x00044502       LI R7 argv_buf
 
-0x000444CA       MOV R6 R10
-0x000444CE       SHL R6 R6 2
-0x000444D2       ADD R7 R7 R6
+0x0004450A       MOV R6 R10
+0x0004450E       SHL R6 R6 2
+0x00044512       ADD R7 R7 R6
 
     ; argv[argc] = NULL
 
-0x000444D6       LI R11 0
-0x000444DE       STW R11 [R7]
+0x00044516       LI R11 0
+0x0004451E       STW R11 [R7]
 
 
-0x000444E2       POP R12
-0x000444E6       POP R11
-0x000444EA       POP R10
-0x000444EE       POP R9
-0x000444F2       POP R8
-0x000444F6       POP LR
+0x00044522       POP R12
+0x00044526       POP R11
+0x0004452A       POP R10
+0x0004452E       POP R9
+0x00044532       POP R8
+0x00044536       POP LR
 
-0x000444FA       RET
+0x0004453A       RET
 
 ; ---------------------------------------------------------------
 ; parse_command() – parse input_buf into argv_buf
@@ -2256,61 +2276,61 @@ parse_done:
 ; ---------------------------------------------------------------
 
 parse_command0:
-0x000444FE       PUSH LR
-0x00044502       PUSH R8
-0x00044506       PUSH R9
-0x0004450A       PUSH R10
-0x0004450E       PUSH R11
+0x0004453E       PUSH LR
+0x00044542       PUSH R8
+0x00044546       PUSH R9
+0x0004454A       PUSH R10
+0x0004454E       PUSH R11
 
-0x00044512       LI R8 input_buf
-0x0004451A       LI R9 argv_buf
-0x00044522       LI R10 0
+0x00044552       LI R8 input_buf
+0x0004455A       LI R9 argv_buf
+0x00044562       LI R10 0
 
 parse_skip_spaces0:
-0x0004452A       LDB R11 [R8]
-0x0004452E       CMP R11 32      ;" "
-0x00044532       BNE parse_token_start
-0x0004453A       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
-0x00044542       STB R11 [R8]
-0x00044546       ADD R8 R8 1
-0x0004454A       B parse_skip_spaces0
+0x0004456A       LDB R11 [R8]
+0x0004456E       CMP R11 32      ;" "
+0x00044572       BNE parse_token_start
+0x0004457A       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
+0x00044582       STB R11 [R8]
+0x00044586       ADD R8 R8 1
+0x0004458A       B parse_skip_spaces0
 
 parse_token_start0:
-0x00044552       LDB R11 [R8]
-0x00044556       CMP R11 0
-0x0004455A       BEQ parse_done
-0x00044562       CMP R10 8       ;up to 8 args
-0x00044566       BGE parse_done
+0x00044592       LDB R11 [R8]
+0x00044596       CMP R11 0
+0x0004459A       BEQ parse_done
+0x000445A2       CMP R10 8       ;up to 8 args
+0x000445A6       BGE parse_done
 
-0x0004456E       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
-0x00044572       ADD R9 R9 4
-0x00044576       ADD R10 R10 1   ;argc for execve
+0x000445AE       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
+0x000445B2       ADD R9 R9 4
+0x000445B6       ADD R10 R10 1   ;argc for execve
 
 parse_token_body0:
-0x0004457A       LDB R11 [R8]
-0x0004457E       CMP R11 0
-0x00044582       BEQ parse_done
-0x0004458A       CMP R11 32      ;" "
-0x0004458E       BEQ parse_end_token
-0x00044596       ADD R8 R8 1
-0x0004459A       B parse_token_body
+0x000445BA       LDB R11 [R8]
+0x000445BE       CMP R11 0
+0x000445C2       BEQ parse_done
+0x000445CA       CMP R11 32      ;" "
+0x000445CE       BEQ parse_end_token
+0x000445D6       ADD R8 R8 1
+0x000445DA       B parse_token_body
 
 parse_end_token:
-0x000445A2       LI R11 0
-0x000445AA       STB R11 [R8]    ; put null terminator at end of token
-0x000445AE       ADD R8 R8 1     ; move to next char in input_buf
-0x000445B2       B parse_skip_spaces
+0x000445E2       LI R11 0
+0x000445EA       STB R11 [R8]    ; put null terminator at end of token
+0x000445EE       ADD R8 R8 1     ; move to next char in input_buf
+0x000445F2       B parse_skip_spaces
 
 parse_done0:
-0x000445BA       LI R11 0
-0x000445C2       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
-0x000445C6       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
+0x000445FA       LI R11 0
+0x00044602       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
+0x00044606       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
                     ;  and in format for execve
-0x000445CA       POP R10
-0x000445CE       POP R9
-0x000445D2       POP R8
-0x000445D6       POP LR
-0x000445DA       RET
+0x0004460A       POP R10
+0x0004460E       POP R9
+0x00044612       POP R8
+0x00044616       POP LR
+0x0004461A       RET
 
 ;---------------------------------------------------------------
 ; Data
