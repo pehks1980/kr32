@@ -174,11 +174,11 @@ nsfs_bmi_demo:
     ; R3 = payload length
     ; R4 = namespace
 
-    MOV R1 NS_DELETE
+    MOV R1 NS_DELETE    
     LI R2 0x00000000
     MOV R3 R2
     MOV R4 R2
-    CALL bmi_call
+    CALL bmi_call       
 
     MOV R1 NS_CREATE
     LI R2 0x00000000
@@ -198,11 +198,11 @@ nsfs_bmi_demo:
     LI R4 0
     CALL bmi_call
 
-    MOV R1 FILE_DELETE
-    LI R2 cr_file
-    LI R3 13
-    LI R4 0
-    CALL bmi_call
+   ; MOV R1 FILE_DELETE
+   ; LI R2 cr_file
+   ; LI R3 13
+   ; LI R4 0
+   ; CALL bmi_call
 
     POP LR
     RET
@@ -2489,7 +2489,7 @@ nsfs_lookup:
 
 nsfs_lookup_loop:
     CMP R10 0
-    BEQ nsfs_lookup_fail
+    BEQ nsfs_lookup_not_found
 
     MOV R1 R8
     LDW R2 [R9 + NSFS_INDEX_PATH]
@@ -2504,7 +2504,7 @@ nsfs_lookup_loop:
 nsfs_lookup_found:
     BL nsfs_node_alloc
     CMP R1 0
-    BEQ nsfs_lookup_fail
+    BEQ nsfs_lookup_not_found
     MOV R11 R1                      ; nsfs node
 
     LI R1 NSFS_DEFAULT_NS
@@ -2542,7 +2542,7 @@ nsfs_lookup_free_node:
     MOV R1 R11
     BL nsfs_node_free
 
-nsfs_lookup_fail:
+nsfs_lookup_not_found:
     LI R1 0
 
 nsfs_lookup_done:
@@ -2586,7 +2586,151 @@ nsfs_write:
 ; in:  R1 = file ptr, R2 = userspace dirent buffer
 ; out: R1 = 1 entry, 0 EOF, or errno
 nsfs_readdir:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R2
+    PUSH R8
+    MOV R12 R1
+
+    LI R3 DIRENT_SIZEOF
+    MOV R1 R8
+    LI R2 DIRENT_SIZEOF
+    LI R3 1
+    BL user_buffer_valid_range
+    CMP R1 1
+    BNE nsfs_readdir_fault
+
+    LDW R4 [R12 + FILE_INODE]
+    LDW R5 [R4 + INODE_PRIVATE]
+    CMP R5 0
+    BEQ nsfs_readdir_eof
+    LDW R10 [R5 + NSFS_NODE_PATH]   ; directory path, absolute
+    LDW R11 [R12 + FILE_OFFSET]     ; index into nsfs_index_table
+    MOV R6 R11
+
+nsfs_readdir_scan:
+    LI R1 nsfs_index_count
+    LDW R1 [R1]
+    CMP R6 R1
+    BGE nsfs_readdir_eof
+
+    LI R7 NSFS_INDEX_ENTRY_SIZEOF
+    MUL R7 R6 R7
+    LI R9 nsfs_index_table
+    ADD R9 R9 R7
+
+    LDW R1 [R9 + NSFS_INDEX_PATH]
+    MOV R2 R10
+    BL str_prefix
+    CMP R1 1
+    BNE nsfs_readdir_next
+
+    LDW R1 [R9 + NSFS_INDEX_PATH]
+    MOV R2 R10
+    BL skip_prefix
+    LDB R2 [R1]
+    LI R3 47
+    CMP R2 R3
+    BEQ nsfs_readdir_skip_slash
+    CMP R2 0
+    BEQ nsfs_readdir_next
+    B nsfs_readdir_have_name
+nsfs_readdir_skip_slash:
+    ADD R1 R1 1
+nsfs_readdir_have_name:
+    MOV R8 R1                       ; component name
+
+    BL path_component_len
+    MOV R7 R1
+    CMP R7 0
+    BEQ nsfs_readdir_next
+    LI R2 63
+    CMP R7 R2
+    BLE nsfs_readdir_name_ok
+    MOV R7 R2
+
+nsfs_readdir_name_ok:
+    MOV R11 R6
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R1, R5
+
+    ADD R3 R11 1
+    STW R3 [R1 + DIRENT_INODE]
+    LDW R2 [R9 + NSFS_INDEX_SIZE]
+    STW R2 [R1 + DIRENT_SIZE]
+    LDW R2 [R9 + NSFS_INDEX_TYPE]
+    CMP R2 NSFS_TYPE_DIR
+    BEQ nsfs_readdir_type_dir
+    LI R2 DT_REG
+    B nsfs_readdir_type_done
+nsfs_readdir_type_dir:
+    LI R2 DT_DIR
+nsfs_readdir_type_done:
+    STW R2 [R1 + DIRENT_TYPE]
+
+    ADD R3 R11 1
+    STW R3 [R12 + FILE_OFFSET]
+
+    MOV R2 R8
+    ADD R3 R1 DIRENT_NAME
+    LI R6 0
+nsfs_readdir_copy_name:
+    CMP R6 R7
+    BGE nsfs_readdir_copy_done
+    LDB R10 [R2 + R6]
+    STB R10 [R3 + R6]
+    ADD R6 R6 1
+    B nsfs_readdir_copy_name
+nsfs_readdir_copy_done:
+    LI R10 0
+    STB R10 [R3 + R6]
+
+    LI R2 DIRENT_SIZEOF
+    MOV R4 R1
+    POP R1
+    BL copy_to_user
+    CMP R1 DIRENT_SIZEOF
+    BNE nsfs_readdir_fault_after_pop
+    MOV R1 DIRENT_SIZEOF
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+nsfs_readdir_next:
+    ADD R6 R6 1
+    B nsfs_readdir_scan
+
+nsfs_readdir_eof:
+    POP R1
     LI R1 0
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+nsfs_readdir_fault:
+    POP R1
+nsfs_readdir_fault_after_pop:
+    LI R1 ERR_FAULT
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
     RET
 
 ; nsfs_create
@@ -4924,7 +5068,7 @@ devfs_ops:
     .WORD 0
 
 ;==============================================================
-; NSFS skeleton
+; NSFS data and sructures
 ;==============================================================
 
 ; NSFS private vnode stored behind inode->private.
@@ -4958,6 +5102,11 @@ devfs_ops:
 .EQU NSFS_INDEX_MAX_ENTRIES, 64
 .EQU NSFS_INDEX_PATH_POOL_SIZE, 2048
 
+;=========================================================================
+;
+;
+;=========================================================================
+
 nsfs_ops:
     .WORD nsfs_open
     .WORD nsfs_read
@@ -4970,6 +5119,11 @@ nsfs_ops:
     .WORD nsfs_mkdir
     .WORD nsfs_rmdir
 
+;=========================================================================
+;
+;
+;=========================================================================
+
 nsfs_root_inode:
     .WORD nsfs_ops          ; INODE_OPS
     .WORD nsfs_root_node    ; INODE_PRIVATE
@@ -4980,12 +5134,23 @@ nsfs_root_inode:
 nsfs_root_path:
     .ASCIIZ "/"
 
+;=========================================================================
+;
+;
+;=========================================================================
+
+
 nsfs_root_node:
     .WORD NSFS_DEFAULT_NS
     .WORD nsfs_root_path
     .WORD INODE_DIR
     .WORD 0
     .WORD 0
+
+;=========================================================================
+;
+;
+;=========================================================================
 
 nsfs_node_pool:
     .SPACE NSFS_MAX_NODES * NSFS_NODE_SIZEOF
@@ -5005,10 +5170,10 @@ nsfs_index_path_next:
 nsfs_index_path_pool:
     .SPACE NSFS_INDEX_PATH_POOL_SIZE
 
-; special con uart related
-;con_ops:
-;    .WORD con_read
-;    .WORD con_write
+;=========================================================================
+;
+;
+;=========================================================================
 
 uart_rx_queue:
     .WORD 0
@@ -5016,12 +5181,21 @@ uart_rx_queue:
 uart_tx_queue:
     .WORD 0
 
+;=========================================================================
+;
+;
+;=========================================================================
+
 con_device:
     .WORD uart_rx_queue
     .WORD uart_tx_queue
     .WORD 0x00100000
 
-;pipe ops
+;=========================================================================
+; pipe ops
+;
+;=========================================================================
+
 pipe_ops:
     .WORD pipe_read
     .WORD pipe_write
@@ -5045,6 +5219,11 @@ dev_null_name:
 
 .EQU DEVICE_COUNT, 2
 
+;=========================================================================
+;
+;
+;=========================================================================
+
 device_table:
 
 dev_console:
@@ -5062,7 +5241,11 @@ null_device:
     .WORD 0
     .WORD 0
 
+;=========================================================================
 ; pipe struct
+;
+;=========================================================================
+
 .EQU MAX_PIPES     4
 .EQU PIPE_HEAD     0        ;used for wr to pipe
 .EQU PIPE_TAIL     4        ;for rd
@@ -5117,7 +5300,12 @@ child_waitq:
 
 .EQU FSOPS_SIZE,      40
 
-;VFS inst for tarfs
+;=========================================================================
+; VFS inst for tarfs
+;
+;=========================================================================
+
+
 tarfs_ops:
     .WORD tarfs_open
     .WORD tarfs_read
@@ -5130,7 +5318,11 @@ tarfs_ops:
     .WORD 0
     .WORD 0
 
-;VFS inode inst for tarfs
+;=========================================================================
+; VFS inode inst for tarfs
+;
+;=========================================================================
+
 tarfs_inode:
     .WORD tarfs_ops
     .WORD tar_index
@@ -5140,7 +5332,7 @@ tarfs_inode:
 
 
 ; ==================================================
-; TARFS - first fs 
+; TARFS - RO initial system (load/start process)
 ; ==================================================
 
 .EQU MAX_TAR_FILES, 64
@@ -5187,6 +5379,7 @@ tarfs_open:
 tarfs_close:
     LI R1 0
     RET
+
 ; --------------------------------------------------
 ; tarfs_lookup - lookup a file in the tar index by name, for open and read operations
 ;
@@ -5676,6 +5869,7 @@ tarfs_write:
 ; returns:
 ;   R1 = DIRENT_SIZEOF (74) on success, 0 on EOF, negative errno
 ; --------------------------------------------------
+
 tarfs_readdir:
     PUSH LR
     PUSH R8
@@ -5722,7 +5916,7 @@ readdir_scan:
     LI  R1 tar_count          ;total number entryes in index count
     LDW R1 [R1]
     CMP R6 R1
-    BGE readdir_eof           ; no more entries
+    BGE readdir_nsfs_start    ; no more tar entries; append overlay entries
 
     ; entry = tar_index + R6 * TAR_IDX_SIZEOF
     LI R1 tar_index
@@ -5846,6 +6040,120 @@ readdir_skip:
     ADD R6 R6 1
     B readdir_scan
 
+readdir_nsfs_start:
+    LI R1 tar_count
+    LDW R1 [R1]
+    SUB R6 R6 R1              ; convert merged file offset to nsfs index
+
+readdir_nsfs_scan:
+    LI R1 nsfs_index_count
+    LDW R1 [R1]
+    CMP R6 R1
+    BGE readdir_eof
+
+    LI R1 NSFS_INDEX_ENTRY_SIZEOF
+    MUL R3 R6 R1
+    LI R7 nsfs_index_table
+    ADD R7 R7 R3              ; R7 = &nsfs_index_table[R6]
+
+    LDW R1 [R7 + NSFS_INDEX_PATH]
+    LDB R2 [R1]
+    LI R3 47                  ; skip leading '/' for comparison with tar prefix
+    CMP R2 R3
+    BNE readdir_nsfs_prefix_ready
+    ADD R1 R1 1
+readdir_nsfs_prefix_ready:
+    MOV R2 R10
+    BL str_prefix
+    CMP R1 1
+    BNE readdir_nsfs_skip
+
+    LDW R1 [R7 + NSFS_INDEX_PATH]
+    LDB R2 [R1]
+    LI R3 47
+    CMP R2 R3
+    BNE readdir_nsfs_skip_ready
+    ADD R1 R1 1
+readdir_nsfs_skip_ready:
+    MOV R2 R10
+    BL skip_prefix
+    MOV R9 R1
+
+    LDB R2 [R9]
+    CMP R2 0
+    BEQ readdir_nsfs_skip
+
+    MOV R1 R9
+    BL path_component_len
+    MOV R8 R1
+    CMP R8 0
+    BEQ readdir_nsfs_skip
+    LI R2 63
+    CMP R8 R2
+    BLE readdir_nsfs_name_ok
+    MOV R8 R2
+
+readdir_nsfs_name_ok:
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R1, R5
+
+    LI R2 tar_count
+    LDW R2 [R2]
+    ADD R3 R2 R6
+    ADD R3 R3 1
+    STW R3 [R1 + DIRENT_INODE]
+    STW R3 [R12 + FILE_OFFSET]
+
+    LDW R2 [R7 + NSFS_INDEX_SIZE]
+    STW R2 [R1 + DIRENT_SIZE]
+    LDW R2 [R7 + NSFS_INDEX_TYPE]
+    CMP R2 NSFS_TYPE_DIR
+    BEQ readdir_nsfs_type_dir
+    LI R2 DT_REG
+    B readdir_nsfs_type_done
+readdir_nsfs_type_dir:
+    LI R2 DT_DIR
+readdir_nsfs_type_done:
+    STW R2 [R1 + DIRENT_TYPE]
+
+    MOV R2 R9
+    ADD R3 R1 DIRENT_NAME
+    LI R6 0
+readdir_nsfs_copy_name:
+    CMP R6 R8
+    BGE readdir_nsfs_copy_done
+    LDB R10 [R2 + R6]
+    STB R10 [R3 + R6]
+    ADD R6 R6 1
+    B readdir_nsfs_copy_name
+readdir_nsfs_copy_done:
+    LI R10 0
+    STB R10 [R3 + R6]
+
+    LI R2 DIRENT_SIZEOF
+    MOV R4 R1
+    POP R1
+    BL copy_to_user
+    CMP R1 DIRENT_SIZEOF
+    BNE readdir_fault_after_user_pop
+    MOV R1 DIRENT_SIZEOF
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+readdir_nsfs_skip:
+    ADD R6 R6 1
+    LI R1 tar_count
+    LDW R1 [R1]
+    ADD R2 R1 R6
+    STW R2 [R12 + FILE_OFFSET]
+    B readdir_nsfs_scan
+
 readdir_eof:
     Pop R1          ;bc we saved r8 inside loop
     LI R1 0
@@ -5870,6 +6178,7 @@ readdir_short:
 
 readdir_fault:
     Pop R1 
+readdir_fault_after_user_pop:
     LI R1 ERR_FAULT
     POP R12
     POP R11
