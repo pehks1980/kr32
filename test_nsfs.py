@@ -8,6 +8,7 @@ from device.nsfs import (
     FILE_CREATE,
     FILE_DELETE,
     DIR_CREATE,
+    BMI_READ_FILE,
     NS_CREATE,
     NSFS_INDEX,
     NSFS_CHUNK_SIZE,
@@ -36,6 +37,16 @@ def decode_index(payload):
         offset += (4 - (path_len % 4)) % 4
         entries.append((entry_type, size, version, path))
     return entries
+
+
+def read_payload(path, offset, length):
+    path_bytes = path.encode("utf-8")
+    return (
+        len(path_bytes).to_bytes(4, "little")
+        + offset.to_bytes(4, "little")
+        + length.to_bytes(4, "little")
+        + path_bytes
+    )
 
 
 def main():
@@ -75,6 +86,15 @@ def main():
         assert old_manifest["chunks"][2] != manifest_v2["chunks"][2]
         assert store.data["kv"][store._chunk_key(0, old_manifest["chunks"][2])]["size"] == 1
         assert store.data["kv"][store._chunk_key(0, manifest_v2["chunks"][2])]["size"] == 11
+
+        status, payload = store.handle_packet({
+            "opcode": BMI_READ_FILE,
+            "namespace": 0,
+            "payload": read_payload("/demo.txt", NSFS_CHUNK_SIZE - 2, 8),
+            "flags": 0,
+        })
+        assert status == NSFS_OK
+        assert payload == initial[NSFS_CHUNK_SIZE - 2:NSFS_CHUNK_SIZE] + initial[NSFS_CHUNK_SIZE:NSFS_CHUNK_SIZE + 6]
 
         assert store.handle_packet({
             "opcode": FILE_DELETE,

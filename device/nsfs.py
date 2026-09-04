@@ -18,6 +18,7 @@ FILE_APPEND = 0x12  #Append bytes to an existing file in a namespace
 DIR_CREATE = 0x20   #Create a new directory in a namespace  
 DIR_DELETE = 0x21   #Delete an existing directory in a namespace
 NSFS_INDEX = 0x30   #Return active namespace file/dir index
+BMI_READ_FILE = 0x31 #Read a byte range from a file manifest
 
 NSFS_CHUNK_SIZE = 1024
 NSFS_OK = 0
@@ -378,6 +379,47 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
         print(f"[NSFS] index ns={namespace} entries={len(entries)} bytes={len(payload)}")
         return NSFS_OK, payload
 
+    def read_file(self, namespace, payload):
+        if not self.namespace_exists(namespace):
+            return NSFS_ENOENT, b""
+        if len(payload) < 12:
+            return NSFS_EINVAL, b""
+
+        path_len, offset, length = struct.unpack("<LLL", payload[:12])
+        if path_len == 0 or path_len > len(payload) - 12:
+            return NSFS_EINVAL, b""
+
+        path = self._decode_path(payload[12:12 + path_len])
+        if path is None:
+            return NSFS_EINVAL, b""
+
+        manifest = self.data["kv"].get(self._path_key(namespace, path))
+        if manifest is None or manifest.get("type") != "file" or manifest.get("deleted", False):
+            return NSFS_ENOENT, b""
+
+        size = int(manifest.get("size", 0))
+        if offset >= size or length == 0:
+            return NSFS_OK, b""
+
+        end = min(size, offset + length)
+        result = bytearray()
+        cursor = 0
+        for chunk_id in manifest.get("chunks", []):
+            chunk = self._read_chunk(namespace, chunk_id)
+            if chunk is None:
+                return NSFS_EINVAL, b""
+            chunk_end = cursor + len(chunk)
+            if chunk_end > offset and cursor < end:
+                start_in_chunk = max(offset - cursor, 0)
+                end_in_chunk = min(end - cursor, len(chunk))
+                result.extend(chunk[start_in_chunk:end_in_chunk])
+            cursor = chunk_end
+            if cursor >= end:
+                break
+
+        print(f"[NSFS] read file ns={namespace} path={path} offset={offset} bytes={len(result)}")
+        return NSFS_OK, bytes(result)
+
     # handle_packet: dispatches the packet to the appropriate handler based on opcode
     # func will add new fetures to NSFS 
     def handle_packet(self, packet):
@@ -400,5 +442,7 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
             return self.delete_dir(namespace, packet["payload"])
         if opcode == NSFS_INDEX:
             return self.namespace_index(namespace)
+        if opcode == BMI_READ_FILE:
+            return self.read_file(namespace, packet["payload"])
 
         return NSFS_EINVAL, b""

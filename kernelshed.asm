@@ -153,7 +153,6 @@ B KERNEL_START
 ;======================================================================================================
 idle_task:
     LI R1 0
-    CALL nsfs_bmi_demo
     ENABLEINT
 
 idle_loop:
@@ -2322,27 +2321,38 @@ devfs_fail:
     RET
 
 ;====================================================================
-; NSFS VFS driver skeleton
+; NSFS VFS driver
 ;
 ; NSFS is the writable overlay between devfs and tarfs:
 ;   devfs_lookup -> nsfs_lookup -> tarfs_lookup
 ;
-; These stubs define the ABI and struct shape. The real implementation will
+; These methods define the ABI and struct shape. The real implementation will
 ; use BMI opcodes to query/create/delete entries in the host JSON KV store.
 ;====================================================================
 
+;====================================================================
+; nsfs_node_alloc - allocate a node from the pool
+; short description:
+;   This function searches for a free node in the nsfs_node_used idx array and allocates it. 
+;   It returns a pointer to the allocated node if successful, or 0 if no free nodes are available.
+;
+; Returns:
+;   R1 = pointer to node if successful
+;   R1 = 0 if no free nodes available       
+;====================================================================
+
 nsfs_node_alloc:
-    LI R2 0
+    LI R2 0                  ; R2 = node index
 
 nsfs_node_alloc_loop:
-    CMP R2 NSFS_MAX_NODES
+    CMP R2 NSFS_MAX_NODES    ;check if we reached the max number of nodes
     BGE nsfs_node_alloc_fail
 
     SHL R3 R2 2
-    LI R4 nsfs_node_used
+    LI R4 nsfs_node_used     ;this is the base address of the idx array of used nodes
     ADD R4 R4 R3
 
-    LDW R5 [R4]
+    LDW R5 [R4]              ;R4 points to the word in the bitmap, R5 = value of that word
     CMP R5 0
     BEQ nsfs_node_alloc_found
 
@@ -2351,17 +2361,23 @@ nsfs_node_alloc_loop:
 
 nsfs_node_alloc_found:
     LI R5 1
-    STW R5 [R4]
+    STW R5 [R4]              ; Mark the node as used in the bitmap
 
     LI R3 NSFS_NODE_SIZEOF
     MUL R6 R2 R3
-    LI R1 nsfs_node_pool
-    ADD R1 R1 R6
+    LI R1 nsfs_node_pool     ; R1 = base address of the node pool
+    ADD R1 R1 R6             ; return pointer to the allocated node ptr=base + index * sizeof(node)
     RET
 
 nsfs_node_alloc_fail:
     LI R1 0
     RET
+
+;=====================================================================
+;   nsfs_node_free - free a node back to the pool    
+;
+;   Input R1 = idx node to free
+;=====================================================================
 
 nsfs_node_free:
     LI R2 nsfs_node_pool
@@ -2378,9 +2394,19 @@ nsfs_node_free:
     STW R7 [R6]
     RET
 
-; nsfs_refresh_index
+;=====================================================================
+; nsfs_refresh_index - refresh the NSFS index from the host JSON KV store
+;
+; short description:
+;   This function sends a BMI command to the host to retrieve the current NSFS index. then it parses the 
+; reply payload and populates the nsfs_index_table and nsfs_index_path_pool with the entries.
+; nsfs_index_table is an array of nsfs_index_entry structures, 
+; nsfs_index_path_pool is a blob of path stringZ.
+;   
 ; in:  R1 = namespace
 ; out: R1 = 0 on success, BMI/errno status on failure
+;=====================================================================
+
 nsfs_refresh_index:
     PUSH LR
     PUSH R8
@@ -2391,41 +2417,42 @@ nsfs_refresh_index:
 
     MOV R12 R1
 
-    MOV R1 NSFS_INDEX
-    LI R2 0
+    MOV R1 NSFS_INDEX   ; bmi opcode for nsfs index refresh    
+    LI R2 0             
     LI R3 0
     MOV R4 R12
-    CALL bmi_call
+    CALL bmi_call       ; R1 = bmi status, R2 = reply payload ptr, R3 = reply payload size R4 - namespace
 
     CMP R1 0
     BNE nsfs_refresh_done
-
+    ; got reply payload in R2, size in R3
+    ; parse the reply payload and populate the nsfs_index_table and nsfs_index_path_pool
     LI R1 nsfs_index_count
     LI R2 0
-    STW R2 [R1]
+    STW R2 [R1]                     ;init index count to 0
     LI R1 nsfs_index_path_next
     LI R2 nsfs_index_path_pool
-    STW R2 [R1]
+    STW R2 [R1]           ;init path pool next ptr to start of path pool    
 
     LI R8 BMI_BUF_READ
     ADD R8 R8 BMI_HDR_SIZEOF       ; R8 = reply payload cursor
-    LDW R9 [R8]                    ; R9 = entry_count
+    LDW R9 [R8]                    ; R9 = entry_count - first word in the reply payload 
+                                   ; is the number of entries
     ADD R8 R8 4
-    LI R10 0                       ; R10 = parsed count
+    LI R10 0                       ; R10 = parsed count R8 = next is at reply payload
 
-nsfs_refresh_loop:
+nsfs_refresh_loop:                 ;fill the nsfs_index_table with entries from the reply payload
     CMP R10 R9
-    BGE nsfs_refresh_success
+    BGE nsfs_refresh_success       ;if parsed count >= entry_count, or max reached we are done 
     CMP R10 NSFS_INDEX_MAX_ENTRIES
     BGE nsfs_refresh_success
 
-    ; R11 = &nsfs_index_table[R10]
     LI R11 NSFS_INDEX_ENTRY_SIZEOF
     MUL R11 R10 R11
     LI R6 nsfs_index_table
-    ADD R11 R6 R11
+    ADD R11 R6 R11                 ; R11 = &nsfs_index_table[R10], R8 = &reply_payload[R8]
 
-    LDW R1 [R8 + NSFS_WIRE_TYPE]
+    LDW R1 [R8 + NSFS_WIRE_TYPE]    ;copy payload wire entries to index entries elements
     STW R1 [R11 + NSFS_INDEX_TYPE]
     LDW R1 [R8 + NSFS_WIRE_SIZE]
     STW R1 [R11 + NSFS_INDEX_SIZE]
@@ -2433,19 +2460,19 @@ nsfs_refresh_loop:
     STW R1 [R11 + NSFS_INDEX_VERSION]
     LDW R5 [R8 + NSFS_WIRE_PATH_LEN]
     STW R5 [R11 + NSFS_INDEX_PATH_LEN]
-    ADD R8 R8 NSFS_WIRE_HDR_SIZEOF
+    ADD R8 R8 NSFS_WIRE_HDR_SIZEOF  ; move R8 to the start of the path bytes in the wire payload
 
     ; Copy path bytes to path pool and append a NUL for strcmp.
-    LI R6 nsfs_index_path_next
+    LI R6 nsfs_index_path_next    ;get next ptr in path pool blob
     LDW R1 [R6]
-    STW R1 [R11 + NSFS_INDEX_PATH]
-    MOV R2 R8
-    MOV R3 R5
-    BL memcpy
+    STW R1 [R11 + NSFS_INDEX_PATH]; save path ptr in nsfs_index_table[] entry
+    MOV R2 R8                     ; R2(R8) = source path ptr in wire payload
+    MOV R3 R5               ; R3(R5) = path_len, R1 = dest path ptr in path pool blob
+    BL memcpy               ; save path bytes to path pool blob
     LI R2 0
-    STB R2 [R1]
+    STB R2 [R1]             ; append NUL to path in path pool blob
     ADD R1 R1 1
-    LI R6 nsfs_index_path_next
+    LI R6 nsfs_index_path_next  ; update next ptr in R1 for path in path pool blob
     STW R1 [R6]
 
     ; Advance wire cursor by path_len rounded up to 4 bytes.
@@ -2459,7 +2486,7 @@ nsfs_refresh_loop:
 
 nsfs_refresh_success:
     LI R1 nsfs_index_count
-    STW R10 [R1]
+    STW R10 [R1]        ;update index count to parsed count
     LI R1 0
 
 nsfs_refresh_done:
@@ -2471,9 +2498,17 @@ nsfs_refresh_done:
     POP LR
     RET
 
-; nsfs_lookup
+;=====================================================================
+; nsfs_lookup - lookup a pathname in the NSFS index table
+; short description:
+;   This function searches for a given pathname in the NSFS index table. If found, 
+; it allocates a new nsfs_node, initializes it with the corresponding index entry data, and then
+;    allocates a new inode for the node. The inode is initialized with the nsfs_node and its type.
+; 
 ; in:  R1 = pathname
 ; out: R1 = inode ptr if present in NSFS overlay, or 0 if not found
+;=====================================================================
+
 nsfs_lookup:
     PUSH LR
     PUSH R8
@@ -2483,8 +2518,8 @@ nsfs_lookup:
     PUSH R12
 
     MOV R8 R1                       ; pathname
-    LI R9 nsfs_index_table
-    LI R10 nsfs_index_count
+    LI R9 nsfs_index_table          ; start of index table
+    LI R10 nsfs_index_count         ; count of items in index table
     LDW R10 [R10]
 
 nsfs_lookup_loop:
@@ -2493,7 +2528,7 @@ nsfs_lookup_loop:
 
     MOV R1 R8
     LDW R2 [R9 + NSFS_INDEX_PATH]
-    BL strcmp
+    BL strcmp                      ; compare pathname with index entry path
     CMP R1 1
     BEQ nsfs_lookup_found
 
@@ -2502,12 +2537,12 @@ nsfs_lookup_loop:
     B nsfs_lookup_loop
 
 nsfs_lookup_found:
-    BL nsfs_node_alloc
+    BL nsfs_node_alloc              ; allocate a new nsfs node
     CMP R1 0
     BEQ nsfs_lookup_not_found
     MOV R11 R1                      ; nsfs node
 
-    LI R1 NSFS_DEFAULT_NS
+    LI R1 NSFS_DEFAULT_NS               ;fill in the node with index entry data for that found pathname
     STW R1 [R11 + NSFS_NODE_NAMESPACE]
     LDW R1 [R9 + NSFS_INDEX_PATH]
     STW R1 [R11 + NSFS_NODE_PATH]
@@ -2519,10 +2554,10 @@ nsfs_lookup_found:
 nsfs_lookup_type_dir:
     LI R12 INODE_DIR
 nsfs_lookup_type_done:
-    STW R12 [R11 + NSFS_NODE_TYPE]
+    STW R12 [R11 + NSFS_NODE_TYPE]  ;node type DIR or REG
     LDW R5 [R9 + NSFS_INDEX_SIZE]
     STW R5 [R11 + NSFS_NODE_SIZE]
-    LI R1 0
+    LDW R1 [R9 + NSFS_INDEX_PATH_LEN]
     STW R1 [R11 + NSFS_NODE_FLAGS]
 
     BL inode_alloc
@@ -2531,8 +2566,8 @@ nsfs_lookup_type_done:
 
     MOV R10 R1                      ; inode
     LI R2 nsfs_ops
-    MOV R3 R11
-    MOV R4 R12
+    MOV R3 R11                      ; nsfs node as inode_private data
+    MOV R4 R12                      ; inode type (DIR or REG)
     ; R5 already holds file size.
     BL inode_init
     MOV R1 R10
@@ -2553,38 +2588,224 @@ nsfs_lookup_done:
     POP R8
     POP LR
     RET
-
-; nsfs_open
+;=====================================================================
+; nsfs_open - open a file in the NSFS overlay
 ; in:  R1 = file ptr
 ; out: R1 = 0
+;=====================================================================
+
 nsfs_open:
     LI R1 0
     RET
-
+;=====================================================================
 ; nsfs_close
 ; in:  R1 = file ptr
 ; out: R1 = 0
+;=====================================================================
+
 nsfs_close:
     LI R1 0
     RET
 
+;=====================================================================
 ; nsfs_read
 ; in:  R1 = file ptr, R2 = user buffer, R3 = length
 ; out: R1 = bytes read or errno
+;=====================================================================
+
 nsfs_read:
-    LI R1 ERR_NOENT
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R1
+    MOV R9 R2
+    MOV R10 R3
+
+    CMP R10 0
+    BEQ nsfs_read_eof
+
+    PUSH R8
+    PUSH R9
+    MOV R1 R9
+    MOV R2 R10
+    LI R3 1                    ; destination must be user-writable
+    BL user_buffer_valid_range
+    POP R9
+    POP R8
+    CMP R1 1
+    BNE nsfs_read_fault
+
+    LDW R11 [R8 + FILE_INODE]
+    LDW R5  [R11 + INODE_TYPE]
+    LDW R11 [R11 + INODE_PRIVATE]
+     ; ---- check if this is a directory ----
+    LI  R2 INODE_DIR
+    CMP R5 R2
+    ; CMP R5 INODE_DIR - this will result inerror as command will be assembled in decimal number
+    BEQ nsfs_read_dir
+
+    LDW R12 [R8 + FILE_OFFSET]
+    LDW R4  [R11 + NSFS_NODE_SIZE]
+
+    CMP R12 R4
+    BGEU nsfs_read_eof
+
+    SUB R4 R4 R12             ; bytes remaining
+    CMP R10 R4
+    BLEU nsfs_read_count_ready
+    MOV R10 R4
+
+nsfs_read_count_ready:
+
+;read file from nsfs 
+; call bmi_read_file with the file's index and offset to get the data from the host
+    MOV R1 R11                ; NSFS node
+    MOV R2 R12                ; file offset
+    MOV R3 R10                ; clipped read length
+    MOV R4 R9                 ; user destination
+    BL  nsfs_bmi_read_file
+    CMP R1 0
+    BLT nsfs_read_done
+
+    ADD R12 R12 R1
+    STW R12 [R8 + FILE_OFFSET]
+    B nsfs_read_done
+
+nsfs_read_dir:
+    ; directory read – call our dir read function
+    MOV R1 R8
+    MOV R2 R9
+    MOV R3 R10
+    BL nsfs_readdir
+    B nsfs_read_done   ; jump to the common return path
+
+nsfs_read_fault:
+    LI R1 ERR_FAULT
+    B nsfs_read_done
+
+nsfs_read_eof:
+    LI R1 0
+
+nsfs_read_done:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
     RET
 
+nsfs_bmi_read_file:
+    ;=====================================================================
+    ; bmi_read_file - read file data from the host via BMI
+    ; in:  R1 = nsfs node, R2 = offset, R3 = length, R4 = user destination
+    ; out: R1 = bytes read or errno
+    ;=====================================================================
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R1              ; nsfs node
+    MOV R9 R2              ; offset
+    MOV R10 R3             ; length
+    MOV R11 R4             ; current user destination
+    LI R12 0               ; total bytes copied
+
+bmi_read_file_loop:
+    CMP R10 0
+    BEQ bmi_read_file_done
+
+    LI R7 BMI_BUF_WRITE
+    ADD R7 R7 BMI_HDR_SIZEOF
+    LDW R6 [R8 + NSFS_NODE_FLAGS]      ; path_len
+    STW R6 [R7]                        ; u32 path_len
+    STW R9 [R7 + 4]                    ; u32 offset
+
+    LI R5 4084                         ; max BMI reply payload = 4096 - header
+    CMP R10 R5
+    BLEU bmi_read_file_chunk_ready
+    B bmi_read_file_chunk_store
+bmi_read_file_chunk_ready:
+    MOV R5 R10
+bmi_read_file_chunk_store:
+    STW R5 [R7 + 8]                    ; u32 requested length
+
+    ADD R1 R7 12
+    LDW R2 [R8 + NSFS_NODE_PATH]
+    MOV R3 R6
+    BL memcpy
+
+    LI R1 BMI_READ_FILE
+    MOV R2 R7
+    ADD R3 R6 12
+    LDW R4 [R8 + NSFS_NODE_NAMESPACE]
+    CALL bmi_call          ; call BMI to read file data
+    CMP R1 0
+    BNE bmi_read_file_fail
+
+    LI R4 BMI_BUF_READ
+    LDW R5 [R4 + BMI_HDR_PAYLOAD_LEN]  ; actual bytes returned
+    CMP R5 0
+    BEQ bmi_read_file_done
+    ADD R4 R4 BMI_HDR_SIZEOF
+    MOV R1 R11
+    MOV R2 R5
+    BL copy_to_user
+
+    ADD R12 R12 R1
+    ADD R9 R9 R1
+    ADD R11 R11 R1
+    SUB R10 R10 R1
+    CMP R1 R5
+    BNE bmi_read_file_done
+    B bmi_read_file_loop
+
+bmi_read_file_done:
+    MOV R1 R12
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+bmi_read_file_fail:
+    LI  R1 ERR_IO
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+;=====================================================================
 ; nsfs_write
 ; in:  R1 = file ptr, R2 = user buffer, R3 = length
 ; out: R1 = bytes written or errno
+;=====================================================================
 nsfs_write:
     LI R1 ERR_NOENT
     RET
-
-; nsfs_readdir
+;=====================================================================
+; nsfs_readdir - read next directory entries from NSFS overlay
+; short description:
+;   This function reads directory entries from the NSFS overlay. 
+; It checks if the provided userspace buffer is valid, retrieves the directory path from the file's inode, 
+; and scans the NSFS index table for entries that match the directory path. 
+; For each matching entry, it constructs a dirent structure and copies it to the userspace buffer. 
+; 
 ; in:  R1 = file ptr, R2 = userspace dirent buffer
 ; out: R1 = 1 entry, 0 EOF, or errno
+; This is a simplified implementation that reads one entry at a time.
+;=====================================================================
 nsfs_readdir:
     PUSH LR
     PUSH R8
@@ -2593,18 +2814,18 @@ nsfs_readdir:
     PUSH R11
     PUSH R12
 
-    MOV R8 R2
+    MOV R8 R2              ; R8 = userspace dirent buffer ptr
     PUSH R8
-    MOV R12 R1
+    MOV R12 R1             ; R12 = file ptr
 
     LI R3 DIRENT_SIZEOF
     MOV R1 R8
     LI R2 DIRENT_SIZEOF
     LI R3 1
-    BL user_buffer_valid_range
+    BL user_buffer_valid_range  ; check if userspace buffer is valid for writing DIRENT_SIZEOF bytes
     CMP R1 1
     BNE nsfs_readdir_fault
-
+    ; read the directory path from the file's inode, file ptr is dir 
     LDW R4 [R12 + FILE_INODE]
     LDW R5 [R4 + INODE_PRIVATE]
     CMP R5 0
@@ -2612,7 +2833,8 @@ nsfs_readdir:
     LDW R10 [R5 + NSFS_NODE_PATH]   ; directory path, absolute
     LDW R11 [R12 + FILE_OFFSET]     ; index into nsfs_index_table
     MOV R6 R11
-
+    ; scan the nsfs_index_table for entries that match the directory path, starting from index R6
+    ; (each call to readdir returns one entry, so R6 is the index of the next entry to read)
 nsfs_readdir_scan:
     LI R1 nsfs_index_count
     LDW R1 [R1]
@@ -2622,17 +2844,17 @@ nsfs_readdir_scan:
     LI R7 NSFS_INDEX_ENTRY_SIZEOF
     MUL R7 R6 R7
     LI R9 nsfs_index_table
-    ADD R9 R9 R7
+    ADD R9 R9 R7            ; R9 = &nsfs_index_table[R6]
 
     LDW R1 [R9 + NSFS_INDEX_PATH]
     MOV R2 R10
-    BL str_prefix
+    BL str_prefix       ; check if the index entry path has the directory path as prefix    
     CMP R1 1
     BNE nsfs_readdir_next
-
+    ; if the index entry path has the directory path as prefix, extract the next component of the path
     LDW R1 [R9 + NSFS_INDEX_PATH]
     MOV R2 R10
-    BL skip_prefix
+    BL skip_prefix  ; skip the directory path prefix, R1 = pointer to the next component in the path
     LDB R2 [R1]
     LI R3 47
     CMP R2 R3
@@ -2645,7 +2867,7 @@ nsfs_readdir_skip_slash:
 nsfs_readdir_have_name:
     MOV R8 R1                       ; component name
 
-    BL path_component_len
+    BL path_component_len           ; get length of the next component in the path
     MOV R7 R1
     CMP R7 0
     BEQ nsfs_readdir_next
@@ -2654,14 +2876,14 @@ nsfs_readdir_have_name:
     BLE nsfs_readdir_name_ok
     MOV R7 R2
 
-nsfs_readdir_name_ok:
-    MOV R11 R6
+nsfs_readdir_name_ok:               ; name is valid
+    MOV R11 R6                      ; R6 = index of the entry in nsfs_index_table
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     TASK_GET_KBUF_WR R1, R5
 
     ADD R3 R11 1
-    STW R3 [R1 + DIRENT_INODE]
+    STW R3 [R1 + DIRENT_INODE]      ; write the next inode number (index + 1) to the dirent structure in task write buffer
     LDW R2 [R9 + NSFS_INDEX_SIZE]
     STW R2 [R1 + DIRENT_SIZE]
     LDW R2 [R9 + NSFS_INDEX_TYPE]
@@ -2675,13 +2897,13 @@ nsfs_readdir_type_done:
     STW R2 [R1 + DIRENT_TYPE]
 
     ADD R3 R11 1
-    STW R3 [R12 + FILE_OFFSET]
+    STW R3 [R12 + FILE_OFFSET]  ; update the file offset to the next index for the next call to readdir
 
     MOV R2 R8
     ADD R3 R1 DIRENT_NAME
     LI R6 0
 nsfs_readdir_copy_name:
-    CMP R6 R7
+    CMP R6 R7                   ; R7 = component name length
     BGE nsfs_readdir_copy_done
     LDB R10 [R2 + R6]
     STB R10 [R3 + R6]
@@ -2689,12 +2911,12 @@ nsfs_readdir_copy_name:
     B nsfs_readdir_copy_name
 nsfs_readdir_copy_done:
     LI R10 0
-    STB R10 [R3 + R6]
+    STB R10 [R3 + R6]       ; null terminate the name in the dirent structure
 
     LI R2 DIRENT_SIZEOF
     MOV R4 R1
     POP R1
-    BL copy_to_user
+    BL copy_to_user          ; copy the dirent structure to the userspace buffer
     CMP R1 DIRENT_SIZEOF
     BNE nsfs_readdir_fault_after_pop
     MOV R1 DIRENT_SIZEOF
@@ -2772,7 +2994,7 @@ nsfs_rmdir:
 ; R1 = user pointer to string
 ;output:
 ; R1 = device descriptor
- ;R1 = 0 if not found
+; R1 = 0 if not found
 ;====================================================================
 lookup_device:
 
@@ -5071,6 +5293,7 @@ devfs_ops:
 ; NSFS data and sructures
 ;==============================================================
 
+;=================================================================
 ; NSFS private vnode stored behind inode->private.
 ; Later this can hold a cached path key, namespace id, host handle,
 ; materialized size/type, dirty flags, and page-cache pointer.
@@ -5080,6 +5303,7 @@ devfs_ops:
 .EQU NSFS_NODE_SIZE,     12
 .EQU NSFS_NODE_FLAGS,    16
 .EQU NSFS_NODE_SIZEOF,   20
+;================================================================
 
 .EQU NSFS_DEFAULT_NS,     0
 .EQU NSFS_MAX_NODES,     64
@@ -5087,24 +5311,33 @@ devfs_ops:
 .EQU NSFS_TYPE_FILE,      1
 .EQU NSFS_TYPE_DIR,       2
 
+;=========================================================================
+; payload wire (reply) format for NSFS index message. made by host and sent to guest. 
+; used for building the NSFS index table in guest memory. 
+;
+;=========================================================================
 .EQU NSFS_WIRE_TYPE,      0
 .EQU NSFS_WIRE_SIZE,      4
 .EQU NSFS_WIRE_VERSION,   8
 .EQU NSFS_WIRE_PATH_LEN, 12
 .EQU NSFS_WIRE_HDR_SIZEOF, 16
 
+;=========================================================================
+; NSFS index table item structure
+;=========================================================================
 .EQU NSFS_INDEX_TYPE,     0
 .EQU NSFS_INDEX_SIZE,     4
 .EQU NSFS_INDEX_VERSION,  8
 .EQU NSFS_INDEX_PATH,    12
 .EQU NSFS_INDEX_PATH_LEN, 16
 .EQU NSFS_INDEX_ENTRY_SIZEOF, 20
+
 .EQU NSFS_INDEX_MAX_ENTRIES, 64
 .EQU NSFS_INDEX_PATH_POOL_SIZE, 2048
 
 ;=========================================================================
 ;
-;
+; nsfs_ops table for root inode and all other inodes.
 ;=========================================================================
 
 nsfs_ops:
@@ -5121,7 +5354,7 @@ nsfs_ops:
 
 ;=========================================================================
 ;
-;
+; nsfs root inode and root path string. The root inode is a directory with no size and a refcnt of 1.
 ;=========================================================================
 
 nsfs_root_inode:
@@ -5136,9 +5369,9 @@ nsfs_root_path:
 
 ;=========================================================================
 ;
-;
+; nsfs root node. This is the private data for the root inode, 
+;which is a directory with no size and a refcnt of 1.
 ;=========================================================================
-
 
 nsfs_root_node:
     .WORD NSFS_DEFAULT_NS
@@ -5149,7 +5382,7 @@ nsfs_root_node:
 
 ;=========================================================================
 ;
-;
+;nsfs NODE pool and used idx array, index count, index table, and path pool for index entries.
 ;=========================================================================
 
 nsfs_node_pool:
@@ -5158,6 +5391,10 @@ nsfs_node_pool:
 nsfs_node_used:
     .SPACE NSFS_MAX_NODES * 4
 
+
+;=========================================================================
+; nsfs index table and path pool for index entries.
+;=========================================================================
 nsfs_index_count:
     .WORD 0
 
@@ -5165,14 +5402,16 @@ nsfs_index_table:
     .SPACE NSFS_INDEX_MAX_ENTRIES * NSFS_INDEX_ENTRY_SIZEOF
 
 nsfs_index_path_next:
-    .WORD nsfs_index_path_pool
-
-nsfs_index_path_pool:
+    .WORD 0
+; blob of paths for index entries, 
+; ptr is in NSFS_INDEX_PATH
+; each path is a null-terminated string
+nsfs_index_path_pool:   
     .SPACE NSFS_INDEX_PATH_POOL_SIZE
 
 ;=========================================================================
 ;
-;
+;uart device struct and queues for RX/TX
 ;=========================================================================
 
 uart_rx_queue:
@@ -5192,7 +5431,7 @@ con_device:
     .WORD 0x00100000
 
 ;=========================================================================
-; pipe ops
+; pipe ops (private)
 ;
 ;=========================================================================
 
@@ -9073,6 +9312,7 @@ bmi_call_error:
 .EQU DIR_CREATE,  0x20
 .EQU DIR_DELETE,  0x21
 .EQU NSFS_INDEX,  0x30
+.EQU BMI_READ_FILE, 0x31
 
 
 ; ==================================================
