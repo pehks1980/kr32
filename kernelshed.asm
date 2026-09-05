@@ -197,6 +197,12 @@ nsfs_bmi_demo:
     LI R4 0
     CALL bmi_call
 
+    MOV R1 FILE_APPEND
+    LI R2 cr_file_append_payload1
+    LI R3 21
+    LI R4 0
+    CALL bmi_call
+
    ; MOV R1 FILE_DELETE
    ; LI R2 cr_file
    ; LI R3 13
@@ -210,6 +216,14 @@ cr_file:
     .asciiz "etc/crash.txt"
 
 cr_file_append_payload:
+    .WORD 0x0000000D    ; path length = 13
+    .WORD 0x2F637465    ; "etc/"
+    .WORD 0x73617263    ; "cras"
+    .WORD 0x78742E68    ; "h.tx"
+    .WORD 0x43424174    ; "tABC"
+    .WORD 0x0000000A    ; "\n"
+
+cr_file_append_payload1:
     .WORD 0x0000000D    ; path length = 13
     .WORD 0x2F637465    ; "etc/"
     .WORD 0x73617263    ; "cras"
@@ -5743,13 +5757,10 @@ tarfs_init:
     LI R11 tar_limit
     ADD R2 R1 R2
     STW R2 [R11]               ; exclusive end of archive
-
     LI R9 tar_index            ; current index entry
-
     LI R10 0                   ; file count
 
 tar_scan_loop:
-
     CMP R10 MAX_TAR_FILES
     BGE tar_done                ; check before writing the next index entry
 
@@ -5765,7 +5776,6 @@ tar_scan_loop:
     ; ------------------------------------
 
     LDB R11 [R8 + TAR_NAME_OFF]
-
     CMP R11 0                   ; if name[0] == 0, this is the end of the archive 
                                 ; (two consecutive zero 512-byte blocks)
     BEQ tar_done
@@ -5775,9 +5785,7 @@ tar_scan_loop:
     ; ------------------------------------
 
     MOV R11 R8
-
     ADD R11 R11 TAR_NAME_OFF
-
     STW R11 [R9 + TAR_IDX_NAME]
 
     ; ------------------------------------
@@ -5786,13 +5794,9 @@ tar_scan_loop:
 
     MOV R1 R8
     ADD R1 R1 TAR_SIZE_OFF
-
     ;R1 = ptr to TAR size field
-
     BL tar_parse_octal         ; parse octal size from tar header field to binary integer
-
     MOV R12 R1                 ; save file resulted binary size
-
     STW R12 [R9 + TAR_IDX_SIZE]
 
     ; ------------------------------------
@@ -5802,7 +5806,6 @@ tar_scan_loop:
     MOV R11 R8
     LI R2 TAR_HEADER_SIZE
     ADD R11 R11 R2
-
     STW R11 [R9 + TAR_IDX_DATA]
 
     ; ------------------------------------
@@ -5819,39 +5822,31 @@ tar_scan_loop:
     ; ------------------------------------
 
     ADD R10 R10 1               ; othewise go to next file count
-
     ADD R9 R9 TAR_IDX_SIZEOF
 
     ; ------------------------------------
     ; advance to next tar header
     ; ------------------------------------
-
     MOV R11 R12
-
     ; round up to 512 boundary
 
     LI R2 511
     ADD R11 R11 R2
-
     SHR R11 R11 9
     SHL R11 R11 9           ; R11 = size rounded up to next 512 multiple
 
     LI R2 TAR_HEADER_SIZE
     ADD R8 R8 R2
-
     ADD R8 R8 R11           ; advance to next tar header
-
     LI R12 tar_limit
     LDW R12 [R12]
     CMP R8 R12
     BGTU tar_done            ; file data/padding extends beyond archive
-
     B tar_scan_loop
 
 tar_done:
 
     LI R11 tar_count        ; store total file count for this tar archive in global variable
-
     STW R10 [R11]
 
     POP R12
@@ -5881,21 +5876,15 @@ tar_parse_octal:
     PUSH R2
     PUSH R3
     PUSH R4
-
     LI   R2 0                  ; result
-
 octal_loop:
-
     LDB  R3 [R1]
-
     ; end of field?
     ;
     ; ASCII NUL = 0
     ; ASCII SPACE = 32
-
     CMP  R3 0
     BEQ  octal_done
-
     LI   R4 32                 ; ' '
     CMP  R3 R4
     BEQ  octal_done
@@ -5910,15 +5899,10 @@ octal_loop:
     ; result = result * 8 + digit
 
     SHL  R2 R2 3               ; multiply by 8
-
     ADD  R2 R2 R3              ; add digit
-
     ADD  R1 R1 1               ; advance to next octal character
-
     B    octal_loop
-
 octal_done:
-
     MOV  R1 R2                 ; return binary result in R1
 
     POP  R4
@@ -5951,48 +5935,31 @@ tarfs_dump_index:
     PUSH R8
     PUSH R9
     PUSH R10
-
     LI R8 0
-
     LI R10 tar_count
     LDW R10 [R10]
 
     LI R1 tarfs_banner
     BL kputs
-
 dump_loop:
-
     CMP R8 R10
     BGE dump_done
-
     ; entry = tar_index + i*sizeof(entry)
-
     LI R1 tar_index
-
     LI R2 TAR_IDX_SIZEOF
     MUL R3 R8 R2
-
     ADD R9 R1 R3
-
     ; filename
-
     LDW R2 [R9 + TAR_IDX_NAME]
-
     ; print string somehow
-
     MOV R1 R2
     BL kputs
-
     ; newline
-
     LI R1 newline
     BL kputs
-
     ADD R8 R8 1
     B dump_loop
-
 dump_done:
-
     POP R10
     POP R9
     POP R8
@@ -6503,7 +6470,6 @@ tr_done:
 ;==============================================================
 
 kputs:
-
     PUSH LR
     PUSH R8
     MOV R8 R1
@@ -7321,9 +7287,7 @@ init_scheduler:
 
 
 init_scheduler_fail:
-
     DEBUG 99
-
 halt:
     B halt
 

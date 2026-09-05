@@ -272,19 +272,33 @@ nsfs_bmi_demo:
 0x0000108C       LI R4 0
 0x00001094   CALL bmi_call
 
+0x0000109C       MOV R1 FILE_APPEND
+0x000010A0       LI R2 cr_file_append_payload1
+0x000010A8       LI R3 21
+0x000010B0       LI R4 0
+0x000010B8   CALL bmi_call
+
    ; MOV R1 FILE_DELETE
    ; LI R2 cr_file
    ; LI R3 13
    ; LI R4 0
    ; CALL bmi_call
 
-0x0000109C       POP LR
-0x000010A0       RET
+0x000010C0       POP LR
+0x000010C4       RET
 
 cr_file:
     .asciiz "etc/crash.txt"
 
 cr_file_append_payload:
+    .WORD 0x0000000D    ; path length = 13
+    .WORD 0x2F637465    ; "etc/"
+    .WORD 0x73617263    ; "cras"
+    .WORD 0x78742E68    ; "h.tx"
+    .WORD 0x43424174    ; "tABC"
+    .WORD 0x0000000A    ; "\n"
+
+cr_file_append_payload1:
     .WORD 0x0000000D    ; path length = 13
     .WORD 0x2F637465    ; "etc/"
     .WORD 0x73617263    ; "cras"
@@ -6024,13 +6038,10 @@ tarfs_init:
 0x00009089       LI R11 tar_limit
 0x00009091       ADD R2 R1 R2
 0x00009095       STW R2 [R11]               ; exclusive end of archive
-
 0x00009099       LI R9 tar_index            ; current index entry
-
 0x000090A1       LI R10 0                   ; file count
 
 tar_scan_loop:
-
 0x000090A9       CMP R10 MAX_TAR_FILES
 0x000090AD       BGE tar_done                ; check before writing the next index entry
 
@@ -6046,7 +6057,6 @@ tar_scan_loop:
     ; ------------------------------------
 
 0x000090D9       LDB R11 [R8 + TAR_NAME_OFF]
-
 0x000090DD       CMP R11 0                   ; if name[0] == 0, this is the end of the archive
                                 ; (two consecutive zero 512-byte blocks)
 0x000090E1       BEQ tar_done
@@ -6056,9 +6066,7 @@ tar_scan_loop:
     ; ------------------------------------
 
 0x000090E9       MOV R11 R8
-
 0x000090ED       ADD R11 R11 TAR_NAME_OFF
-
 0x000090F1       STW R11 [R9 + TAR_IDX_NAME]
 
     ; ------------------------------------
@@ -6067,13 +6075,9 @@ tar_scan_loop:
 
 0x000090F5       MOV R1 R8
 0x000090F9       ADD R1 R1 TAR_SIZE_OFF
-
     ;R1 = ptr to TAR size field
-
 0x000090FD       BL tar_parse_octal         ; parse octal size from tar header field to binary integer
-
 0x00009105       MOV R12 R1                 ; save file resulted binary size
-
 0x00009109       STW R12 [R9 + TAR_IDX_SIZE]
 
     ; ------------------------------------
@@ -6083,7 +6087,6 @@ tar_scan_loop:
 0x0000910D       MOV R11 R8
 0x00009111       LI R2 TAR_HEADER_SIZE
 0x00009119       ADD R11 R11 R2
-
 0x0000911D       STW R11 [R9 + TAR_IDX_DATA]
 
     ; ------------------------------------
@@ -6100,39 +6103,31 @@ tar_scan_loop:
     ; ------------------------------------
 
 0x00009135       ADD R10 R10 1               ; othewise go to next file count
-
 0x00009139       ADD R9 R9 TAR_IDX_SIZEOF
 
     ; ------------------------------------
     ; advance to next tar header
     ; ------------------------------------
-
 0x0000913D       MOV R11 R12
-
     ; round up to 512 boundary
 
 0x00009141       LI R2 511
 0x00009149       ADD R11 R11 R2
-
 0x0000914D       SHR R11 R11 9
 0x00009151       SHL R11 R11 9           ; R11 = size rounded up to next 512 multiple
 
 0x00009155       LI R2 TAR_HEADER_SIZE
 0x0000915D       ADD R8 R8 R2
-
 0x00009161       ADD R8 R8 R11           ; advance to next tar header
-
 0x00009165       LI R12 tar_limit
 0x0000916D       LDW R12 [R12]
 0x00009171       CMP R8 R12
 0x00009175       BGTU tar_done            ; file data/padding extends beyond archive
-
 0x0000917D       B tar_scan_loop
 
 tar_done:
 
 0x00009185       LI R11 tar_count        ; store total file count for this tar archive in global variable
-
 0x0000918D       STW R10 [R11]
 
 0x00009191       POP R12
@@ -6162,21 +6157,15 @@ tar_parse_octal:
 0x000091AD       PUSH R2
 0x000091B1       PUSH R3
 0x000091B5       PUSH R4
-
 0x000091B9       LI   R2 0                  ; result
-
 octal_loop:
-
 0x000091C1       LDB  R3 [R1]
-
     ; end of field?
     ;
     ; ASCII NUL = 0
     ; ASCII SPACE = 32
-
 0x000091C5       CMP  R3 0
 0x000091C9       BEQ  octal_done
-
 0x000091D1       LI   R4 32                 ; ' '
 0x000091D9       CMP  R3 R4
 0x000091DD       BEQ  octal_done
@@ -6191,15 +6180,10 @@ octal_loop:
     ; result = result * 8 + digit
 
 0x000091F1       SHL  R2 R2 3               ; multiply by 8
-
 0x000091F5       ADD  R2 R2 R3              ; add digit
-
 0x000091F9       ADD  R1 R1 1               ; advance to next octal character
-
 0x000091FD       B    octal_loop
-
 octal_done:
-
 0x00009205       MOV  R1 R2                 ; return binary result in R1
 
 0x00009209       POP  R4
@@ -6232,48 +6216,31 @@ tarfs_dump_index:
 0x00009234       PUSH R8
 0x00009238       PUSH R9
 0x0000923C       PUSH R10
-
 0x00009240       LI R8 0
-
 0x00009248       LI R10 tar_count
 0x00009250       LDW R10 [R10]
 
 0x00009254       LI R1 tarfs_banner
 0x0000925C       BL kputs
-
 dump_loop:
-
 0x00009264       CMP R8 R10
 0x00009268       BGE dump_done
-
     ; entry = tar_index + i*sizeof(entry)
-
 0x00009270       LI R1 tar_index
-
 0x00009278       LI R2 TAR_IDX_SIZEOF
 0x00009280       MUL R3 R8 R2
-
 0x00009284       ADD R9 R1 R3
-
     ; filename
-
 0x00009288       LDW R2 [R9 + TAR_IDX_NAME]
-
     ; print string somehow
-
 0x0000928C       MOV R1 R2
 0x00009290       BL kputs
-
     ; newline
-
 0x00009298       LI R1 newline
 0x000092A0       BL kputs
-
 0x000092A8       ADD R8 R8 1
 0x000092AC       B dump_loop
-
 dump_done:
-
 0x000092B4       POP R10
 0x000092B8       POP R9
 0x000092BC       POP R8
@@ -6798,7 +6765,6 @@ tr_done:
 ;==============================================================
 
 kputs:
-
 0x00009960       PUSH LR
 0x00009964       PUSH R8
 0x00009968       MOV R8 R1
@@ -7655,9 +7621,7 @@ init_scheduler:
 
 
 init_scheduler_fail:
-
 0x0000A6E0       DEBUG 99
-
 halt:
 0x0000A6E4       B halt
 
