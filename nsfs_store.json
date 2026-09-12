@@ -1,0 +1,106 @@
+{
+  "kv": {
+    "ns:0:checkpoint": {
+      "root": {
+        "children": {},
+        "type": "dir"
+      }
+    },
+    "ns:0:chunk:62": {
+      "data": "QUJDCg==",
+      "size": 4
+    },
+    "ns:0:chunk:63": {
+      "data": "QUJDCkFCQwo=",
+      "size": 8
+    },
+    "ns:0:filever:/etc/crash.txt:1": {
+      "chunks": [],
+      "created_txid": 128,
+      "deleted": false,
+      "modified_txid": 128,
+      "previous": null,
+      "size": 0,
+      "tail": null,
+      "type": "file",
+      "version": 1
+    },
+    "ns:0:filever:/etc/crash.txt:2": {
+      "chunks": [
+        62
+      ],
+      "created_txid": 128,
+      "deleted": false,
+      "modified_txid": 129,
+      "previous": "ns:0:filever:/etc/crash.txt:1",
+      "size": 4,
+      "tail": 62,
+      "type": "file",
+      "version": 2
+    },
+    "ns:0:log:127": {
+      "op": "ns_create",
+      "time": 1789251329.868474
+    },
+    "ns:0:log:128": {
+      "op": "file_create",
+      "path": "/etc/crash.txt",
+      "time": 1789251329.8727
+    },
+    "ns:0:log:129": {
+      "bytes": 4,
+      "new_version": 2,
+      "old_version": 1,
+      "op": "file_append",
+      "path": "/etc/crash.txt",
+      "time": 1789251329.879354
+    },
+    "ns:0:log:130": {
+      "bytes": 4,
+      "new_version": 3,
+      "old_version": 2,
+      "op": "file_append",
+      "path": "/etc/crash.txt",
+      "time": 1789251329.885258
+    },
+    "ns:0:log:131": {
+      "op": "file_create",
+      "path": "/etc/mmm.txt",
+      "time": 1789251379.950469
+    },
+    "ns:0:meta": {
+      "admissions": [],
+      "checkpoint": null,
+      "created_txid": 127,
+      "env": {},
+      "version": 1
+    },
+    "ns:0:path:/etc/crash.txt": {
+      "chunks": [
+        63
+      ],
+      "created_txid": 128,
+      "deleted": false,
+      "modified_txid": 130,
+      "previous": "ns:0:filever:/etc/crash.txt:2",
+      "size": 8,
+      "tail": 63,
+      "type": "file",
+      "version": 3
+    },
+    "ns:0:path:/etc/mmm.txt": {
+      "chunks": [],
+      "created_txid": 131,
+      "deleted": false,
+      "modified_txid": 131,
+      "previous": null,
+      "size": 0,
+      "tail": null,
+      "type": "file",
+      "version": 1
+    }
+  },
+  "next_chunk_id": 64,
+  "next_txid": 132,
+  "version": 1
+}
