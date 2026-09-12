@@ -2291,6 +2291,11 @@ copy_user_fail:
 
 devfs_lookup:
     PUSH LR
+    PUSH R7
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
     MOV R8 R1                  ; save pathname ptr
 
     LI R7 device_table
@@ -2298,7 +2303,7 @@ devfs_lookup:
 
 devfs_loop:
     CMP R9 0
-    BEQ lookup_fail
+    BEQ devfs_lookup_fail
 
     ; compare pathname with device name
     MOV R1 R8
@@ -2315,7 +2320,7 @@ devfs_found:
     ; 1 allocate inode
     BL inode_alloc
     CMP R1 0
-    BEQ devfs_fail
+    BEQ devfs_lookup_fail
 
     MOV R10 R1         ; inode
     ; 2 init inode
@@ -2326,11 +2331,19 @@ devfs_found:
     BL inode_init
 
     MOV R1 R10         ; 3 return new inited inode ptr for this dev
+    POP R10
+    POP R9
+    POP R8
+    POP R7
     POP LR
     RET
 
-devfs_fail:
+devfs_lookup_fail:
     LI R1 0
+    POP R10
+    POP R9
+    POP R8
+    POP R7
     POP LR
     RET
 
@@ -2968,13 +2981,69 @@ nsfs_readdir_fault_after_pop:
     POP R8
     POP LR
     RET
-
-; nsfs_create
-; in:  R1 = pathname, R2 = mode/type flags
-; out: R1 = 0 or errno
+;=====================================================================
+; nsfs_create - create a new file in the NSFS overlay
+; in:  R1 = pathname, R2 = mode/type flags, R3 namespace (in future, for now we use default namespace only)
+; out: R1 = inode ptr if created, or errno 
+;=====================================================================
 nsfs_create:
+    PUSH LR
+    PUSH R6
+    LI   R3 NSFS_DEFAULT_NS         ; Defaut NS
+    MOV  R6 R3                      ; namespace
     ; TODO: FILE_CREATE over BMI, then nsfs_lookup can materialize inode.
+    MOV R2 R1                        ; R2 = pathname
+    BL  get_path_len                 ; get length of the pathname string
+    mov R3 R1                        ; R3 = length of the pathname string
+    ; create a new nsfs_node and add it to the index table, then call nsfs_lookup to get the inode
+    MOV R1 FILE_CREATE              ;opcode FILE_CREATE
+    MOV R4 R6                        ; at this time we work with default namespace only
+    CALL bmi_call                   ;bmi_call adds the new file to the host JSON KV store, so after nsfs_refresh_index, nsfs_lookup will find it    
+    ;check bmi_call return status
+    CMP R1 0
+    ; refresh the index table
+    MOV R1 R6                        ; at this time we work with default namespace only
+    BL nsfs_refresh_index
+    CMP R1 0
+    BNE nsfs_create_fail
+    ;file created, now lookup the new file in the index table to get its inode
+    MOV R1 R2
+    ; find file and create inode for the newly created file
+    BL nsfs_lookup
+    cmp R1 0
+    BEQ nsfs_create_fail    
+    ;inode found, return inode ptr in R1
+    POP R6    
+    POP LR
+    RET
+
+nsfs_create_fail:
     LI R1 ERR_NOENT
+    POP R6
+    POP LR      
+    RET 
+
+;=====================================================================
+; get_path_len - get length of a NUL-terminated string
+; in:  R1 = pointer to string
+; out: R1 = length of string (not including NUL)
+;=====================================================================
+get_path_len:
+    PUSH LR
+    PUSH R2
+    PUSH R3
+    LI R2 0
+get_path_len_loop:
+    LDB R3 [R1 + R2]
+    CMP R3 0
+    BEQ get_path_len_done
+    ADD R2 R2 1
+    B get_path_len_loop
+get_path_len_done:  
+    MOV R1 R2
+    POP R3
+    POP R2
+    POP LR
     RET
 
 ; nsfs_unlink
@@ -5655,7 +5724,7 @@ tarfs_lookup:
     LI R3 47               ; accept normal absolute paths: "/etc/motd"
     CMP R2 R3
     BNE lookup_path_ready
-    ADD R8 R8 1
+   ; ADD R8 R8 1           ; correction we dont skip leading / all paths for tarfs start from /...
 
 lookup_path_ready:
 
@@ -6930,6 +6999,7 @@ file_put_done:
 ; vfs_lookup  - "wrapper fs selector"
 ;
 ; R1 = pathname
+; R2 = flags O_CREATE | O_EXCL | O_TRUNC | O_APPEND
 ;
 ; returns:
 ;   R1 = inode
@@ -6939,18 +7009,38 @@ file_put_done:
 vfs_lookup:
     PUSH LR
     MOV R8 R1          ; pathname
+    MOV R9 R2          ; flags
 
+    MOV R1 R8           ;check pathname is ok /path/name
+    BL validate_pathname
+    CMP R1 0
+    BNE vfs_not_found
+
+    MOV R1 R8  
     BL devfs_lookup    ; 1 check among /dev/.. "files"
     CMP R1 0
     BNE vfs_done
-
-    MOV R1 R8
+    MOV R1 R8 
+    MOV R2 R9 
+    ; this is a valid pathname, check flags if need to create file or not
+    cmp R2 O_CREATE
+    BNE check_open
+    ; create file
+    BL nsfs_create     ; 2 writable overlay above tarfs it should create inode for the file and return result in R1 
+    CMP R1 0
+    BNE vfs_done
+    ;error creating file, return 0
+    LI R1 0
+    B vfs_not_found
+check_open:
+    MOV R1 R8 
+    MOV R2 R9
     BL nsfs_lookup     ; 2 writable overlay above tarfs
     CMP R1 0
     BNE vfs_done
 
-    MOV R1 R8
-
+    MOV R1 R8 
+    MOV R2 R9
     BL tarfs_lookup     ; 3 check in rootfs-tarfs /... (both funcs in R1-pathname)
     CMP R1 0
     BEQ vfs_not_found   
@@ -6962,6 +7052,123 @@ vfs_done:
 vfs_not_found:
     LI R1 0         ;it can be just ret but i added it for result clarity
     POP LR          ;or R1 - Nul
+    RET
+
+;=================================================================
+; validate_pathname
+;
+; Validate an absolute KR32 pathname.
+;
+; IN:
+;   R1 = pathname pointer
+;
+; OUT:
+;   R1 = 0            valid
+;   R1 = ERR_INVAL    invalid pathname
+;   R1 = ERR_NAMETOOLONG
+;
+; Rules:
+;   - must not be empty
+;   - must start with '/'
+;   - no '//'
+;   - no '/./'
+;   - no '/../'
+;   - no trailing '/.' or '/..'
+;   - no control characters
+;   - maximum length EXEC_MAX_PATH-1
+;
+;=================================================================
+
+validate_pathname:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+
+    MOV R8 R1              ; R8 = pathname
+    LI  R9 0               ; R9 = index
+    LI  R10 EXEC_MAX_PATH  ; maximum including NUL
+
+    ;-------------------------------------------------------------
+    ; pathname[0] must exist
+    ;-------------------------------------------------------------
+
+    LDB R11 [R8]
+    CMP R11 0
+    BEQ validate_invalid
+
+    ;-------------------------------------------------------------
+    ; pathname must start with '/'
+    ;-------------------------------------------------------------
+
+    LI R11 47              ; '/'
+    LDB R1 [R8]
+    CMP R1 R11              
+    BNE validate_invalid
+
+    ADD R9 R9 1
+
+validate_loop:
+
+    ;-------------------------------------------------------------
+    ; length check
+    ;-------------------------------------------------------------
+
+    CMP R9 R10
+    BGE validate_toolong
+
+    LDB R11 [R8 + R9]
+
+    ; end of string
+    CMP R11 0
+    BEQ validate_success
+    ;-------------------------------------------------------------
+    ; reject control characters
+    ;
+    ; ASCII < 0x20
+    ;-------------------------------------------------------------
+    LI R1 0x20
+    CMP R11 R1
+    BLT validate_invalid
+    ;-------------------------------------------------------------
+    ; reject "//"
+    ;-------------------------------------------------------------
+    LI R1 47
+    CMP R11 R1
+    BNE validate_next
+
+    ; current char is '/'
+    ; check previous char
+
+    LI R1 1
+    CMP R9 R1
+    BEQ validate_next       ; first '/' is allowed
+
+    SUB R1 R9 1
+    LDB R1 [R8 + R1]
+
+    LI R2 47
+    CMP R1 R2
+    BEQ validate_invalid
+validate_next:
+    ADD R9 R9 1
+    B validate_loop
+
+validate_success:
+    LI R1 0
+    B validate_done
+validate_invalid:
+    LI R1 ERR_INVAL
+    B validate_done
+validate_toolong:
+    LI R1 ERR_NAMETOOLONG
+validate_done:
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
     RET
 
 ;=================================================================
@@ -9278,6 +9485,21 @@ bmi_call_error:
 .EQU NSFS_INDEX,  0x30
 .EQU BMI_READ_FILE, 0x31
 
+;===================================================
+; FLAGS for files ops in nsfs
+; O_CREATE | O_EXCL | O_TRUNC | O_APPEND
+;===================================================
+.EQU O_CREATE,    0x01
+.EQU O_EXCL,      0x02
+.EQU O_TRUNC,     0x03
+.EQU O_APPEND,    0x04
+;===================================================
+;CONSTS for namepath validation used when FILE_CREATE
+;===================================================
+.EQU PATH_MAX, 256
+.EQU NAME_MAX, 64
+
+
 
 ; ==================================================
 ; BMI buffers for NSFS should be alligned to 4K page boundaries and be at least 4K in size
@@ -9806,7 +10028,7 @@ wait_error_msg:
 ; Path and argument vector for /bin/sh
 ; Assumes root filesystem has /bin/sh
 sh_path:
-    .ASCIIZ "bin/sh"
+    .ASCIIZ "/bin/sh"
 ; argv[0] is the program name
 sh_arg0:
     .ASCIIZ "sh"

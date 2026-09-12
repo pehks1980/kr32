@@ -50,6 +50,14 @@
 .EQU DIRENT_SIZEOF, 76
 
 .EQU O_RDONLY,      0
+;===================================================
+; FLAGS for files ops in nsfs
+; O_CREATE | O_EXCL | O_TRUNC | O_APPEND
+;===================================================
+.EQU O_CREATE,    0x01
+.EQU O_EXCL,      0x02
+.EQU O_TRUNC,     0x03
+.EQU O_APPEND,    0x04
 
 
 ;==============================================================================

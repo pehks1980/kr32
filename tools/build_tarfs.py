@@ -54,7 +54,7 @@ def normalize_path(path: Path):
     rel = path.resolve().relative_to(TARFS_ROOT.resolve()).as_posix()
     if rel.endswith(".asm"):
         rel = rel[:-4]
-    return rel.lstrip("/")
+    return rel #rel.lstrip("/")
 
 
 def listing_path_for_source(path: Path):
@@ -82,6 +82,7 @@ def read_source_bytes(path: Path):
     return path.read_bytes()
 
 def emit_dir(path: str):
+    path = f"/{path}"
     name = path.rstrip("/") + "/"
 
     name_bytes = name.encode("ascii")
@@ -90,8 +91,8 @@ def emit_dir(path: str):
 
     return [
         f"; {name}",
-        f'    .ASCIIZ "{name}"',
-        f"    .SPACE {124 - len(name_bytes) - 1}",
+        f'    .ASCIIZ "{name}"',                   #!added / so all tarfs dirs are connected to /
+        f"    .SPACE {124 - len(name_bytes)-1}",  #!removed -1
         '    .ASCIIZ "00000000000"',   # size = 0
         "    .SPACE 20",
         '    .ASCIIZ "5"',             # TAR directory
@@ -101,14 +102,15 @@ def emit_dir(path: str):
 
 
 def emit_entry(path: str, data: bytes):
+    path = f"/{path}"
     name_bytes = path.encode("ascii")
     if len(name_bytes) >= 124:
         raise ValueError(f"tar path too long: {path}")
 
     lines = []
     lines.append(f"; {path}, {len(data)} bytes")
-    lines.append(f'    .ASCIIZ "{path}"')
-    lines.append(f"    .SPACE {124 - len(name_bytes) - 1}")
+    lines.append(f'    .ASCIIZ "{path}"')                      #!added / so all tarfs bins are connected to /
+    lines.append(f"    .SPACE {124 - len(name_bytes)-1}")       #!removed -1
     lines.append(f'    .ASCIIZ "{octal_size(len(data))}"')
     lines.append("    .SPACE 20")
     lines.append('    .ASCIIZ "0"')
