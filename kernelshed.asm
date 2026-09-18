@@ -21,6 +21,8 @@
 .org 0x0000
 B KERNEL_START
 
+; KERNEL NAME LEVEL - "BitFrosty" (Norse small rainbow bridge - introducing BMI) 
+
 .EQU PTE_R,       0x0001    ;RD perm
 .EQU PTE_W,       0x0002    ;WR perm
 .EQU PTE_X,       0x0004    ;EXEC perm
@@ -704,6 +706,10 @@ syscall_table:
     .WORD syscall_fork          ; SVC 14
     .WORD syscall_sleep         ; SVC 15
     .WORD syscall_waitpid       ; SVC 16
+    .WORD syscall_mkdir         ; SVC 17
+    .WORD syscall_rmdir         ; SVC 18
+    
+    
 
 syscall_execve1:
     ;================================================================
@@ -1961,6 +1967,161 @@ waitpid_badptr:
     STW R1 [SP + TF_R1]
     B trap_restore
 
+;============================================
+; syscall_mkdir - create dir in a namespace
+; in : R1 = path, R2 = namespace
+; out : R1 = 0 succes, or error
+;============================================
+
+syscall_mkdir:
+    ; R1 = user pathname
+    LDW R8 [SP + TF_R1]
+    LDW R9 [SP + TF_R2]
+    MOV R1  R8
+    BL copy_path_from_user     ; macro inside destroys R11, copy pathname 
+                               ; to tasks Kbuf_RD buffer
+                               ; R1 - pathname str ptr in the bufer
+    CMP R1 0
+    BEQ mkdir_fail_fault
+
+    ; copy_path_from_user returned the current task's kernel read buffer.
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_RD R1, R5
+    MOV R2 R9                  ;NS
+    
+    BL vfs_mkdir
+
+    ; R1 = 0 on success
+    ; R1 < 0 on error
+    
+    B trap_restore
+
+    STW R1 [SP + TF_R1]     ;mkdir created exit!
+    B trap_restore
+
+mkdir_fail_fault:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]     ;mkdir not created ERR todo
+    B trap_restore
+
+;============================================
+; syscall_rmdir - rm dir in a namespace
+; in : R1 = path, R2 = namespace
+; out : R1 = 0 succes, or error
+;
+;============================================
+
+syscall_rmdir:
+    ; R1 = user pathname
+
+    ; validate/copy pathname from user space
+    ; ...
+    
+    BL vfs_rmdir
+
+    ; R1 = 0 on success
+    ; R1 < 0 on error
+    
+    B trap_restore
+
+;===============================================================
+; vfs_mkdir
+;
+; R1 = pathname R2 = namespace
+;
+; Returns:
+;   R1 = 0       success
+;   R1 < 0       error
+;===============================================================
+
+vfs_mkdir:
+    PUSH LR
+    PUSH R8
+
+    MOV R8 R1       ;pathname
+    MOV R9 R2       ;namespace
+
+    ; validate pathname
+    MOV R1 R8
+    BL validate_pathname
+    CMP R1 0
+    BNE mkdir_invalid
+
+    ; First check whether directory already exists
+    MOV R1 R8
+    BL nsfs_lookup
+    CMP R1 0
+    BNE mkdir_exists
+
+    ; Ask writable filesystem to create directory
+    MOV R1 R8
+    MOV R2 R9
+    BL nsfs_mkdir
+
+    ; R1 = 0 or error
+    B mkdir_exit
+
+mkdir_exists:
+    LI R1 ERR_EXIST
+    B mkdir_exit
+
+mkdir_invalid:
+    LI R1 ERR_INVAL
+
+mkdir_exit:
+    POP R8
+    POP LR
+    RET
+
+;===============================================================
+; vfs_rmdir
+;
+; R1 = pathname R2 = namespace
+;
+; Returns:
+;   R1 = 0       success
+;   R1 < 0       error
+;===============================================================
+
+vfs_rmdir:
+    PUSH LR
+    PUSH R8
+
+    MOV R8 R1       ;pathname
+    MOV R9 R2       ;namespace
+
+    ; validate pathname
+    MOV R1 R8
+    BL validate_pathname
+    CMP R1 0
+    BNE rmdir_invalid
+
+    ; First check whether directory already exists
+    MOV R1 R8
+    BL nsfs_lookup
+    CMP R1 0
+    BNE rmdir_exists
+
+    ; Ask writable filesystem to create directory
+    MOV R1 R8
+    MOV R2 R9
+    BL nsfs_rmdir
+
+    ; R1 = 0 or error
+    B rmdir_exit
+
+rmdir_exists:
+    LI R1 ERR_EXIST
+    B rmdir_exit
+
+rmdir_invalid:
+    LI R1 ERR_INVAL
+
+rmdir_exit:
+    POP R8
+    POP LR
+    RET
 
 ;================================================================
 ; task_find - find a task by PID or PPID
@@ -2060,9 +2221,9 @@ syscall_open:
     ; out: R1 = fd / err -1
     ;================================================================
 
-    LDW R1 [SP + TF_R1]
-    LDW R2 [SP + TF_R2]
-
+    LDW R8 [SP + TF_R1]
+    LDW R9 [SP + TF_R2]
+    MOV R1  R8
     BL copy_path_from_user     ; macro inside destroys R11, copy pathname 
                                ; to tasks Kbuf_RD buffer
                                ; R1 - pathname str ptr in the bufer
@@ -2073,7 +2234,7 @@ syscall_open:
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     TASK_GET_KBUF_RD R1, R5
-
+    MOV R2 R9                  ;flags
     BL vfs_open
 
     STW R1 [SP + TF_R1]     ;file opened if fd on exit!
@@ -2149,6 +2310,11 @@ sleep_invalid:
 ;====================================================================
 copy_path_from_user:
     PUSH LR
+    PUSH R5
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
 
     MOV R8 R1                  ; current user source byte
 
@@ -2189,11 +2355,23 @@ copy_path_loop:
 
 copy_path_done:
     POP R1                     ; original kernel path pointer
+    
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R5
     POP LR
     RET
 
 copy_path_fail:
     POP R1                     ; discard original kernel path pointer
+    
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R5
     LI R1 0
     POP LR
     RET
@@ -2538,6 +2716,7 @@ nsfs_refresh_done:
 
 nsfs_lookup:
     PUSH LR
+    PUSH R7
     PUSH R8
     PUSH R9
     PUSH R10
@@ -2582,9 +2761,10 @@ nsfs_lookup_type_dir:
     LI R12 INODE_DIR
 nsfs_lookup_type_done:
     STW R12 [R11 + NSFS_NODE_TYPE]  ;node type DIR or REG
-    LDW R5 [R9 + NSFS_INDEX_SIZE]
-    STW R5 [R11 + NSFS_NODE_SIZE]
-    LDW R1 [R9 + NSFS_INDEX_PATH_LEN]
+    LDW R7  [R9 + NSFS_INDEX_SIZE]
+    STW R7  [R11 + NSFS_NODE_SIZE]
+    ;LDW R1 [R9 + NSFS_INDEX_PATH_LEN]
+    LI  R1 O_RDWR ;when created we set here rd/wr should be copied from open flags normally
     STW R1 [R11 + NSFS_NODE_FLAGS]
 
     BL inode_alloc
@@ -2592,10 +2772,10 @@ nsfs_lookup_type_done:
     BEQ nsfs_lookup_free_node
 
     MOV R10 R1                      ; inode
-    LI R2 nsfs_ops
+    LI  R2 nsfs_ops                 ; nsfs ops table
     MOV R3 R11                      ; nsfs node as inode_private data
     MOV R4 R12                      ; inode type (DIR or REG)
-    ; R5 already holds file size.
+    MOV R5 R7                       ; file size.
     BL inode_init
     MOV R1 R10
     B nsfs_lookup_done
@@ -2613,6 +2793,7 @@ nsfs_lookup_done:
     POP R10
     POP R9
     POP R8
+    POP R7
     POP LR
     RET
 ;=====================================================================
@@ -2989,36 +3170,49 @@ nsfs_readdir_fault_after_pop:
 nsfs_create:
     PUSH LR
     PUSH R6
-    LI   R3 NSFS_DEFAULT_NS         ; Defaut NS
-    MOV  R6 R3                      ; namespace
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    MOV  R8  R1
+    MOV  R9  R2
+    MOV  R10 R3
+    LI   R10 NSFS_DEFAULT_NS         ; Defaut NS for now
+  ;  MOV  R6  R10                      ; namespace
     ; TODO: FILE_CREATE over BMI, then nsfs_lookup can materialize inode.
-    MOV R2 R1                        ; R2 = pathname
-    BL  get_path_len                 ; get length of the pathname string
-    mov R3 R1                        ; R3 = length of the pathname string
+    MOV  R2  R8                       ; R2 = pathname
+    BL   get_path_len                 ; get length of the pathname string
+    mov  R3 R1                        ; R3 = length of the pathname string
     ; create a new nsfs_node and add it to the index table, then call nsfs_lookup to get the inode
-    MOV R1 FILE_CREATE              ;opcode FILE_CREATE
-    MOV R4 R6                        ; at this time we work with default namespace only
+    MOV  R1 FILE_CREATE              ;opcode FILE_CREATE
+    MOV  R4 R10                        ; at this time we work with default namespace only
     CALL bmi_call                   ;bmi_call adds the new file to the host JSON KV store, so after nsfs_refresh_index, nsfs_lookup will find it    
     ;check bmi_call return status
-    CMP R1 0
+    CMP  R1 0
+    BNE  nsfs_create_fail
     ; refresh the index table
-    MOV R1 R6                        ; at this time we work with default namespace only
+    MOV R1 R10                        ; at this time we work with default namespace only
     BL nsfs_refresh_index
     CMP R1 0
     BNE nsfs_create_fail
     ;file created, now lookup the new file in the index table to get its inode
-    MOV R1 R2
+    MOV R1 R8
     ; find file and create inode for the newly created file
     BL nsfs_lookup
     cmp R1 0
     BEQ nsfs_create_fail    
     ;inode found, return inode ptr in R1
+    POP R10
+    POP R9
+    POP R8
     POP R6    
     POP LR
     RET
 
 nsfs_create_fail:
     LI R1 ERR_NOENT
+    POP R10
+    POP R9
+    POP R8
     POP R6
     POP LR      
     RET 
@@ -3054,16 +3248,69 @@ nsfs_unlink:
     LI R1 ERR_NOENT
     RET
 
-; nsfs_mkdir
-; in:  R1 = pathname, R2 = mode
-; out: R1 = 0 or errno
+;=====================================================================
+; nsfs_mkdir - create a new directory in the NSFS overlay
+;
+; in:  R1 = pathname
+;      R2 = namespace
+;
+; out: R1 = inode ptr if created, or errno
+;=====================================================================
+
 nsfs_mkdir:
-    ; TODO: DIR_CREATE over BMI.
+    PUSH LR
+    PUSH R6
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
+    MOV R8 R1                  ; pathname
+    MOV R10 R2                 ; namespace
+
+    LI  R10 NSFS_DEFAULT_NS    ; default namespace for now
+
+    MOV R2 R8
+    BL  get_path_len
+    MOV R3 R1
+
+    LI  R1 DIR_CREATE
+    MOV R4 R10
+
+    CALL bmi_call
+
+    CMP R1 0
+    BNE nsfs_mkdir_fail
+
+    MOV R1 R10
+    BL  nsfs_refresh_index
+
+    CMP R1 0
+    BNE nsfs_mkdir_fail
+
+    MOV R1 R8
+    BL  nsfs_lookup
+
+    CMP R1 0
+    BEQ nsfs_mkdir_fail
+
+    POP R10
+    POP R9
+    POP R8
+    POP R6
+    POP LR
+    RET
+
+nsfs_mkdir_fail:
     LI R1 ERR_NOENT
+    POP R10
+    POP R9
+    POP R8
+    POP R6
+    POP LR
     RET
 
 ; nsfs_rmdir
-; in:  R1 = pathname
+; in:  R1 = pathname R2 = NS
 ; out: R1 = 0 or errno
 nsfs_rmdir:
     ; TODO: DIR_DELETE over BMI.
@@ -4695,7 +4942,7 @@ null_write_badptr:
 
 fetch_fd_entry:
     ;================================================================
-    ; R1 = fd, R2 = required flags
+    ; R1 = fd, R2 = func check mode for read or write access
     ; Returns device object pointer in R1 if valid, or 0 if invalid.
     ; Validity checks:
     ; - fd must be in range [0, MAX_FDS)
@@ -4720,10 +4967,23 @@ fetch_fd_entry:
     ADD R4 R4 R5                ; r4=fd*4+FD_TABLE
     LDW R1 [R4]                 ; R1 = file ptr
     LDW R6 [R1 + FILE_FLAGS]
-    AND R6 R6 R2
-    CMP R6 R2
-    BNE fd_invalid
+    AND R6 R6 O_ACCMODE
+    ;check func mode for Read/Write access
+    CMP R2 FD_FLAG_READ
+    BEQ fd_readaccess
+    CMP R2 FD_FLAG_WRITE
+    BEQ fd_writeaccess
 
+    B fd_invalid
+fd_writeaccess:
+    CMP R6 O_RDONLY
+    BEQ fd_invalid
+    B  fd_all_good
+fd_readaccess:
+    CMP R6 O_WRONLY
+    BEQ fd_invalid
+
+fd_all_good:
     POP R8
     POP R6
     POP R5
@@ -4749,8 +5009,8 @@ vfs_read:
     MOV R7 R2
     MOV R10 R3
 
-    LI R2 FD_FLAG_READ
-    BL fetch_fd_entry   ; macro inside destroys R6
+    LI R2 FD_FLAG_READ  ; func to validate FD reader access
+    BL fetch_fd_entry   ; validate FD and access mode
 
     CMP R1 0
     BEQ vfs_read_badfd
@@ -4778,8 +5038,8 @@ vfs_write:
     MOV R7 R2
     MOV R10 R3
 
-    LI R2 FD_FLAG_WRITE
-    BL fetch_fd_entry   ;macro inside desroys R6 (fixed)
+    LI R2 FD_FLAG_WRITE ;func to validate FD writer access
+    BL fetch_fd_entry   ;validate FD and access mode
 
     CMP R1 0
     BEQ vfs_write_badfd
@@ -5228,7 +5488,9 @@ trap_restore:
 .EQU SYS_FORK,     14      ; NEW: clone the current task
 .EQU SYS_SLEEP,     15      ; sleep for specified milliseconds
 .EQU SYS_WAITPID,   16      ; wait for child process to change state
-.EQU SYS_COUNT,     17      ; update count
+.EQU SYS_MKDIR,     17      ; mkdir in overlay fsys
+.EQU SYS_RMDIR,     18      ; rmdir in overlay fsys
+.EQU SYS_COUNT,     19      ; update count
 
 
 ;=============================================================
@@ -5341,17 +5603,17 @@ file_used:
 file_stdin:
     .WORD console_inode      ; FILE_INODE
     .WORD 0                  ; FILE_OFFSET
-    .WORD FD_FLAG_READ       ; FILE_FLAGS
+    .WORD O_RDONLY           ; FILE_FLAGS
 
 file_stdout:
     .WORD console_inode      ; FILE_INODE
     .WORD 0                  ; FILE_OFFSET
-    .WORD FD_FLAG_WRITE      ; FILE_FLAGS
+    .WORD O_WRONLY           ; FILE_FLAGS
 
 file_stderr:
     .WORD console_inode      ; FILE_INODE
     .WORD 0                  ; FILE_OFFSET
-    .WORD FD_FLAG_WRITE      ; FILE_FLAGS
+    .WORD O_WRONLY           ; FILE_FLAGS
 
 console_inode:
     .WORD devfs_ops          ; INODE_OPS
@@ -7008,48 +7270,88 @@ file_put_done:
 
 vfs_lookup:
     PUSH LR
+    PUSH R8
+    PUSH R9
+
     MOV R8 R1          ; pathname
     MOV R9 R2          ; flags
+
+    MOV R3 R2         ; get flags copy
+
+    ;-------------------------------------------------------------
+    ; Validate access mode
+    ;-------------------------------------------------------------
+    AND R3 R3 O_ACCMODE
+
+    CMP R3 O_RDONLY
+    BEQ vfs_access_ok
+
+    CMP R3 O_WRONLY
+    BEQ vfs_access_ok
+
+    CMP R3 O_RDWR
+    BEQ vfs_access_ok
+    B vfs_fail_access
+
+vfs_access_ok:
 
     MOV R1 R8           ;check pathname is ok /path/name
     BL validate_pathname
     CMP R1 0
-    BNE vfs_not_found
+    BNE vfs_bad_pathname
 
     MOV R1 R8  
     BL devfs_lookup    ; 1 check among /dev/.. "files"
     CMP R1 0
-    BNE vfs_done
-    MOV R1 R8 
-    MOV R2 R9 
-    ; this is a valid pathname, check flags if need to create file or not
-    cmp R2 O_CREATE
-    BNE check_open
-    ; create file
-    BL nsfs_create     ; 2 writable overlay above tarfs it should create inode for the file and return result in R1 
-    CMP R1 0
-    BNE vfs_done
-    ;error creating file, return 0
-    LI R1 0
-    B vfs_not_found
-check_open:
+    BNE vfs_done       ;if exists  dev inode ok
+    ; check nsfs
     MOV R1 R8 
     MOV R2 R9
     BL nsfs_lookup     ; 2 writable overlay above tarfs
     CMP R1 0
-    BNE vfs_done
-
+    BNE vfs_done       ; if exists nsfs inode done 
+    ; check flags bf tarfs
+    ; needs dbl check for rdonly mode here (to do)
     MOV R1 R8 
     MOV R2 R9
+    AND R3 R2 O_ACCMODE
+    cmp R3 O_RDONLY
+    BNE vfs_nsfs_create_file
     BL tarfs_lookup     ; 3 check in rootfs-tarfs /... (both funcs in R1-pathname)
     CMP R1 0
-    BEQ vfs_not_found   
+    BNE vfs_done       ; if exists tarfs inode done
+vfs_nsfs_create_file:   
+    ; so path name valid, and not found in dev nsfs tarfs
+    ; so its brand new
+    ; try to create file in nsfs
+    MOV R1 R8 
+    MOV R2 R9 
+    ; this is a valid pathname, check flags if need to create file or not
+    ;check if no RO mode is set
+    AND R3 R2 1         ;check CREATE BIT 1
+    cmp R3 O_CREATE
+    BNE vfs_fail_access
+    ; create file  if flag is set
+    BL nsfs_create     ; 2 writable overlay above tarfs it should create inode for the file and return result in R1 
+    CMP R1 0
+    BNE vfs_done     ; if file created inode created - ok
+    ;error creating file, return 0
+    B vfs_err_create
 
 vfs_done:
+    POP R8
+    POP R9
     POP LR          ;3 R1 - return inode
     RET
 
+; probably need specify reason not just R1=0 (to do)
+vfs_err_create:
+vfs_bad_pathname:
+   ; MOV R2 R1        ;err code in R2
+vfs_fail_access:
 vfs_not_found:
+    POP R8
+    POP R9
     LI R1 0         ;it can be just ret but i added it for result clarity
     POP LR          ;or R1 - Nul
     RET
@@ -9485,14 +9787,25 @@ bmi_call_error:
 .EQU NSFS_INDEX,  0x30
 .EQU BMI_READ_FILE, 0x31
 
-;===================================================
-; FLAGS for files ops in nsfs
-; O_CREATE | O_EXCL | O_TRUNC | O_APPEND
-;===================================================
-.EQU O_CREATE,    0x01
-.EQU O_EXCL,      0x02
-.EQU O_TRUNC,     0x03
-.EQU O_APPEND,    0x04
+; ================================================================
+; Open flags
+; ================================================================
+
+; Access mode mask
+.EQU O_ACCMODE, 0x30
+
+; Access modes
+.EQU O_RDONLY,  0x00
+.EQU O_WRONLY,  0x10
+.EQU O_RDWR,    0x20
+
+; File creation / behavior flags
+.EQU O_CREATE,  0x01
+.EQU O_EXCL,    0x02
+.EQU O_TRUNC,   0x04
+.EQU O_APPEND,  0x08
+
+
 ;===================================================
 ;CONSTS for namepath validation used when FILE_CREATE
 ;===================================================

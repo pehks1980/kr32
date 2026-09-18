@@ -6,19 +6,19 @@
         "type": "dir"
       }
     },
-    "ns:0:chunk:62": {
+    "ns:0:chunk:138": {
       "data": "QUJDCg==",
       "size": 4
     },
-    "ns:0:chunk:63": {
+    "ns:0:chunk:139": {
       "data": "QUJDCkFCQwo=",
       "size": 8
     },
     "ns:0:filever:/etc/crash.txt:1": {
       "chunks": [],
-      "created_txid": 128,
+      "created_txid": 293,
       "deleted": false,
-      "modified_txid": 128,
+      "modified_txid": 293,
       "previous": null,
       "size": 0,
       "tail": null,
@@ -27,72 +27,83 @@
     },
     "ns:0:filever:/etc/crash.txt:2": {
       "chunks": [
-        62
+        138
       ],
-      "created_txid": 128,
+      "created_txid": 293,
       "deleted": false,
-      "modified_txid": 129,
+      "modified_txid": 294,
       "previous": "ns:0:filever:/etc/crash.txt:1",
       "size": 4,
-      "tail": 62,
+      "tail": 138,
       "type": "file",
       "version": 2
     },
-    "ns:0:log:127": {
+    "ns:0:log:292": {
       "op": "ns_create",
-      "time": 1789251329.868474
+      "time": 1789762928.018782
     },
-    "ns:0:log:128": {
+    "ns:0:log:293": {
       "op": "file_create",
       "path": "/etc/crash.txt",
-      "time": 1789251329.8727
+      "time": 1789762928.023177
     },
-    "ns:0:log:129": {
+    "ns:0:log:294": {
       "bytes": 4,
       "new_version": 2,
       "old_version": 1,
       "op": "file_append",
       "path": "/etc/crash.txt",
-      "time": 1789251329.879354
+      "time": 1789762928.0318642
     },
-    "ns:0:log:130": {
+    "ns:0:log:295": {
       "bytes": 4,
       "new_version": 3,
       "old_version": 2,
       "op": "file_append",
       "path": "/etc/crash.txt",
-      "time": 1789251329.885258
+      "time": 1789762928.038074
     },
-    "ns:0:log:131": {
+    "ns:0:log:296": {
+      "op": "dir_create",
+      "path": "/etcc/",
+      "time": 1789762956.0785012
+    },
+    "ns:0:log:297": {
       "op": "file_create",
-      "path": "/etc/mmm.txt",
-      "time": 1789251379.950469
+      "path": "/etcc/aaa.txt",
+      "time": 1789763008.124459
     },
     "ns:0:meta": {
       "admissions": [],
       "checkpoint": null,
-      "created_txid": 127,
+      "created_txid": 292,
       "env": {},
       "version": 1
     },
     "ns:0:path:/etc/crash.txt": {
       "chunks": [
-        63
+        139
       ],
-      "created_txid": 128,
+      "created_txid": 293,
       "deleted": false,
-      "modified_txid": 130,
+      "modified_txid": 295,
       "previous": "ns:0:filever:/etc/crash.txt:2",
       "size": 8,
-      "tail": 63,
+      "tail": 139,
       "type": "file",
       "version": 3
     },
-    "ns:0:path:/etc/mmm.txt": {
+    "ns:0:path:/etcc/": {
+      "children": {},
+      "created_txid": 296,
+      "modified_txid": 296,
+      "type": "dir"
+    },
+    "ns:0:path:/etcc/aaa.txt": {
       "chunks": [],
-      "created_txid": 131,
+      "created_txid": 297,
       "deleted": false,
-      "modified_txid": 131,
+      "modified_txid": 297,
       "previous": null,
       "size": 0,
       "tail": null,
@@ -100,7 +111,7 @@
       "version": 1
     }
   },
-  "next_chunk_id": 64,
-  "next_txid": 132,
+  "next_chunk_id": 140,
+  "next_txid": 298,
   "version": 1
 }

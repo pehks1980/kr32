@@ -1,7 +1,21 @@
 .org 0x00043000
-; ================================================================
-; /bin/sh – Minimal shell (version 0) using libc
-; ================================================================
+
+;==============================================================================
+; mkdir - Create directories
+;
+; Usage:
+;   mkdir dir ...
+;
+; Creates each pathname supplied on the command line.
+;
+; main:
+;   IN:  R1 = argc
+;        R2 = argv
+;
+;   OUT: R1 = 0 on success
+;        R1 = 1 if any directory could not be created
+;
+;==============================================================================
 
 ;==============================================================================
 ; Minimal KR32 userland libc scaffold
@@ -1722,669 +1736,144 @@ atoi_positive:
 0x000440A6       POP LR
 0x000440AA       RET
 
-.EQU STDIN_FD,  0
-.EQU MAX_ARGS,  8
 
-;---------------------------------------------------------------
-; main() – shell loop
-;---------------------------------------------------------------
+;==============================================================================
+; main
+;==============================================================================
+
 main:
 0x000440AE       PUSH LR
+0x000440B2       PUSH R6
+0x000440B6       PUSH R7
+0x000440BA       PUSH R8
+0x000440BE       PUSH R9
+0x000440C2       PUSH R10
+0x000440C6       PUSH R11
 
-shell_loop:
-    ; Print prompt
-0x000440B2       LI R1 STDOUT_FD
-0x000440BA       LI R2 prompt
-0x000440C2       LI R3 2
-0x000440CA   CALL write
-    ; Read command
-0x000440D2       LI R1 STDIN_FD
-0x000440DA       LI R2 input_buf
-0x000440E2       LI R3 127
-0x000440EA   CALL read
-0x000440F2       CMP R1 0
-0x000440F6       BLE exit_shell
-0x000440FE       MOV R4 R1           ; R4 = bytes read
+0x000440CA       MOV R8 R1                  ; R8 = argc
+0x000440CE       MOV R9 R2                  ; R9 = argv
 
-    ; ---- Normalize line editing characters before parsing ----
-    ; Treat BS/DEL as a backspace in the current command buffer.
-0x00044102       LI R8 input_buf
-0x0004410A       LI R9 input_buf
-0x00044112       LI R10 0            ; source index
+    ; Need at least one pathname
+0x000440D2       CMP R8 2
+0x000440D6       BLT usage
 
-normalize_input_loop:
-0x0004411A       CMP R10 R4
-0x0004411E       BGE normalize_input_done
+0x000440DE       LI R10 1                   ; R10 = current argv index
+0x000440E6       LI R6 0                    ; R6 = return code
+                               ; 0 = all successful
+                               ; 1 = at least one failure
 
-0x00044126       ADD R5 R8 R10
-0x0004412A       LDB R6 [R5]
 
-0x0004412E       CMP R6 10            ; LF
-0x00044132       BEQ normalize_input_next
-0x0004413A       CMP R6 13            ; CR
-0x0004413E       BEQ normalize_input_next
-0x00044146       CMP R6 8             ; BS
-0x0004414A       BEQ normalize_input_backspace
-0x00044152       CMP R6 127           ; DEL
-0x00044156       BEQ normalize_input_backspace
+;==============================================================================
+; Process next pathname
+;==============================================================================
 
-0x0004415E       STB R6 [R9]
-0x00044162       ADD R9 R9 1
-0x00044166       B normalize_input_next
+dir_loop:
 
-normalize_input_backspace:
-0x0004416E       CMP R9 R8
-0x00044172       BLE normalize_input_next
-0x0004417A       SUB R9 R9 1
-0x0004417E       B normalize_input_next
+0x000440EE       CMP R10 R8
+0x000440F2       BGE dir_done
 
-normalize_input_next:
-0x00044186       ADD R10 R10 1
-0x0004418A       B normalize_input_loop
-
-normalize_input_done:
-0x00044192       LI R6 0
-0x0004419A       STB R6 [R9]
-
-    ; Skip empty lines
-0x0004419E       LI R7 input_buf
-0x000441A6       LDB R6 [R7]
-0x000441AA       CMP R6 0
-0x000441AE       BEQ shell_loop
-
-0x000441B6   CALL parse_command
-
-0x000441BE       LI R1 input_buf
-0x000441C6       LI R2 quit_cmd
-0x000441CE   CALL strcmp
-0x000441D6       CMP R1 1
-0x000441DA       BEQ exit_shell  ;if type "quit" exit shell
-
-    ; ---- Fork ----
-0x000441E2   CALL fork
-0x000441EA       CMP R1 0
-0x000441EE       BEQ child_process
-0x000441F6       BLT fork_error
-
-    ;Debug 2
-    ;POP LR
-    ;RET
-
-    ; ---- Parent: wait for child ----
-0x000441FE       LI R1 -1
-0x00044206       LI R2 0
-0x0004420E   CALL waitpid
-0x00044216       CMP R1 0
-0x0004421A       BLT wait_error
-
-0x00044222       B shell_loop
-
-    ; ---- Child: execute command ----
-child_process:
-    ; pathname = input_buf (copied early by kernel, before data page zeroed)
-    ; argv = argv_buf
-0x0004422A       LI R1 input_buf
-0x00044232       LI R2 argv_buf
-0x0004423A       LI R3 0
-0x00044242   CALL execve
-0x0004424A       LI R1 exec_failed_msg
-0x00044252   CALL puts
-
-0x0004425A       POP LR
-0x0004425E       RET
-
-fork_error:
-0x00044262       LI R1 fork_error_msg
-0x0004426A   CALL puts
-0x00044272       B shell_loop
-
-wait_error:
-0x0004427A       LI R1 wait_error_msg
-0x00044282   CALL puts
-0x0004428A       B shell_loop
-
-exit_shell:
-0x00044292       POP LR
-0x00044296       RET
-
-; ---------------------------------------------------------------
-; parse_command() – parse input_buf into argv_buf
-;
-; Supported syntax:
-;   command arg1 arg2
-;   command "argument with spaces"
-;   command 'argument with spaces'
-; Supported escapes inside quoted strings:
-;
-;   \n   newline
-;   \r   carriage return
-;   \t   tab
-;   \\   backslash
-;   \"   double quote
-;   \'   single quote
-;
-; input:
-;   input_buf = null-terminated command line
-;
-; output:
-;   argv_buf = NULL-terminated argv[] vector
-;
-; Important:
-;   Parsing is done IN PLACE.
-;
-;   Example:
-;
-;       /bin/print "hello world" 123
-;
-;   becomes internally:
-;
-;       /bin/print\0hello world\0123\0
-;
-;   argv_buf contains pointers:
-;
-;       argv[0] -> "/bin/print"
-;       argv[1] -> "hello world"
-;       argv[2] -> "123"
-;       argv[3] -> NULL
-;
-; Registers:
-;   R8  = source/read pointer
-;   R9  = destination/write pointer
-;   R10 = argc
-;   R11 = current character
-;   R12 = quote state
-;
-; quote state:
-;   0 = not inside quotes
-;   '"' = inside double quotes
-;   "'" = inside single quotes
-; ---------------------------------------------------------------
-; ---------------------------------------------------------------
-; parse_command()
-;
-; Parse input_buf in-place and build argv_buf.
-;
-; Supports:
-;
-;   command arg1 arg2
-;   command "argument with spaces"
-;   command 'argument with spaces'
-;
-; Escapes:
-;
-;   \n  -> LF
-;   \r  -> CR
-;   \t  -> TAB
-;   \\  -> \
-;   \"  -> "
-;   \'  -> '
-;
-; R8  = input/read pointer
-; R9  = output/write pointer
-; R10 = argc
-; R11 = current character
-; R12 = quote state
-;
-; R12:
-;   0  = outside quotes
-;   34 = inside double quotes
-;   39 = inside single quotes
-;
-; Maximum 8 arguments.
-; argv_buf = 8 pointers + NULL = 36 bytes.
-; ---------------------------------------------------------------
-
-parse_command:
-
-0x0004429A       PUSH LR
-0x0004429E       PUSH R8
-0x000442A2       PUSH R9
-0x000442A6       PUSH R10
-0x000442AA       PUSH R11
-0x000442AE       PUSH R12
-
-0x000442B2       LI R8 input_buf
-0x000442BA       LI R9 input_buf
-
-0x000442C2       LI R10 0              ; argc
-0x000442CA       LI R12 0              ; quote state
-
-
-; ===============================================================
-; Find beginning of next argument
-; ===============================================================
-
-parse_skip_spaces:
-
-0x000442D2       LDB R11 [R8]
-
-0x000442D6       CMP R11 0
-0x000442DA       BEQ parse_done
-
-0x000442E2       CMP R11 32            ; space
-0x000442E6       BNE parse_token_start
-
-0x000442EE       ADD R8 R8 1
-0x000442F2       B parse_skip_spaces
-
-
-; ===============================================================
-; Start new argument
-; ===============================================================
-
-parse_token_start:
-
-0x000442FA       CMP R10 MAX_ARGS
-0x000442FE       BGE parse_done
-
-    ; ------------------------------------------------------------
-    ; argv[argc] = current output pointer
-    ; ------------------------------------------------------------
-
-0x00044306       LI R7 argv_buf
-
-0x0004430E       MOV R6 R10
-0x00044312       shl R6 R6 2
-0x00044316       ADD R7 R7 R6
-
-0x0004431A       STW R9 [R7]
-
-0x0004431E       ADD R10 R10 1
-
-0x00044322       LI R12 0              ; outside quotes
-
-0x0004432A       B parse_token_body
-
-
-; ===============================================================
-; Process characters of current argument
-; ===============================================================
-
-parse_token_body:
-
-0x00044332       LDB R11 [R8]
-
-    ; End of command
-0x00044336       CMP R11 0
-0x0004433A       BEQ parse_token_done
-
-
-    ; ------------------------------------------------------------
-    ; Outside quotes
-    ; ------------------------------------------------------------
-
-0x00044342       CMP R12 0
-0x00044346       BNE parse_inside_quotes
-
-
-    ; Space terminates argument
-0x0004434E       CMP R11 32
-0x00044352       BEQ parse_token_end
-
-
-    ; Double quote
-0x0004435A       CMP R11 34
-0x0004435E       BEQ parse_start_double
-
-
-    ; Single quote
-0x00044366       CMP R11 39
-0x0004436A       BEQ parse_start_single
-
-
-    ; Backslash
-0x00044372       CMP R11 92
-0x00044376       BEQ parse_escape
-
-
-    ; Normal character
-0x0004437E       STB R11 [R9]
-
-0x00044382       ADD R8 R8 1
-0x00044386       ADD R9 R9 1
-
-0x0004438A       B parse_token_body
-
-
-; ===============================================================
-; Start double quote
-; ===============================================================
-
-parse_start_double:
-
-0x00044392       LI R12 34
-
-0x0004439A       ADD R8 R8 1
-
-0x0004439E       B parse_token_body
-
-
-; ===============================================================
-; Start single quote
-; ===============================================================
-
-parse_start_single:
-
-0x000443A6       LI R12 39
-
-0x000443AE       ADD R8 R8 1
-
-0x000443B2       B parse_token_body
-
-
-; ===============================================================
-; Inside quotes
-; ===============================================================
-
-parse_inside_quotes:
-
-    ; Closing quote?
-0x000443BA       CMP R11 R12
-0x000443BE       BEQ parse_close_quote
-
-
-    ; Backslash
-0x000443C6       CMP R11 92
-0x000443CA       BEQ parse_escape
-
-
-    ; Normal character
-0x000443D2       STB R11 [R9]
-
-0x000443D6       ADD R8 R8 1
-0x000443DA       ADD R9 R9 1
-
-0x000443DE       B parse_token_body
-
-
-; ===============================================================
-; Close quote
-; ===============================================================
-
-parse_close_quote:
-
-0x000443E6       LI R12 0
-
-0x000443EE       ADD R8 R8 1
-
-0x000443F2       B parse_token_body
-
-
-; ===============================================================
-; Escape sequence
-;
-; R8 points at '\'
-; Move to character after it.
-; ===============================================================
-
-parse_escape:
-
-0x000443FA       ADD R8 R8 1
-
-0x000443FE       LDB R11 [R8]
-
-    ; Backslash was last character
-0x00044402       CMP R11 0
-0x00044406       BEQ parse_token_done
-
-
-    ; ------------------------------------------------------------
-    ; \n
-    ; ------------------------------------------------------------
-
-0x0004440E       CMP R11 110           ; 'n'
-0x00044412       BEQ parse_escape_n
-
-
-    ; ------------------------------------------------------------
-    ; \r
-    ; ------------------------------------------------------------
-
-0x0004441A       CMP R11 114           ; 'r'
-0x0004441E       BEQ parse_escape_r
-
-
-    ; ------------------------------------------------------------
-    ; \t
-    ; ------------------------------------------------------------
-
-0x00044426       CMP R11 116           ; 't'
-0x0004442A       BEQ parse_escape_t
-
-
-    ; ------------------------------------------------------------
-    ; \\
-    ; ------------------------------------------------------------
-
-0x00044432       CMP R11 92
-0x00044436       BEQ parse_escape_backslash
-
-
-    ; ------------------------------------------------------------
-    ; \"
-    ; ------------------------------------------------------------
-
-0x0004443E       CMP R11 34
-0x00044442       BEQ parse_escape_quote
-
-
-    ; ------------------------------------------------------------
-    ; \'
-    ; ------------------------------------------------------------
-
-0x0004444A       CMP R11 39
-0x0004444E       BEQ parse_escape_single
-
-
-    ; ------------------------------------------------------------
-    ; Unknown escape
+    ;----------------------------------------------------------
+    ; Get argv[R10]
     ;
-    ; \x -> x
-    ; ------------------------------------------------------------
+    ; R2 = &argv[index]
+    ; R1 = argv[index] = pathname
+    ;----------------------------------------------------------
 
-0x00044456       STB R11 [R9]
+0x000440FA       MOV R2 R10
+0x000440FE       SHL R2 R2 2
+0x00044102       ADD R2 R9 R2
 
-0x0004445A       ADD R8 R8 1
-0x0004445E       ADD R9 R9 1
-
-0x00044462       B parse_token_body
-
-
-; ===============================================================
-; Escape handlers
-; ===============================================================
-
-parse_escape_n:
-
-0x0004446A       LI R11 10
-0x00044472       B parse_escape_store
+0x00044106       LDW R1 [R2]                ; R1 = pathname
+0x0004410A       li  R2 0                   ; NS=0
 
 
-parse_escape_r:
+    ;----------------------------------------------------------
+    ; mkdir(pathname)
+    ;----------------------------------------------------------
 
-0x0004447A       LI R11 13
-0x00044482       B parse_escape_store
+0x00044112       BL mkdir
 
+0x0004411A       MOV R11 R1                ; R11 = return value
 
-parse_escape_t:
+    ; negative = failure
+0x0004411E       CMP R11 0
+0x00044122       BLT create_failed
 
-0x0004448A       LI R11 9
-0x00044492       B parse_escape_store
-
-
-parse_escape_backslash:
-
-0x0004449A       LI R11 92
-0x000444A2       B parse_escape_store
+0x0004412A       ADD R10 R10 1
+0x0004412E       B dir_loop
 
 
-parse_escape_quote:
+;==============================================================================
+; Creation failed
+;==============================================================================
 
-0x000444AA       LI R11 34
-0x000444B2       B parse_escape_store
+create_failed:
 
+    ; Print:
+    ;   mkdir: cannot create <pathname>
 
-parse_escape_single:
+0x00044136       LI R1 error_prefix
+0x0004413E       BL puts
 
-0x000444BA       LI R11 39
-0x000444C2       B parse_escape_store
+    ; argv[R10]
 
+0x00044146       MOV R2 R10
+0x0004414A       SHL R2 R2 2
+0x0004414E       ADD R2 R9 R2
 
-; ===============================================================
-; Store translated escape
-; ===============================================================
+0x00044152       LDW R1 [R2]
+0x00044156       BL puts
 
-parse_escape_store:
+0x0004415E       LI R1 newline_str_mkdir
+0x00044166       BL puts
 
-0x000444CA       STB R11 [R9]
+0x0004416E       LI R6 1                    ; remember failure
 
-0x000444CE       ADD R8 R8 1
-0x000444D2       ADD R9 R9 1
-
-0x000444D6       B parse_token_body
-
-
-; ===============================================================
-; End argument because of space
-; ===============================================================
-
-parse_token_end:
-
-    ; terminate output string
-0x000444DE       LI R11 0
-0x000444E6       STB R11 [R9]
-
-0x000444EA       ADD R9 R9 1
-0x000444EE       ADD R8 R8 1
-
-0x000444F2       B parse_skip_spaces
+0x00044176       ADD R10 R10 1
+0x0004417A       B dir_loop
 
 
-; ===============================================================
-; End of input
-; ===============================================================
+;==============================================================================
+; Done
+;==============================================================================
 
-parse_token_done:
+dir_done:
 
-    ; terminate current string
-0x000444FA       LI R11 0
-0x00044502       STB R11 [R9]
+0x00044182       MOV R1 R6                  ; return status
 
+0x00044186       POP R11
+0x0004418A       POP R10
+0x0004418E       POP R9
+0x00044192       POP R8
+0x00044196       POP R7
+0x0004419A       POP R6
+0x0004419E       POP LR
 
-; ===============================================================
-; Finish argv[]
-; ===============================================================
-
-parse_done:
-
-    ; R7 = argv_buf + argc * 4
-
-0x00044506       LI R7 argv_buf
-
-0x0004450E       MOV R6 R10
-0x00044512       SHL R6 R6 2
-0x00044516       ADD R7 R7 R6
-
-    ; argv[argc] = NULL
-
-0x0004451A       LI R11 0
-0x00044522       STW R11 [R7]
+0x000441A2       RET
 
 
-0x00044526       POP R12
-0x0004452A       POP R11
-0x0004452E       POP R10
-0x00044532       POP R9
-0x00044536       POP R8
-0x0004453A       POP LR
+;==============================================================================
+; Usage
+;==============================================================================
 
-0x0004453E       RET
+usage:
 
-; ---------------------------------------------------------------
-; parse_command() – parse input_buf into argv_buf
-; input and output:
-;   input_buf: null-terminated string of command line
-;   output: all needed for execve (input_buf = pathname, argv_buf = argv) ready
-; ---------------------------------------------------------------
+0x000441A6       LI R1 mkdir_usage_str
+0x000441AE       BL puts
 
-parse_command0:
-0x00044542       PUSH LR
-0x00044546       PUSH R8
-0x0004454A       PUSH R9
-0x0004454E       PUSH R10
-0x00044552       PUSH R11
+0x000441B6       LI R1 1
+0x000441BE       B dir_done
 
-0x00044556       LI R8 input_buf
-0x0004455E       LI R9 argv_buf
-0x00044566       LI R10 0
 
-parse_skip_spaces0:
-0x0004456E       LDB R11 [R8]
-0x00044572       CMP R11 32      ;" "
-0x00044576       BNE parse_token_start
-0x0004457E       LI R11 0        ;replace space with null so input_buf gets str.split(' ') into args strings
-0x00044586       STB R11 [R8]
-0x0004458A       ADD R8 R8 1
-0x0004458E       B parse_skip_spaces0
-
-parse_token_start0:
-0x00044596       LDB R11 [R8]
-0x0004459A       CMP R11 0
-0x0004459E       BEQ parse_done
-0x000445A6       CMP R10 8       ;up to 8 args
-0x000445AA       BGE parse_done
-
-0x000445B2       STW R8 [R9]     ;store pointer to token in argv_buf (argv array for execve)
-0x000445B6       ADD R9 R9 4
-0x000445BA       ADD R10 R10 1   ;argc for execve
-
-parse_token_body0:
-0x000445BE       LDB R11 [R8]
-0x000445C2       CMP R11 0
-0x000445C6       BEQ parse_done
-0x000445CE       CMP R11 32      ;" "
-0x000445D2       BEQ parse_end_token
-0x000445DA       ADD R8 R8 1
-0x000445DE       B parse_token_body
-
-parse_end_token:
-0x000445E6       LI R11 0
-0x000445EE       STB R11 [R8]    ; put null terminator at end of token
-0x000445F2       ADD R8 R8 1     ; move to next char in input_buf
-0x000445F6       B parse_skip_spaces
-
-parse_done0:
-0x000445FE       LI R11 0
-0x00044606       STW R11 [R9]    ; put null terminator at end of argv_buf (argv array for execve)
-0x0004460A       POP R11         ; all needed for execve (input_buf = pathname, argv_buf = argv) ready
-                    ;  and in format for execve
-0x0004460E       POP R10
-0x00044612       POP R9
-0x00044616       POP R8
-0x0004461A       POP LR
-0x0004461E       RET
-
-;---------------------------------------------------------------
+;==============================================================================
 ; Data
-;---------------------------------------------------------------
-prompt:
-    .ASCIIZ "$ \r"
+;==============================================================================
 
-quit_cmd:
-    .ASCIIZ "quit"
+mkdir_usage_str:
+    .ASCIIZ "usage: mkdir dir ...\n"
 
-exec_failed_msg:
-    .ASCIIZ "EXECVE ERR\n"
-fork_error_msg:
-    .ASCIIZ "FORK ERR\n"
-wait_error_msg:
-    .ASCIIZ "WAIT ERR\n"
+error_prefix:
+    .ASCIIZ "mkdir: cannot create "
 
-input_buf:
-    .SPACE 128
-
-argv_buf:
-    .SPACE 128
-; ================================================================
-; End
-; ================================================================
+newline_str_mkdir:
+    .ASCIIZ "\n"

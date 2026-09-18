@@ -49,7 +49,7 @@ file_loop:
     SHL R2 R2 2
     ADD R2 R9 R2            ; R2 = address of argv[index]
     LDW R1 [R2]             ; R1 = filename
-    LI R2 0                 ; O_RDONLY
+    mov R2 O_RDONLY          ; O_RDONLY
     BL open
     MOV R11 R1              ; R11 = fd
 
