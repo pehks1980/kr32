@@ -2932,7 +2932,9 @@ bmi_read_file_loop:
 
     LI R7 BMI_BUF_WRITE
     ADD R7 R7 BMI_HDR_SIZEOF
-    LDW R6 [R8 + NSFS_NODE_FLAGS]      ; path_len
+    LDW R1 [R8 + NSFS_NODE_PATH]
+    BL get_path_len
+    MOV R6 R1                          ; path_len
     STW R6 [R7]                        ; u32 path_len
     STW R9 [R7 + 4]                    ; u32 offset
 
@@ -3000,7 +3002,138 @@ bmi_read_file_fail:
 ; out: R1 = bytes written or errno
 ;=====================================================================
 nsfs_write:
-    LI R1 ERR_NOENT
+    PUSH LR
+    PUSH R6
+    PUSH R7
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R1                  ; file*
+    MOV R9 R2                  ; current user source
+    MOV R10 R3                 ; bytes remaining
+    LI R11 0                   ; total bytes written
+
+    CMP R10 0
+    BEQ nsfs_write_done
+
+    LDW R12 [R8 + FILE_INODE]
+    LDW R1 [R12 + INODE_TYPE]
+    LI R2 INODE_DIR
+    CMP R1 R2
+    BEQ nsfs_write_isdir
+
+    LDW R12 [R12 + INODE_PRIVATE]      ; nsfs node
+    CMP R12 0
+    BEQ nsfs_write_io
+
+    LDW R1 [R12 + NSFS_NODE_PATH]
+    BL get_path_len
+    MOV R6 R1                          ; path_len
+
+    LI R2 KBUFFER_SIZE
+    SUB R2 R2 4
+    CMP R6 R2
+    BGE nsfs_write_inval
+
+nsfs_write_loop:
+    CMP R10 0
+    BEQ nsfs_write_done
+
+    ; chunk = min(remaining, KBUFFER_SIZE - 4 - path_len)
+    LI R7 KBUFFER_SIZE
+    SUB R7 R7 4
+    SUB R7 R7 R6
+    CMP R10 R7
+    BGT nsfs_write_chunk_ready
+    MOV R7 R10
+nsfs_write_chunk_ready:
+
+    MOV R1 R9
+    MOV R2 R7
+    LI R3 0                            ; read from user source
+    BL user_buffer_valid_range
+    CMP R1 1
+    BNE nsfs_write_fault
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R4, R5            ; payload buffer
+    STW R6 [R4]                        ; u32 path_len
+
+    MOV R1 R4
+    ADD R1 R1 4
+    LDW R2 [R12 + NSFS_NODE_PATH]
+    MOV R3 R6
+    BL memcpy
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R4, R5
+    ADD R4 R4 4
+    ADD R4 R4 R6                       ; data destination
+    MOV R1 R9
+    MOV R2 R7
+    BL copy_from_user
+    CMP R1 R7
+    BNE nsfs_write_fault
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R2, R5            ; bmi payload source
+    MOV R1 FILE_APPEND
+    ADD R3 R7 R6
+    ADD R3 R3 4
+    LDW R4 [R12 + NSFS_NODE_NAMESPACE]
+    CALL bmi_call
+    CMP R1 0
+    BNE nsfs_write_io
+
+    ADD R11 R11 R7
+    ADD R9 R9 R7
+    SUB R10 R10 R7
+
+    LDW R1 [R8 + FILE_OFFSET]
+    ADD R1 R1 R7
+    STW R1 [R8 + FILE_OFFSET]
+    LDW R1 [R12 + NSFS_NODE_SIZE]
+    ADD R1 R1 R7
+    STW R1 [R12 + NSFS_NODE_SIZE]
+
+    B nsfs_write_loop
+
+nsfs_write_done:
+    LI R1 NSFS_DEFAULT_NS
+    BL nsfs_refresh_index
+    MOV R1 R11
+    B nsfs_write_return
+
+nsfs_write_fault:
+    LI R1 ERR_FAULT
+    B nsfs_write_return
+
+nsfs_write_isdir:
+    LI R1 ERR_ISDIR
+    B nsfs_write_return
+
+nsfs_write_inval:
+    LI R1 ERR_INVAL
+    B nsfs_write_return
+
+nsfs_write_io:
+    LI R1 ERR_IO
+
+nsfs_write_return:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP R7
+    POP R6
+    POP LR
     RET
 ;=====================================================================
 ; nsfs_readdir - read next directory entries from NSFS overlay
@@ -6594,24 +6727,12 @@ readdir_nsfs_scan:
     ADD R7 R7 R3              ; R7 = &nsfs_index_table[R6]
 
     LDW R1 [R7 + NSFS_INDEX_PATH]
-    LDB R2 [R1]
-    LI R3 47                  ; skip leading '/' for comparison with tar prefix
-    CMP R2 R3
-    BNE readdir_nsfs_prefix_ready
-    ADD R1 R1 1
-readdir_nsfs_prefix_ready:
     MOV R2 R10
     BL str_prefix
     CMP R1 1
     BNE readdir_nsfs_skip
 
     LDW R1 [R7 + NSFS_INDEX_PATH]
-    LDB R2 [R1]
-    LI R3 47
-    CMP R2 R3
-    BNE readdir_nsfs_skip_ready
-    ADD R1 R1 1
-readdir_nsfs_skip_ready:
     MOV R2 R10
     BL skip_prefix
     MOV R9 R1

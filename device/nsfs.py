@@ -35,9 +35,14 @@ NSFS_INDEX_MAX_PAYLOAD = 4096 - 12
 class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
     """Tiny JSON-backed KV store used by the VM for NSFS debugging."""
 
-    def __init__(self, path="nsfs_store.json"):
+    def __init__(self, path="nsfs_store.json", verbose=False):
         self.path = Path(path)
+        self.verbose = verbose
         self.data = self._load()
+
+    def debug(self, message):
+        if self.verbose:
+            print(message)
     # load the data from the JSON file, if it does not exist, return a default structure
     # 
     def _load(self):
@@ -242,7 +247,7 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
             "modified_txid": txid,
         }
         self._flush()
-        print(f"[NSFS] create file ns={namespace} path={path} size={len(initial_data)} chunks={len(chunk_ids)} version=1")
+        self.debug(f"[NSFS] create file ns={namespace} path={path} size={len(initial_data)} chunks={len(chunk_ids)} version=1")
         return NSFS_OK, b""
     # append bytes to an existing file in a namespace, if it does not exist, return NSFS_ENOENT
     #
@@ -307,7 +312,7 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
         self.data["kv"][key] = new_manifest
         # flush the changes to the JSON file
         self._flush()
-        print(
+        self.debug(
             f"[NSFS] append file ns={namespace} path={path} bytes={len(append_data)} "
             f"size={new_size} chunks={len(chunks)} version={new_manifest['version']} tail_replaced={reused_tail}"
         )
@@ -340,7 +345,7 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
         })
         self.data["kv"][key] = tombstone
         self._flush()
-        print(f"[NSFS] delete file ns={namespace} path={path} tombstone_version={tombstone['version']}")
+        self.debug(f"[NSFS] delete file ns={namespace} path={path} tombstone_version={tombstone['version']}")
         return NSFS_OK, b""
 
     # create a new directory in a namespace, if it already exists, return NSFS_EEXIST
@@ -431,7 +436,7 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
         if len(payload) > NSFS_INDEX_MAX_PAYLOAD:
             return NSFS_E2BIG, b""
 
-        print(f"[NSFS] index ns={namespace} entries={len(entries)} bytes={len(payload)}")
+        self.debug(f"[NSFS] index ns={namespace} entries={len(entries)} bytes={len(payload)}")
         return NSFS_OK, payload
     # read a byte range from a file manifest in a namespace, returning the requested bytes or an error code
     #
@@ -475,7 +480,7 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
             if cursor >= end:
                 break
 
-        print(f"[NSFS] read file ns={namespace} path={path} offset={offset} bytes={len(result)}")
+        self.debug(f"[NSFS] read file ns={namespace} path={path} offset={offset} bytes={len(result)}")
         return NSFS_OK, bytes(result)
 
     # handle_packet: dispatches the packet to the appropriate handler based on opcode

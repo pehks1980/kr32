@@ -39,9 +39,11 @@ BMI_ERROR = 4  #ERROR status - indicates an error occurred while processing a re
 
 class BMIDevice:
 
-    def __init__(self, cpu, nsfs=None):
+    def __init__(self, cpu, nsfs=None, verbose=False):
         self.cpu = cpu
-        self.nsfs = nsfs if nsfs is not None else NSFSStore()
+        self.verbose = verbose
+        self.nsfs = nsfs if nsfs is not None else NSFSStore(verbose=verbose)
+        self.nsfs.verbose = verbose
 
     # helpers to read/write physical memory, check bounds, and handle unaligned accesses
     def phys_read_u8(self, paddr):
@@ -119,7 +121,8 @@ class BMIDevice:
             self.write_reg(0, BMI_DONE) #set the status to DONE after processing the request
 
         except Exception as e:
-            print("[BMI]", e)
+            if self.verbose:
+                print("[BMI]", e)
             self.write_reg(BMI_REPLY - BMI_REG_BASE, BMI_ERROR)
             self.write_reg(0, BMI_ERROR)
 
@@ -147,12 +150,13 @@ class BMIDevice:
     
     # debug: print the opcode, namespace, and payload of the packet,
     def dispatch(self, packet):
-        print()
-        print("========= BMI =========")
-        print("opcode    :", packet["opcode"])
-        print("namespace :", packet["namespace"])
-        print("payload   :", packet["payload"])
-        print("=======================")
+        if self.verbose:
+            print()
+            print("========= BMI =========")
+            print("opcode    :", packet["opcode"])
+            print("namespace :", packet["namespace"])
+            print("payload   :", packet["payload"])
+            print("=======================")
         status, payload = self.nsfs.handle_packet(packet)
         return {
             "status": status,

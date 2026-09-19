@@ -1810,6 +1810,8 @@ def main():
     cpu.instr_history_limit = max(1, args.traceback)
     cpu.instr_history = deque(maxlen=cpu.instr_history_limit)
     cpu.quiet = not args.verbose
+    cpu.bmi.verbose = args.verbose
+    cpu.bmi.nsfs.verbose = args.verbose
     if args.dump and args.debug == 2:
         cpu.debug_dump_range = (int(args.dump[0], 0), int(args.dump[1], 0))
     if args.no_mmu:
