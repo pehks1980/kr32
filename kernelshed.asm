@@ -205,17 +205,21 @@ nsfs_bmi_demo:
     LI R4 0
     CALL bmi_call
 
-   ; MOV R1 FILE_DELETE
-   ; LI R2 cr_file
-   ; LI R3 13
-   ; LI R4 0
-   ; CALL bmi_call
+    MOV R1 DIR_CREATE
+    LI R2 cr_dir
+    LI R3 5
+    LI R4 0
+    CALL bmi_call
 
     POP LR
     RET
 
 cr_file:
     .asciiz "etc/crash.txt"
+
+cr_dir:
+    .asciiz "/aaa/"
+
 
 cr_file_append_payload:
     .WORD 0x0000000D    ; path length = 13
@@ -1995,7 +1999,7 @@ syscall_mkdir:
     ; R1 = 0 on success
     ; R1 < 0 on error
     
-    B trap_restore
+    ;B trap_restore
 
     STW R1 [SP + TF_R1]     ;mkdir created exit!
     B trap_restore
@@ -2014,16 +2018,28 @@ mkdir_fail_fault:
 
 syscall_rmdir:
     ; R1 = user pathname
+    LDW R8 [SP + TF_R1]
+    LDW R9 [SP + TF_R2]
+    MOV R1  R8
+    BL copy_path_from_user     ; macro inside destroys R11, copy pathname 
+                               ; to tasks Kbuf_RD buffer
+                               ; R1 - pathname str ptr in the bufer
+    CMP R1 0
+    BEQ mkdir_fail_fault
 
-    ; validate/copy pathname from user space
-    ; ...
+    ; copy_path_from_user returned the current task's kernel read buffer.
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_RD R1, R5
+    MOV R2 R9                  ;NS
     
     BL vfs_rmdir
 
     ; R1 = 0 on success
     ; R1 < 0 on error
-    
+    STW R1 [SP + TF_R1]     ;mkdir created exit!
     B trap_restore
+    
 
 ;===============================================================
 ; vfs_mkdir
@@ -2075,7 +2091,7 @@ mkdir_exit:
     RET
 
 ;===============================================================
-; vfs_rmdir
+; vfs_rmdir - remove dir from NS
 ;
 ; R1 = pathname R2 = namespace
 ;
@@ -2087,6 +2103,7 @@ mkdir_exit:
 vfs_rmdir:
     PUSH LR
     PUSH R8
+    PUSH R9
 
     MOV R8 R1       ;pathname
     MOV R9 R2       ;namespace
@@ -2101,9 +2118,9 @@ vfs_rmdir:
     MOV R1 R8
     BL nsfs_lookup
     CMP R1 0
-    BNE rmdir_exists
+    BEQ rmdir_dont_exist
 
-    ; Ask writable filesystem to create directory
+    ; Ask writable filesystem to rm directory
     MOV R1 R8
     MOV R2 R9
     BL nsfs_rmdir
@@ -2111,8 +2128,8 @@ vfs_rmdir:
     ; R1 = 0 or error
     B rmdir_exit
 
-rmdir_exists:
-    LI R1 ERR_EXIST
+rmdir_dont_exist:
+    LI R1 ERR_DONT_EXIST
     B rmdir_exit
 
 rmdir_invalid:
@@ -2120,6 +2137,7 @@ rmdir_invalid:
 
 rmdir_exit:
     POP R8
+    POP R9
     POP LR
     RET
 
@@ -3442,12 +3460,61 @@ nsfs_mkdir_fail:
     POP LR
     RET
 
+;=========================================================
 ; nsfs_rmdir
 ; in:  R1 = pathname R2 = NS
 ; out: R1 = 0 or errno
+;=========================================================
 nsfs_rmdir:
-    ; TODO: DIR_DELETE over BMI.
+    PUSH LR
+    PUSH R6
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
+    MOV R8 R1                  ; pathname
+    MOV R10 R2                 ; namespace
+
+    LI  R10 NSFS_DEFAULT_NS    ; default namespace for now
+
+    MOV R2 R8
+    BL  get_path_len
+    MOV R3 R1
+
+    LI  R1 DIR_DELETE
+    MOV R4 R10
+
+    CALL bmi_call
+
+    CMP R1 0
+    BNE nsfs_rmdir_fail
+
+    MOV R1 R10
+    BL  nsfs_refresh_index
+
+    CMP R1 0
+    BNE nsfs_rmdir_fail
+
+    MOV R1 R8
+    BL  nsfs_lookup
+
+    CMP R1 0
+    BNE nsfs_rmdir_fail
+
+    POP R10
+    POP R9
+    POP R8
+    POP R6
+    POP LR
+    RET
+
+nsfs_rmdir_fail:
     LI R1 ERR_NOENT
+    POP R10
+    POP R9
+    POP R8
+    POP R6
+    POP LR
     RET
 
 ;====================================================================

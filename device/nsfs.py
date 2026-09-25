@@ -372,11 +372,10 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
         }
         self._flush()
         return NSFS_OK, b""
-    
-    # delete a directory in a namespace, if it does not exist, return NSFS_ENOENT   
-    #
+
     def delete_dir(self, namespace, payload):
         path = self._decode_path(payload)
+        print("path=",path,"ns=",namespace)
         if path is None:
             return NSFS_EINVAL, b""
 
@@ -384,19 +383,74 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
         node = self.data["kv"].get(key)
         if node is None or node.get("type") != "dir":
             return NSFS_ENOENT, b""
+        
         # check if the directory is empty by looking for any keys that start with the directory's path
         child_prefix = key.rstrip("/") + "/"
-        if any(other.startswith(child_prefix) for other in self.data["kv"]):
-            return NSFS_ENOTEMPTY, b""
-        # append a log entry for the directory deletion operation, create a tombstone node with type "dir",
-        # deleted flag, and modified txid, and write it back to the KV store
-        self._append_log(namespace, "dir_delete", path=path)
-        del self.data["kv"][key]
+        print("child",child_prefix)
+  
+        # Find all descendant paths (files and subdirectories) under this directory
+        # that are not already deleted
+        prefix_len = len(child_prefix)
+        descendants = []
+        for other_key, other_node in self.data["kv"].items():
+            if other_key.startswith(child_prefix):
+                # Skip already-deleted nodes
+                if other_node.get("deleted", False):
+                    continue
+                descendants.append((other_key, other_node))
+        
+        # Sort descendants by key length descending so we delete deepest paths first
+        # (not strictly necessary here, but good for consistency)
+        descendants.sort(key=lambda x: len(x[0]), reverse=True)
+        
+        # Mark each descendant as deleted with a tombstone
+        for desc_key, desc_node in descendants:
+            desc_path = desc_key[prefix_len:]  # relative path from the dir being deleted
+            # Build full path for logging
+            full_path = path.rstrip("/") + "/" + desc_path
+            
+            # Save old version if it's a file
+            old_version_key = None
+            if desc_node.get("type") == "file":
+                old_version_key = self._save_old_version(namespace, full_path, desc_node)
+            
+            # Append log entry
+            txid = self._append_log(
+                namespace,
+                "dir_delete_child",
+                path=full_path,
+                parent_dir=path,
+                node_type=desc_node.get("type", "unknown"),
+            )
+            
+            # Create tombstone
+            tombstone = copy.deepcopy(desc_node)
+            tombstone.update({
+                "version": desc_node.get("version", 1) + 1,
+                "deleted": True,
+                "previous": old_version_key,
+                "modified_txid": txid,
+            })
+            self.data["kv"][desc_key] = tombstone
+        
+        # Append a log entry for the directory deletion operation
+        self._append_log(namespace, "dir_delete", path=path, children_deleted=len(descendants))
+        
+        # Mark the directory itself as deleted (tombstone) rather than removing it entirely
+        txid = self._append_log(namespace, "dir_delete", path=path)
+        dir_tombstone = copy.deepcopy(node)
+        dir_tombstone.update({
+            "deleted": True,
+            "modified_txid": txid,
+        })
+        self.data["kv"][key] = dir_tombstone
+        
+  
+  
         self._flush()
+        print(f"[NSFS] delete dir ns={namespace} path={path} descendants_marked_deleted={len(descendants)}")
         return NSFS_OK, b""
-    # generate an index of all active files and directories in a namespace, 
-    # returning a payload with entry types, sizes, versions, and paths
-    #
+
     def namespace_index(self, namespace):
         if not self.namespace_exists(namespace):
             return NSFS_ENOENT, b""

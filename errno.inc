@@ -59,7 +59,8 @@
 ; ------------------------------------------------------------
 
 .EQU ERR_BUSY,      -16      ; resource busy
-.EQU ERR_EXIST,     -17      ; already exists
+.EQU ERR_EXIST,       -17      ; already exists
+.EQU ERR_DONT_EXIST,  -18      ; dont exists
 .EQU ERR_AGAIN,     -11      ; would block / try again
 
 ; ------------------------------------------------------------
