@@ -4,6 +4,8 @@ import time
 from token import OP
 from collections import deque
 
+from device.cpu_cache import Cache
+
 from mmu import (
     MMU,
     MODE_KERNEL,
@@ -118,6 +120,14 @@ class CPU:
 
         # byte-addressable physical memory
         self.physical_memory = bytearray(self.MEM_SIZE)
+
+        #create cpu cache
+        self.cache = Cache(
+            self.physical_memory,
+            lines=64,
+            line_size=16,
+        )
+
         self.mmu = MMU(page_size=page_size, virtual_size=virtual_size, tlb_size=tlb_size, physical_memory=self.physical_memory)
         # self.mmu.identity_map(0, self.MEM_SIZE, PAGE_READ | PAGE_WRITE | PAGE_EXEC)  # remove, do in guest
         self.mmu.enabled = False  # start disabled
@@ -946,18 +956,36 @@ class CPU:
     # to device emulation, or if it's regular memory to perform the read/write while ensuring it does not go out of bounds.
     #-----------------------------------------------------
 
+    #def physical_read_u8(self, paddr):
+    #    if self.is_mmio(paddr):
+    #        return self.mmio_read(paddr) & 0xFF
+    #    self.check_physical_mem(paddr, 1)
+    #    return self.physical_memory[paddr]
+    
+    #cpu read using cpu cache
     def physical_read_u8(self, paddr):
         if self.is_mmio(paddr):
             return self.mmio_read(paddr) & 0xFF
-        self.check_physical_mem(paddr, 1)
-        return self.physical_memory[paddr]
 
+        self.check_physical_mem(paddr, 1)
+        return self.cache.read_u8(paddr)
+
+    #def physical_write_u8(self, paddr, val):
+    #    if self.is_mmio(paddr):
+    #        self.mmio_write(paddr, val)
+    #        return
+    #    self.check_physical_mem(paddr, 1)
+    #    self.physical_memory[paddr] = val & 0xFF
+    
+    # cpu write using cpu cache
     def physical_write_u8(self, paddr, val):
         if self.is_mmio(paddr):
             self.mmio_write(paddr, val)
             return
+
         self.check_physical_mem(paddr, 1)
-        self.physical_memory[paddr] = val & 0xFF
+        self.cache.write_u8(paddr, val)
+
     #trace virt to physical translation
     def trace_virt(self, bl_type,addr,access):
         if not self.trace_output:
