@@ -52,6 +52,7 @@ def chunk_words_old(data):
 
 def normalize_path(path: Path):
     rel = path.resolve().relative_to(TARFS_ROOT.resolve()).as_posix()
+    #print(f"normalize_path: {path} -> {rel}")
     if rel.endswith(".asm"):
         rel = rel[:-4]
     return rel #rel.lstrip("/")
@@ -82,8 +83,12 @@ def read_source_bytes(path: Path):
     return path.read_bytes()
 
 def emit_dir(path: str):
-    path = f"/{path}"
-    name = path.rstrip("/") + "/"
+    if str (path) != ".":
+        path = f"/{path}"
+        name = path.rstrip("/") + "/"
+    else:
+        path = "/"  #special case for root dir
+        name = path
 
     name_bytes = name.encode("ascii")
     if len(name_bytes) >= 124:
@@ -138,6 +143,10 @@ def main():
         p for p in root.rglob("*")
         if p.is_dir()
     )
+
+    dirs.append(root)  # ensure root dir is included
+
+    #print("dirs:", dirs)
 
     files = sorted(
         p for p in root.rglob("*")

@@ -102,8 +102,8 @@ read_dir_loop:
     ; if directory, print '/'
     CMP R5 DT_DIR
     BNE not_dir_entry
-    LI R1 slash_str
-    CALL puts
+   ; LI R1 slash_str
+   ; CALL puts
 not_dir_entry:
 
     ; print newline

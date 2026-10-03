@@ -1819,65 +1819,65 @@ read_dir_loop:
     ; if directory, print '/'
 0x000441D6       CMP R5 DT_DIR
 0x000441DA       BNE not_dir_entry
-0x000441E2       LI R1 slash_str
-0x000441EA   CALL puts
+   ; LI R1 slash_str
+   ; CALL puts
 not_dir_entry:
 
     ; print newline
-0x000441F2       LI R1 newline_str
-0x000441FA   CALL puts
+0x000441E2       LI R1 newline_str
+0x000441EA   CALL puts
 
-0x00044202       B read_dir_loop
+0x000441F2       B read_dir_loop
 
 read_done:
     ; close directory using closedir wrapper
-0x0004420A       MOV R1 R11
-0x0004420E   CALL closedir
+0x000441FA       MOV R1 R11
+0x000441FE   CALL closedir
 
-0x00044216       ADD R10 R10 1           ; next directory
-0x0004421A       B dir_loop
+0x00044206       ADD R10 R10 1           ; next directory
+0x0004420A       B dir_loop
 
 open_failed:
     ; print error message for this directory
-0x00044222       LI R1 error_prefix
-0x0004422A   CALL puts
+0x00044212       LI R1 error_prefix
+0x0004421A   CALL puts
     ; print the directory name
-0x00044232       MOV R2 R10
-0x00044236       SHL R2 R2 2
-0x0004423A       ADD R2 R9 R2
-0x0004423E       LDW R1 [R2]
+0x00044222       MOV R2 R10
+0x00044226       SHL R2 R2 2
+0x0004422A       ADD R2 R9 R2
+0x0004422E       LDW R1 [R2]
+0x00044232   CALL puts
+0x0004423A       LI R1 ls_newline_str
 0x00044242   CALL puts
-0x0004424A       LI R1 ls_newline_str
-0x00044252   CALL puts
 
-0x0004425A       LI R6 1                 ; set return code to error
-0x00044262       ADD R10 R10 1           ; next directory
-0x00044266       B dir_loop
+0x0004424A       LI R6 1                 ; set return code to error
+0x00044252       ADD R10 R10 1           ; next directory
+0x00044256       B dir_loop
 
 dir_done:
     ; free buffer
-0x0004426E       LI  R3 DIRENT_SIZEOF
-0x00044276       ADD SP SP R3
+0x0004425E       LI  R3 DIRENT_SIZEOF
+0x00044266       ADD SP SP R3
 
-0x0004427A       MOV R1 R6               ; return code
-0x0004427E       POP R12
-0x00044282       POP R11
-0x00044286       POP R10
-0x0004428A       POP R9
-0x0004428E       POP R8
-0x00044292       POP R7
-0x00044296       POP R6
-0x0004429A       POP LR
-0x0004429E       RET
+0x0004426A       MOV R1 R6               ; return code
+0x0004426E       POP R12
+0x00044272       POP R11
+0x00044276       POP R10
+0x0004427A       POP R9
+0x0004427E       POP R8
+0x00044282       POP R7
+0x00044286       POP R6
+0x0004428A       POP LR
+0x0004428E       RET
 
 ;==============================================================================
 ; usage - Print usage message and exit
 ;==============================================================================
 usage:
-0x000442A2       LI R1 usage_str
-0x000442AA   CALL puts
-0x000442B2       LI R6 1                 ; error
-0x000442BA       B dir_done
+0x00044292       LI R1 usage_str
+0x0004429A   CALL puts
+0x000442A2       LI R6 1                 ; error
+0x000442AA       B dir_done
 
 ;==============================================================================
 ; Data Section

@@ -274,6 +274,7 @@ func KERNEL_START
         SUB R2 R2 R1
         call tarfs_init
         call tarfs_dump_index
+        call tarfs_dump_dir_index
 
 
         ;test read dirs from tarfs probably needs to be removed later
@@ -6119,9 +6120,31 @@ tarfs_inode:
 ; TARFS - RO initial system (load/start process)
 ; ==================================================
 
-.EQU MAX_TAR_FILES, 64
+; ==================================================
+; dir_index entry
+; ==================================================
 
+.EQU DIR_IDX_PARENT, 0       ; parent directory ID
+.EQU DIR_IDX_TAR,     4      ; TAR index number
+.EQU DIR_IDX_NAME,    8      ; child name pointer
+.EQU DIR_IDX_TYPE,   12      ; file/dir
+.EQU DIR_IDX_SIZEOF, 16
+
+;=================================================
+; dir_table entry
+;=================================================
+
+.EQU  DIR_ID_PATH, 0      ; ID for every dirs like "/bin/" etc.
+
+;=================================================
+
+.EQU MAX_TAR_FILES, 64
+.EQU MAX_TAR_DIRS, 64
+
+;=============================================================
 ; TAR index entry layout
+;=============================================================
+
 .EQU TAR_IDX_NAME,   0     ; ptr to filename string
 .EQU TAR_IDX_DATA,   4     ; ptr to file data
 .EQU TAR_IDX_SIZE,   8     ; file size
@@ -6143,6 +6166,19 @@ tar_count:          ; number of files in the tarfs image,
     .WORD 0
 
 tar_limit:
+    .WORD 0
+
+; additional struc for dirs 
+tar_dir_index:      ; holds strucs for directories in the tarfs image, 
+                    ; set at boot time when the index is populated
+    .SPACE DIR_IDX_SIZEOF * MAX_TAR_FILES
+; dir ids table 
+tar_dir_table:      ; holds ptrs to the pathnames of directories in the tarfs image, 
+                    ; set at boot time when the index is populated
+    .SPACE MAX_TAR_DIRS * 4
+
+tar_dir_count:      ; number of directories in the tarfs image, 
+                    ; set at boot time when the index is populated
     .WORD 0
 
 ;==============================================================
@@ -6267,15 +6303,441 @@ tar_lookup_not_found:
 
 ; --------------------------------------------------
 ; tarfs_init - initialize the tarfs by scanning the tar archive and populating the index
-;
-; in R1 = tar archive base
-; outputs:
-; global structs and variables:
-;   tar_index - populated with file metadata for lookups
-;   tar_count - set to number of files in the archive
+; R1 = pointer to the start of the tar archive
+; it also builds the directory table and index for directories for tarfs 
+; readdir and lookup operations
 ; --------------------------------------------------
 
 tarfs_init:
+    PUSH LR
+
+    BL tar_scan_archive
+    BL tar_build_dir_table
+    BL tar_build_dir_index
+
+    POP LR
+    RET
+
+;=-------------------------------------------------=
+; tar_build_dir_index - build the directory index for tarfs
+; this is used for readdir and lookup operations
+; it scans the tar_index and builds a directory index for all directories in the tarfs image
+;=-------------------------------------------------=
+
+tar_build_dir_index:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    LI R8 tar_index
+    LI R9 0                  ; TAR index number
+
+dir_index_loop:
+    LI R1 tar_count
+    LDW R1 [R1]
+
+    CMP R9 R1
+    BGE dir_index_done
+
+    MOV R1 R9
+    BL tar_find_parent_dir
+
+    ; ------------------------------------------------------------
+    ; Did we find a parent?
+    ; ------------------------------------------------------------
+    li R4 -1    
+    CMP R1 R4
+    BEQ dir_index_next
+
+    ; ------------------------------------------------------------
+    ; R1 = parent DIR_ID
+    ; R2 = child name
+    ; R3 = TAR type
+    ;
+    ; Add:
+    ;
+    ;   parent
+    ;   tar index
+    ;   child name
+    ;   type
+    ; ------------------------------------------------------------
+    ; ------------------------------------------------------------
+    ; R8 = pointer to TAR index (R1) entry
+    ; ------------------------------------------------------------
+
+    LI R4 tar_dir_index ;dir-index base
+
+    ; R4 = R4 + R9 * DIR_IDX_SIZEOF
+    ; compute address to struct item in tar_dir_index 
+    LI R5 DIR_IDX_SIZEOF
+    MUL R5 R9 R5
+    ADD R4 R4 R5    ; R4 = &tar_dir_index[R1]
+
+    ; R1 = parent directory ID
+    ; R9 = TAR index number
+    ; R2 = child name pointer
+    ; R3 = TAR type
+    ; add entry to tar_dir_index
+
+    STW R1 [R4 + DIR_IDX_PARENT]
+    STW R9 [R4 + DIR_IDX_TAR]
+    STW R2 [R4 + DIR_IDX_NAME]
+    STW R3 [R4 + DIR_IDX_TYPE]
+
+dir_index_next:
+    ADD R9 R9 1
+    B dir_index_loop
+
+dir_index_done:
+
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+; ================================================================
+; tar_find_parent_dir
+;
+; IN:
+;   R1 = TAR index number
+;
+; OUT:
+;   R1 = parent DIR_ID
+;   R2 = child name pointer
+;   R3 = TAR type
+;
+; ================================================================
+
+tar_find_parent_dir:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    ; ------------------------------------------------------------
+    ; R8 = pointer to TAR index (R1) entry
+    ; ------------------------------------------------------------
+
+    LI R8 tar_index
+
+    ; R9 = R1 * TAR_IDX_SIZEOF
+    LI R9 TAR_IDX_SIZEOF
+    MUL R9 R1 R9
+    ADD R8 R8 R9    ; R8 = &tar_index[R1]
+
+    ; ------------------------------------------------------------
+    ; Save information about the TAR object
+    ; ------------------------------------------------------------
+
+    LDW R10 [R8 + TAR_IDX_NAME]     ; R10 = full pathname
+    LDW R11 [R8 + TAR_IDX_TYPE]     ; R11 = type
+
+    ; ------------------------------------------------------------
+    ; R12 = directory ID we are testing
+    ; ------------------------------------------------------------
+
+    LI R12 0
+
+dir_find_table_loop:
+
+    ; Have we checked all directories?
+
+    LI R9 tar_dir_count
+    LDW R9 [R9]
+
+    CMP R12 R9
+    BGE dir_find_parent_fail
+
+    ; ------------------------------------------------------------
+    ; Get directory pathname
+    ;
+    ; tar_dir_table[DIR_ID]
+    ; ------------------------------------------------------------
+
+    LI R9 tar_dir_table
+
+    SHL R1 R12 2
+    ADD R9 R9 R1
+
+    LDW R9 [R9]                     ; R9 = directory path
+
+    ; ------------------------------------------------------------
+    ; Ask:
+    ;
+    ; Is R10 directly inside R9 ?
+    ;
+    ; IN:
+    ;   R1 = parent path ie  "/bin/"
+    ;   R2 = full object path ie  "/bin/cat"
+    ;
+    ; OUT:
+    ;   R1 = 1 if yes
+    ;   R2 = child name pointer
+    ;
+    ; ------------------------------------------------------------
+
+    MOV R1 R9                       ; parent path
+    MOV R2 R10                      ; object path
+
+    BL tar_path_is_child    ;check object path is child of parent path
+
+    CMP R1 0
+    BNE dir_found_parent
+
+    ADD R12 R12 1
+    B dir_find_table_loop
+
+
+dir_found_parent:
+
+    ;=------------------------------------------------------------=
+    ; Return:
+    ;
+    ; R1 = directory ID
+    ; R2 = child name
+    ; R3 = TAR type
+    ;=------------------------------------------------------------=
+
+    MOV R1 R12
+    MOV R3 R11
+
+    ; R2 already returned by tar_path_is_child
+
+    B dir_find_parent_done
+
+
+dir_find_parent_fail:
+
+    ; No parent found.
+    ;
+    ; For now return -1.
+    ;
+
+    LI R1 -1
+    LI R2 0
+    LI R3 0
+dir_find_parent_done:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+; ================================================================
+; tar_path_is_child
+;
+; IN:
+;   R1 = parent directory path - like "/bin/"
+;   R2 = object full path - like "/bin/cat"
+;
+; OUT:
+;   R1 = 1 if object is immediate child ie "/bin/cat" is child of "/bin/"
+;   R1 = 0 otherwise
+;   R2 = child name pointer when successful
+;
+; ================================================================
+
+
+tar_path_is_child:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+
+    MOV R8 R1              ; R8 = parent path
+    MOV R9 R2              ; R9 = object path
+
+
+; ------------------------------------------------
+; Compare parent path with beginning of object path
+; ------------------------------------------------
+
+compare_loop:
+    LDB R10 [R8]
+    LDB R11 [R9]
+    CMP R10 0
+    BEQ parent_finished ;if parent path is empty, we have matched the parent path
+    CMP R10 R11
+    BNE not_child       ;if chars dont match, not a child
+    ADD R8 R8 1
+    ADD R9 R9 1
+    B compare_loop
+
+
+; ------------------------------------------------
+; Parent path matched.
+;
+; R9 now points at remainder of object path.
+;
+; Example:
+;
+; parent = "/bin/"
+; object = "/bin/cat"
+;
+; R9 -> "cat"
+; ------------------------------------------------
+
+parent_finished:
+
+    ; Empty remainder?
+    LDB R10 [R9]
+    CMP R10 0
+    BEQ not_child   ;if object path is empty, not a child
+
+    ; Save child-name pointer
+    MOV R2 R9       ;when successful, R2 = child name pointer on return
+
+
+; ------------------------------------------------
+; Scan remainder of the object path for additional '/' characters
+;
+; We accept exactly ONE path component.
+;
+; "cat"       -> YES
+; "sub/"      -> YES (directory)
+; "sub/cat"   -> NO
+; ------------------------------------------------
+
+child_loop:
+
+    LDB R10 [R9]
+
+    ; End of string = one component
+    CMP R10 0
+    BEQ child_found ; ie "/bin/cat" is an immediate child of "/bin/"
+
+    ; Another '/' means another component
+    LI  R5 47 
+    CMP R10 R5
+    BEQ child_slash   ; check after slash ie "/bin/sub/cat" "c" - not imm child "null" imm child
+    ADD R9 R9 1
+    B child_loop
+; ------------------------------------------------
+; We found '/'
+;
+; It can be:
+;
+; "sub/"       -> trailing slash -> YES
+; "sub/cat"    -> another component -> NO
+; ------------------------------------------------
+
+child_slash:
+    ADD R9 R9 1
+    LDB R10 [R9]
+    ; '/' was the last character
+    ; therefore this is a directory name
+    CMP R10 0
+    BEQ child_found
+
+    ; Something follows '/'
+    ; therefore there is another component
+    B not_child
+
+; ------------------------------------------------
+; Success
+; ------------------------------------------------
+child_found:
+    LI R1 1
+    B tar_path_is_child_done
+; ------------------------------------------------
+; Not an immediate child
+; ------------------------------------------------
+
+not_child:
+    LI R1 0
+tar_path_is_child_done:
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;--------------------------------------------------
+; build_dir_table - build the directory table for tarfs
+;
+;--------------------------------------------------
+
+tar_build_dir_table:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    ; root is always directory 0
+    LI R8 tar_dir_table
+    LI R9 root_path             ;put root path in dir_table[0]
+    STW R9 [R8]
+
+    LI R10 1                    ; R10 = next dir id to assign
+    LI R11 tar_index            ; R11 = &tar_index[0]
+    LI R12 0                    ; R12 = tar_count
+
+dir_table_loop:
+
+    LI  R1 tar_count
+    LDW R1 [R1] 
+    CMP R12 R1
+    BGE dir_table_done
+
+    ; Is this TAR entry a directory?
+    LDW R1 [R11 + TAR_IDX_TYPE]     ;scan index to check if this tar entry is a directory
+    CMP R1 53                       ; 35 hex = '5' = directory type in tar header
+    BNE dir_table_next
+
+    ; Add its pathname to tar_dir_table
+    LDW R1 [R11 + TAR_IDX_NAME]     ; get pathname of this directory from tar_index
+
+    LI R8 tar_dir_table
+    SHL R9 R10 2
+    ADD R8 R8 R9
+    STW R1 [R8]                     ; put pathname in tar_dir_table[R10]
+
+    ADD R10 R10 1
+
+dir_table_next:
+    ADD R11 R11 TAR_IDX_SIZEOF
+    ADD R12 R12 1
+    B dir_table_loop
+
+dir_table_done:
+
+    LI R8 tar_dir_count
+    STW R10 [R8]                    ; finish storing total directory count in tar_dir_count
+
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;tarfs_init0:
+; ------------------------------------------------
+; tar_scan_archive
+;
+; Builds:
+;   tar_index[]
+;   tar_count
+;   tar_limit
+;
+; R1 = TAR start
+; ------------------------------------------------
+tar_scan_archive:
 
     PUSH LR
     PUSH R8
@@ -6448,11 +6910,67 @@ newline:
 tarfs_banner:
     .ASCIIZ "[TARFS]\r\n"
 
+tarfs_dir_banner:
+    .ASCIIZ "[TARFS_DIR]\r\n"
+
 etc_path:
     .ASCIIZ "etc/"
 
 bin_path:
     .ASCIIZ "bin/"
+
+root_path:
+    .ASCIIZ "/"
+
+;=-------------------------------------------------------------=
+;tar_find_dir_id - find the directory ID for a given pathname in the tar_dir_table
+;IN:
+;    R1 = directory pathname
+;OUT:
+;   R1 = DIR_ID or -1 if not found
+;=-------------------------------------------------------------=
+tar_find_dir_id:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+
+    MOV R8 R1              ; directory pathname
+    LI R9 0                ; index
+
+tar_find_dir_loop:
+
+    LI R10 tar_dir_count
+    LDW R10 [R10]
+    CMP R9 R10
+    BGE tar_find_dir_not_found
+
+    ; entry = tar_dir_table + i*sizeof(4)
+    LI R1 tar_dir_table
+    SHL R2 R9 2
+    ADD R1 R1 R2
+
+    LDW R2 [R1]            ; directory pathname from table
+    MOV R1 R8              ; input pathname
+    BL strcmp              ; compare pathnames
+    CMP R1 1               ; strcmp returns 1 if match
+    BEQ tar_find_dir_found
+
+    ADD R9 R9 1
+    B tar_find_dir_loop
+
+tar_find_dir_found:
+    MOV R1 R9              ; return DIR_ID
+    B tar_find_dir_done
+
+tar_find_dir_not_found:
+    LI R1 -1               ; not found
+tar_find_dir_done:
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
 
 ;==============================================================
 ; tarfs_dump_index - a simple debug function to print the contents of the tar index
@@ -6496,6 +7014,43 @@ dump_done:
     POP R8
     POP LR
     RET    
+
+tarfs_dump_dir_index:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    LI R8 0
+    LI R10 tar_count
+    LDW R10 [R10]
+
+    LI R1 tarfs_dir_banner
+    BL kputs
+dir_dump_loop:
+    CMP R8 R10
+    BGE dir_dump_done
+    ; entry = tar_index + i*sizeof(entry)
+    LI R1 tar_dir_index
+    LI R2 DIR_IDX_SIZEOF
+    MUL R3 R8 R2
+    ADD R9 R1 R3
+    ; filename
+    LDW R2 [R9 + DIR_IDX_NAME]
+    ; print string somehow
+    MOV R1 R2
+    BL kputs
+    ; newline
+    LI R1 newline
+    BL kputs
+    ADD R8 R8 1
+    B dir_dump_loop
+dir_dump_done:
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET    
+
 
 ;==============================================================
 ; TARFS file operations
@@ -6596,8 +7151,238 @@ tarfs_write:
     LI R1 ERR_ACCES
     RET
 
+; ================================================================
+; tarfs_readdir
+;
+; R1 = file*
+; R2 = user buffer
+; R3 = buffer length
+;
+; FILE_OFFSET = position in tar_dir_index
+;
+; inode->private = DIR_ID
+; ================================================================
+
+tarfs_readdir:
+
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    ; ------------------------------------------------------------
+    ; Validate user buffer
+    ; ------------------------------------------------------------
+
+    MOV R8 R2                  ; save user buffer
+    PUSH R8
+
+    MOV R9 R3                  ; save buffer length
+    MOV R12 R1                 ; save file*
+
+    CMP R9 DIRENT_SIZEOF
+    BLT readdir_short
+
+    MOV R1 R8
+    LI  R2 DIRENT_SIZEOF
+    LI  R3 1
+    BL  user_buffer_valid_range
+
+    CMP R1 1
+    BNE readdir_fault
+
+    ; ------------------------------------------------------------
+    ; Get directory ID
+    ; ------------------------------------------------------------
+
+    LDW R4 [R12 + FILE_INODE]
+    LDW R5 [R4 + INODE_PRIVATE]
+    CMP R5 0
+    BEQ readdir_eof
+
+    LDW R10 [R5 + TAR_IDX_NAME] ; R10 = full path of directory (with trailing /)
+    MOV R1 R10
+    BL tar_find_dir_id
+    LI  r2 -1
+    cmp r1 r2
+    beq readdir_fault
+    mov r5 r1
+    ; R5 = DIR_ID
+
+    ; ------------------------------------------------------------
+    ; Current position
+    ;
+    ; FILE_OFFSET is now an index into tar_dir_index[]
+    ; ------------------------------------------------------------
+
+    LDW R11 [R12 + FILE_OFFSET]             ;R11 index
+
+    ; ================================================================
+    ; Scan tar_dir_index
+    ; ================================================================
+
+readdir_tar_dir_index_scan:
+
+    LI R1 tar_count
+    LDW R1 [R1]
+    MOV R6 R11 ; just for this test 
+    ;we will use R6 to hold the current index in previos readdir(0)
+    CMP R11 R1
+    BGE readdir_nsfs_start
+
+    ; ------------------------------------------------------------
+    ; R7 = &tar_dir_index[R11]
+    ; ------------------------------------------------------------
+
+    LI R7 tar_dir_index
+    LI R1 DIR_IDX_SIZEOF
+    MUL R3 R11 R1
+    ADD R7 R7 R3
+
+    ; ------------------------------------------------------------
+    ; Is this entry a child of our directory?
+    ;
+    ; tar_dir_index.parent == DIR_ID
+    ; ------------------------------------------------------------
+
+    LDW R1 [R7 + DIR_IDX_PARENT]
+    CMP R1 R5
+    BNE readdir_tar_skip
+
+    ; ------------------------------------------------------------
+    ; Found directory entry
+    ;
+    ; R7 = tar_dir_index entry
+    ; ------------------------------------------------------------
+
+    LDW R9 [R7 + DIR_IDX_NAME]     ; child name
+
+    ; ------------------------------------------------------------
+    ; Get TAR entry
+    ;
+    ; We still need size/type, so use TAR index number.
+    ; ------------------------------------------------------------
+
+    LDW R6 [R7 + DIR_IDX_TAR]
+
+    LI R1 TAR_IDX_SIZEOF
+    MUL R3 R6 R1
+    LI R1 tar_index
+    ADD R1 R1 R3
+    ; R1 = &tar_index[tar_number]
+    PUSH R1 ;save tar entry pointer
+    ; ------------------------------------------------------------
+    ; Build dirent in kernel buffer
+    ; ------------------------------------------------------------
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_WR R2, R5
+
+    POP R1  ;restore tar entry pointer
+
+    ; R2 = kernel write buffer
+    ; ------------------------------------------------------------
+    ; d_ino
+    ;
+    ; For now use TAR index + 1
+    ; ------------------------------------------------------------
+
+    ADD R3 R6 1
+    STW R3 [R2 + DIRENT_INODE]
+
+    ; ------------------------------------------------------------
+    ; d_size
+    ; ------------------------------------------------------------
+
+    LDW R3 [R1 + TAR_IDX_SIZE]
+    STW R3 [R2 + DIRENT_SIZE]
+
+    ; ------------------------------------------------------------
+    ; d_type
+    ; ------------------------------------------------------------
+
+    LDW R3 [R7 + DIR_IDX_TYPE]
+    LI R1 INODE_DIR
+
+    CMP R3 R1
+    BEQ readdir_tar_type_dir
+
+    LI R3 DT_REG
+    B readdir_tar_type_done
+
+readdir_tar_type_dir:
+
+    LI R3 DT_DIR
+
+readdir_tar_type_done:
+
+    STW R3 [R2 + DIRENT_TYPE]
+
+    ; ------------------------------------------------------------
+    ; d_name
+    ; ------------------------------------------------------------
+
+    MOV R3 R2
+    ADD R3 R3 DIRENT_NAME
+
+    ; child name is R9
+
+    LI R6 0
+
+readdir_tar_copy_name:
+
+    CMP R6 63
+    BGE readdir_tar_copy_name_done
+
+    LDB R10 [R9 + R6]
+
+    CMP R10 0
+    BEQ readdir_tar_copy_name_done
+
+    STB R10 [R3 + R6]
+
+    ADD R6 R6 1
+    B readdir_tar_copy_name
+
+readdir_tar_copy_name_done:
+
+    LI R10 0
+    STB R10 [R3 + R6]
+
+    ; ------------------------------------------------------------
+    ; Advance FILE_OFFSET
+    ;
+    ; IMPORTANT:
+    ; FILE_OFFSET is tar_dir_index position now.
+    ; ------------------------------------------------------------
+
+    ADD R11 R11 1
+    STW R11 [R12 + FILE_OFFSET]
+    ;special for this test R2 - kernel buffer pointer
+    MOV R1 R2
+    b readdir_ops_go_on
+
+readdir_tar_skip:
+
+    ADD R11 R11 1
+    B readdir_tar_dir_index_scan
+
+    ; ------------------------------------------------------------
+    ; Copy dirent to user
+    ; ------------------------------------------------------------
+
+    LI R2 DIRENT_SIZEOF
+    MOV R4 R1              ; <-- careful: R1 currently tar entry
+    ; We need kernel buffer instead.
+
+    ; We need to preserve the kernel buffer pointer here.
+
+   
 ; --------------------------------------------------
-; tarfs_readdir - read next directory entry into user buffer
+; tarfs_readdir0 - read next directory entry into user buffer
 ;
 ; R1 = file* (opened directory)
 ; R2 = user buffer (struct dirent*)
@@ -6607,7 +7392,7 @@ tarfs_write:
 ;   R1 = DIRENT_SIZEOF (74) on success, 0 on EOF, negative errno
 ; --------------------------------------------------
 
-tarfs_readdir:
+tarfs_readdir0:
     PUSH LR
     PUSH R8
     PUSH R9
@@ -6753,6 +7538,8 @@ readdir_copy_name_done:
     LI R10 0
     STB R10 [R3 + R6]
 
+ ; new readdir func jumps here   
+readdir_ops_go_on:
     ; ---- copy whole dirent (DIRENT_SIZEOF bytes) to user buffer ----
     
     LI  R2 DIRENT_SIZEOF      ; len dirent
@@ -9935,12 +10722,12 @@ bmi_call_error:
 ; TAR index entry
 ; ==================================================
 
-.EQU TAR_IDX_NAME,     0      ; ptr to filename
-.EQU TAR_IDX_DATA,     4      ; ptr to file data
-.EQU TAR_IDX_SIZE,     8      ; file size
-.EQU TAR_IDX_TYPE,    12      ; file/dir
+;.EQU TAR_IDX_NAME,     0      ; ptr to filename
+;.EQU TAR_IDX_DATA,     4      ; ptr to file data
+;.EQU TAR_IDX_SIZE,     8      ; file size
+;.EQU TAR_IDX_TYPE,    12      ; file/dir
 
-.EQU TAR_IDX_SIZEOF,  16
+;.EQU TAR_IDX_SIZEOF,  16
 
 ; ==================================================
 ; VFS module
