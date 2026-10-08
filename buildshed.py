@@ -1,6 +1,6 @@
 import subprocess
 from pathlib import Path
-from assembler import Assembler
+from tools.assembler import Assembler
 
 def load(f):
     with open(f) as x:

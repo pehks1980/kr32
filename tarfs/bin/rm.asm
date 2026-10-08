@@ -1,19 +1,18 @@
 .org 0x00043000
 
 ;==============================================================================
-; rmdir - Remove directories
-;
+; rm - Remove files
 ; Usage:
-;   rmdir dir ...
+;   rm file ...
 ;
-; Remove each pathname(dir) supplied on the command line.
+; Remove each pathname(file) supplied on the command line.
 ;
 ; main:
 ;   IN:  R1 = argc
 ;        R2 = argv
 ;
 ;   OUT: R1 = 0 on success
-;        R1 = 1 if any directory could not be removed
+;        R1 = 1 if any file could not be removed
 ;
 ;==============================================================================
 
@@ -45,15 +44,14 @@ main:
                                ; 0 = all successful
                                ; 1 = at least one failure
 
-
 ;==============================================================================
 ; Process next pathname
 ;==============================================================================
 
-dir_loop:
+unlink_loop:
 
     CMP R10 R8
-    BGE dir_done
+    BGE unlink_done
 
     ;----------------------------------------------------------
     ; Get argv[R10]
@@ -71,10 +69,10 @@ dir_loop:
 
 
     ;----------------------------------------------------------
-    ; rmdir(pathname)
+    ; unlink(pathname)
     ;----------------------------------------------------------
 
-    BL rmdir
+    BL unlink
 
     MOV R11 R1                ; R11 = return value
 
@@ -83,7 +81,7 @@ dir_loop:
     BLT remove_failed
 
     ADD R10 R10 1
-    B dir_loop
+    B unlink_loop
 
 
 ;==============================================================================
@@ -93,7 +91,7 @@ dir_loop:
 remove_failed:
 
     ; Print:
-    ;   rmdir: cannot remove <pathname>
+    ;   rm: cannot remove <pathname>
 
     LI R1 error_prefix
     BL puts
@@ -107,20 +105,20 @@ remove_failed:
     LDW R1 [R2]
     BL puts
 
-    LI R1 newline_str_rmdir
+    LI R1 newline_str_unlink
     BL puts
 
     LI R6 1                    ; remember failure
 
     ADD R10 R10 1
-    B dir_loop
+    B unlink_loop
 
 
 ;==============================================================================
 ; Done
 ;==============================================================================
 
-dir_done:
+unlink_done:
 
     MOV R1 R6                  ; return status
 
@@ -141,22 +139,22 @@ dir_done:
 
 usage:
 
-    LI R1 rmdir_usage_str
+    LI R1 unlink_usage_str
     BL puts
 
     LI R1 1
-    B dir_done
+    B unlink_done
 
 
 ;==============================================================================
 ; Data
 ;==============================================================================
 
-rmdir_usage_str:
-    .ASCIIZ "usage: rmdir dir ...\n"
+unlink_usage_str:
+    .ASCIIZ "usage: rm file ...\n"
 
 error_prefix:
-    .ASCIIZ "rmdir: cannot remove "
+    .ASCIIZ "rm: cannot remove "
 
-newline_str_rmdir:
+newline_str_unlink:
     .ASCIIZ "\n"

@@ -1,4 +1,4 @@
-from assembler import Assembler
+from tools.assembler import Assembler
 from pathlib import Path
 from vmp import CPU
 

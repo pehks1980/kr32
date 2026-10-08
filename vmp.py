@@ -6,7 +6,7 @@ from collections import deque
 
 from device.cpu_cache import Cache
 
-from mmu import (
+from device.mmu import (
     MMU,
     MODE_KERNEL,
     MODE_USER,

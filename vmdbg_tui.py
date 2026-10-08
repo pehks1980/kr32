@@ -7,7 +7,7 @@ import shlex
 import time
 from pathlib import Path
 
-from assembler import Assembler
+from tools.assembler import Assembler
 from device.console import ConsoleDevice
 from vmp import CPU
 

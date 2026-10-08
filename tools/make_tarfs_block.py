@@ -7,7 +7,7 @@ from pathlib import Path
 SYSROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SYSROOT))
 
-from assembler import Assembler
+from tools.assembler import Assembler
 
 
 def parse_args():

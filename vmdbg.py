@@ -5,7 +5,7 @@ import re
 import shlex
 from pathlib import Path
 
-from assembler import Assembler
+from tools.assembler import Assembler
 from vmp import CPU
 
 try:

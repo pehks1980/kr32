@@ -1,6 +1,6 @@
 """Debug dump helpers used by the KR32 DEBUG instruction."""
 
-from mmu import PAGE_EXEC, PAGE_GLOBAL, PAGE_PRESENT, PAGE_READ, PAGE_USER, PAGE_WRITE
+from device.mmu import PAGE_EXEC, PAGE_GLOBAL, PAGE_PRESENT, PAGE_READ, PAGE_USER, PAGE_WRITE
 
 _SYMBOLS = None
 
@@ -12,7 +12,7 @@ def _load_symbols():
 
     _SYMBOLS = ({}, {})
     try:
-        from assembler import Assembler
+        from tools.assembler import Assembler
 
         for path in ("kernelshed_pre.asm", "kernelshed.asm"):
             try:

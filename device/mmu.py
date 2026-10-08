@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from tlb import TLB
+from device.tlb import TLB
 
 
 PAGE_READ = 1 << 0

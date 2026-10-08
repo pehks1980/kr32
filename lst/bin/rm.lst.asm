@@ -1,10 +1,19 @@
 .org 0x00043000
+
 ;==============================================================================
-; ls - List directory contents using opendir/readdir/closedir wrappers
-;==============================================================================
-; Simple ls implementation that reads each directory specified on the command
-; line and prints the contents (file/dir names) to stdout.
-; If a filename is a directory, it appends a '/' to the name.
+; rm - Remove files
+; Usage:
+;   rm file ...
+;
+; Remove each pathname(file) supplied on the command line.
+;
+; main:
+;   IN:  R1 = argc
+;        R2 = argv
+;
+;   OUT: R1 = 0 on success
+;        R1 = 1 if any file could not be removed
+;
 ;==============================================================================
 
 ;==============================================================================
@@ -1733,16 +1742,11 @@ atoi_positive:
 0x000440AE       POP LR
 0x000440B2       RET
 
-;==============================================================================
-; Constants (already defined in libc.inc, but redefined here for clarity)
-;==============================================================================
-.EQU O_RDONLY,      0
 
 ;==============================================================================
-; main - Program entry point
-; IN:  R1 = argc, R2 = argv
-; OUT: R1 = 0 on success, 1 if any directory could not be opened
+; main
 ;==============================================================================
+
 main:
 0x000440B6       PUSH LR
 0x000440BA       PUSH R6
@@ -1751,158 +1755,130 @@ main:
 0x000440C6       PUSH R9
 0x000440CA       PUSH R10
 0x000440CE       PUSH R11
-0x000440D2       PUSH R12
 
-    ; allocate 76-byte buffer on stack for directory entry
-0x000440D6       LI  R3 DIRENT_SIZEOF
-0x000440DE       SUB SP SP R3
-0x000440E2       MOV R12 SP              ; R12 = pointer to struct dirent buffer
+0x000440D2       MOV R8 R1                  ; R8 = argc
+0x000440D6       MOV R9 R2                  ; R9 = argv
 
-0x000440E6       MOV R8 R1               ; R8 = argc
-0x000440EA       MOV R9 R2               ; R9 = argv
+    ; Need at least one pathname
+0x000440DA       CMP R8 2
+0x000440DE       BLT usage
 
-0x000440EE       CMP R8 2                ; Need at least one argument (argv[1])
-0x000440F2       BLT usage
-
-
-
-0x000440FA       LI R10 1                ; R10 = current argument index (argv[1])
-0x00044102       LI R6 0                 ; R6 = return code (0 = success)
-
-dir_loop:
-0x0004410A       CMP R10 R8              ; if index >= argc, done
-0x0004410E       BGE dir_done
-
-    ; Get the path string from argv[index]
-0x00044116       MOV R2 R10
-0x0004411A       SHL R2 R2 2
-0x0004411E       ADD R2 R9 R2
-0x00044122       LDW R1 [R2]             ; R1 = directory path (e.g., "etc/")
-0x00044126       PUSH R1
-
-    ; Print header: "\n--- Directory: path ---\n"
-0x0004412A       LI R1 newline_str
-0x00044132   CALL puts
-0x0004413A       LI R1 dir_header_prefix
-0x00044142   CALL puts
-    ; print the directory name
-0x0004414A       MOV R2 R10
-0x0004414E       SHL R2 R2 2
-0x00044152       ADD R2 R9 R2
-0x00044156       LDW R1 [R2]
-0x0004415A   CALL puts
-0x00044162       LI R1 dir_header_suffix
-0x0004416A   CALL puts
-0x00044172       LI R1 newline_str
-0x0004417A   CALL puts
-
-    ; open directory using opendir wrapper
-0x00044182       POP R1                  ; path
-0x00044186   CALL opendir
-
-0x0004418E       MOV R11 R1              ; R11 = DIR* handle
-
-0x00044192       CMP R11 0
-0x00044196       BEQ open_failed         ; opendir returns 0 on error
-
-read_dir_loop:
-    ; Read next directory entry
-0x0004419E       MOV R1 R11              ; DIR*
-0x000441A2       MOV R2 R12              ; pointer to dirent buffer
-0x000441A6   CALL readdir
-0x000441AE       CMP R1 0
-0x000441B2       BEQ read_done           ; EOF
-0x000441BA       LI  R2 -1
-0x000441C2       CMP R1 R2
-0x000441C6       BEQ read_done           ; error
-
-    ; parse the directory entry
-0x000441CE       LDW R5 [R12 + DIRENT_TYPE]   ; R5 = d_type (DT_REG or DT_DIR)
-
-    ; print filename (null-terminated at R12 + DIRENT_NAME)
-0x000441D2       ADD R1 R12 DIRENT_NAME
-0x000441D6   CALL puts
-
-    ; if directory, print '/'
-0x000441DE       CMP R5 DT_DIR
-0x000441E2       BNE not_dir_entry
-   ; LI R1 slash_str
-   ; CALL puts
-not_dir_entry:
-
-    ; print newline
-0x000441EA       LI R1 newline_str
-0x000441F2   CALL puts
-
-0x000441FA       B read_dir_loop
-
-read_done:
-    ; close directory using closedir wrapper
-0x00044202       MOV R1 R11
-0x00044206   CALL closedir
-
-0x0004420E       ADD R10 R10 1           ; next directory
-0x00044212       B dir_loop
-
-open_failed:
-    ; print error message for this directory
-0x0004421A       LI R1 error_prefix
-0x00044222   CALL puts
-    ; print the directory name
-0x0004422A       MOV R2 R10
-0x0004422E       SHL R2 R2 2
-0x00044232       ADD R2 R9 R2
-0x00044236       LDW R1 [R2]
-0x0004423A   CALL puts
-0x00044242       LI R1 ls_newline_str
-0x0004424A   CALL puts
-
-0x00044252       LI R6 1                 ; set return code to error
-0x0004425A       ADD R10 R10 1           ; next directory
-0x0004425E       B dir_loop
-
-dir_done:
-    ; free buffer
-0x00044266       LI  R3 DIRENT_SIZEOF
-0x0004426E       ADD SP SP R3
-
-0x00044272       MOV R1 R6               ; return code
-0x00044276       POP R12
-0x0004427A       POP R11
-0x0004427E       POP R10
-0x00044282       POP R9
-0x00044286       POP R8
-0x0004428A       POP R7
-0x0004428E       POP R6
-0x00044292       POP LR
-0x00044296       RET
+0x000440E6       LI R10 1                   ; R10 = current argv index
+0x000440EE       LI R6 0                    ; R6 = return code
+                               ; 0 = all successful
+                               ; 1 = at least one failure
 
 ;==============================================================================
-; usage - Print usage message and exit
+; Process next pathname
 ;==============================================================================
+
+unlink_loop:
+
+0x000440F6       CMP R10 R8
+0x000440FA       BGE unlink_done
+
+    ;----------------------------------------------------------
+    ; Get argv[R10]
+    ;
+    ; R2 = &argv[index]
+    ; R1 = argv[index] = pathname
+    ;----------------------------------------------------------
+
+0x00044102       MOV R2 R10
+0x00044106       SHL R2 R2 2
+0x0004410A       ADD R2 R9 R2
+
+0x0004410E       LDW R1 [R2]                ; R1 = pathname
+0x00044112       li  R2 0                   ; NS=0
+
+
+    ;----------------------------------------------------------
+    ; unlink(pathname)
+    ;----------------------------------------------------------
+
+0x0004411A       BL unlink
+
+0x00044122       MOV R11 R1                ; R11 = return value
+
+    ; negative = failure
+0x00044126       CMP R11 0
+0x0004412A       BLT remove_failed
+
+0x00044132       ADD R10 R10 1
+0x00044136       B unlink_loop
+
+
+;==============================================================================
+; Creation failed
+;==============================================================================
+
+remove_failed:
+
+    ; Print:
+    ;   rm: cannot remove <pathname>
+
+0x0004413E       LI R1 error_prefix
+0x00044146       BL puts
+
+    ; argv[R10]
+
+0x0004414E       MOV R2 R10
+0x00044152       SHL R2 R2 2
+0x00044156       ADD R2 R9 R2
+
+0x0004415A       LDW R1 [R2]
+0x0004415E       BL puts
+
+0x00044166       LI R1 newline_str_unlink
+0x0004416E       BL puts
+
+0x00044176       LI R6 1                    ; remember failure
+
+0x0004417E       ADD R10 R10 1
+0x00044182       B unlink_loop
+
+
+;==============================================================================
+; Done
+;==============================================================================
+
+unlink_done:
+
+0x0004418A       MOV R1 R6                  ; return status
+
+0x0004418E       POP R11
+0x00044192       POP R10
+0x00044196       POP R9
+0x0004419A       POP R8
+0x0004419E       POP R7
+0x000441A2       POP R6
+0x000441A6       POP LR
+
+0x000441AA       RET
+
+
+;==============================================================================
+; Usage
+;==============================================================================
+
 usage:
-0x0004429A       LI R1 usage_str
-0x000442A2   CALL puts
-0x000442AA       LI R6 1                 ; error
-0x000442B2       B dir_done
+
+0x000441AE       LI R1 unlink_usage_str
+0x000441B6       BL puts
+
+0x000441BE       LI R1 1
+0x000441C6       B unlink_done
+
 
 ;==============================================================================
-; Data Section
+; Data
 ;==============================================================================
-usage_str:
-    .ASCIIZ "usage: ls directory ...\n"
+
+unlink_usage_str:
+    .ASCIIZ "usage: rm file ...\n"
+
 error_prefix:
-    .ASCIIZ "ls: cannot open "
-dir_header_prefix:
-    .ASCIIZ "--- Directory: "
-dir_header_suffix:
-    .ASCIIZ " ---"
-slash_str:
-    .ASCIIZ "/"
-ls_newline_str:
-    .ASCIIZ "\n"
+    .ASCIIZ "rm: cannot remove "
 
-;==============================================================================
-; Include the standard libc scaffold
-;==============================================================================
-; ... (rest of libc.inc goes here, including opendir/readdir/closedir)
+newline_str_unlink:
+    .ASCIIZ "\n"

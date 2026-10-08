@@ -713,6 +713,7 @@ syscall_table:
     .WORD syscall_waitpid       ; SVC 16
     .WORD syscall_mkdir         ; SVC 17
     .WORD syscall_rmdir         ; SVC 18
+    .WORD syscall_unlink        ; SVC 19
     
     
 
@@ -2040,7 +2041,44 @@ syscall_rmdir:
     ; R1 < 0 on error
     STW R1 [SP + TF_R1]     ;mkdir created exit!
     B trap_restore
-    
+
+rmdir_fail_fault:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]     ;rmdir  not created ERR todo
+    B trap_restore
+
+syscall_unlink:
+    ;================================================================
+    ; unlink(pathname)
+    ; R1 = user pathname
+    ; R2 = namespace
+    ; Returns:
+    ;   R1 = 0       success
+    ;   R1 < 0       error
+    ;================================================================
+
+    LDW R8 [SP + TF_R1]        ; R8 = user pathname
+    LDW R9 [SP + TF_R2]        ; R9 = namespace
+
+    MOV R1  R8
+    BL copy_path_from_user     ; copy pathname to kernel buffer
+    CMP R1 0
+    BEQ unlink_fail_fault
+
+    GET_CURR_TASK_IDX R4
+    GET_TASK_PTR R5, R4
+    TASK_GET_KBUF_RD R1, R5
+    MOV R2 R9                  ; NS
+
+    BL vfs_unlink              ; perform unlink operation
+
+    STW R1 [SP + TF_R1]        ; save result (0 or error) to trapframe
+    B trap_restore
+
+unlink_fail_fault:
+    LI R1 ERR_FAULT
+    STW R1 [SP + TF_R1]     ;unlink  not created ERR todo
+    B trap_restore
 
 ;===============================================================
 ; vfs_mkdir
@@ -2055,6 +2093,7 @@ syscall_rmdir:
 vfs_mkdir:
     PUSH LR
     PUSH R8
+    PUSH R9
 
     MOV R8 R1       ;pathname
     MOV R9 R2       ;namespace
@@ -2075,8 +2114,14 @@ vfs_mkdir:
     MOV R1 R8
     MOV R2 R9
     BL nsfs_mkdir
-
     ; R1 = 0 or error
+    cmp R1 0
+    BNE mkdir_error
+    
+    B mkdir_exit
+
+mkdir_error:
+    LI R1 ERR_IO
     B mkdir_exit
 
 mkdir_exists:
@@ -2087,6 +2132,7 @@ mkdir_invalid:
     LI R1 ERR_INVAL
 
 mkdir_exit:
+    POP R9  
     POP R8
     POP LR
     RET
@@ -2125,8 +2171,13 @@ vfs_rmdir:
     MOV R1 R8
     MOV R2 R9
     BL nsfs_rmdir
-
+    cmp R1 0
+    BNE rmdir_error
     ; R1 = 0 or error
+    B rmdir_exit
+
+rmdir_error:
+    LI R1 ERR_IO
     B rmdir_exit
 
 rmdir_dont_exist:
@@ -2137,6 +2188,61 @@ rmdir_invalid:
     LI R1 ERR_INVAL
 
 rmdir_exit:
+    POP R8
+    POP R9
+    POP LR
+    RET
+
+;===============================================================
+;   vfs_unlink - remove file from NS
+;
+;   R1 = pathname R2 = namespace
+;
+;   Returns:        
+;     R1 = 0       success
+;     R1 < 0       error
+;===============================================================   
+vfs_unlink:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+
+    MOV R8 R1       ;pathname
+    MOV R9 R2       ;namespace
+
+    ; validate pathname
+    MOV R1 R8
+    BL validate_pathname
+    CMP R1 0
+    BNE unlink_invalid
+
+    ; First check whether file already exists
+    MOV R1 R8
+    BL nsfs_lookup
+    CMP R1 0
+    BEQ unlink_dont_exist
+
+    ; Ask writable filesystem to unlink file
+    MOV R1 R8
+    MOV R2 R9
+    BL nsfs_unlink
+    cmp R1 0
+    BNE unlink_error
+    ; R1 = 0 or error
+    B unlink_exit
+
+unlink_error:
+    LI R1 ERR_IO
+    B unlink_exit
+
+unlink_dont_exist:
+    LI R1 ERR_DONT_EXIST
+    B unlink_exit
+
+unlink_invalid:
+    LI R1 ERR_INVAL
+
+unlink_exit:
     POP R8
     POP R9
     POP LR
@@ -3392,13 +3498,56 @@ get_path_len_done:
     POP LR
     RET
 
-; nsfs_unlink
-; in:  R1 = pathname
+;=====================================================================
+; nsfs_unlink - remove a file from the NSFS overlay
+; in:  R1 = pathname R3 = NS
 ; out: R1 = 0 or errno
+;=====================================================================
+
 nsfs_unlink:
+    PUSH LR
+    PUSH R6
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    MOV  R8  R1
+    MOV  R9  R2
+    MOV  R10 R3
+    LI   R10 NSFS_DEFAULT_NS         ; Defaut NS for now
     ; TODO: FILE_DELETE over BMI and create whiteout when shadowing tarfs.
-    LI R1 ERR_NOENT
+    ; in future
+    MOV  R2  R8                       ; R2 = pathname
+    BL   get_path_len                 ; get length of the pathname string
+    mov  R3 R1                        ; R3 = length of the pathname string
+    ; bmi_call removes the object from the host JSON KV store.
+    ; After nsfs_refresh_index, nsfs_lookup will no longer find it.
+    MOV  R1 FILE_DELETE              ;opcode FILE_DELETE
+    MOV  R4 R10                        ; at this time we work with default namespace only
+    CALL bmi_call                   ;bmi_call adds the new file to the host JSON KV store, so after nsfs_refresh_index, nsfs_lookup will find it    
+    ;check bmi_call return status
+    CMP  R1 0
+    BNE  nsfs_unlink_fail
+    ; refresh the index table
+    MOV R1 R10                        ; at this time we work with default namespace only
+    BL nsfs_refresh_index
+    CMP R1 0
+    BNE nsfs_unlink_fail
+    ;file deleted we done here now lookup is needed
+    POP R10
+    POP R9
+    POP R8
+    POP R6    
+    POP LR
     RET
+
+nsfs_unlink_fail:
+    LI R1 ERR_NOENT
+    POP R10
+    POP R9
+    POP R8
+    POP R6
+    POP LR      
+    RET 
 
 ;=====================================================================
 ; nsfs_mkdir - create a new directory in the NSFS overlay
@@ -3406,7 +3555,7 @@ nsfs_unlink:
 ; in:  R1 = pathname
 ;      R2 = namespace
 ;
-; out: R1 = inode ptr if created, or errno
+; out: R1 = 0 successful lookup - success, or errno
 ;=====================================================================
 
 nsfs_mkdir:
@@ -3495,12 +3644,15 @@ nsfs_rmdir:
 
     CMP R1 0
     BNE nsfs_rmdir_fail
+    ; R1 = 0 here
+    ; we dont need to make extra nsfs_lookup call here 
+    ;as we just deleted the directory and we dont need 
+    ;to return inode ptr for it
+  ;  MOV R1 R8
+  ;  BL  nsfs_lookup
 
-    MOV R1 R8
-    BL  nsfs_lookup
-
-    CMP R1 0
-    BNE nsfs_rmdir_fail
+  ;  CMP R1 0
+  ;  BNE nsfs_rmdir_fail
 
     POP R10
     POP R9
@@ -5691,7 +5843,8 @@ trap_restore:
 .EQU SYS_WAITPID,   16      ; wait for child process to change state
 .EQU SYS_MKDIR,     17      ; mkdir in overlay fsys
 .EQU SYS_RMDIR,     18      ; rmdir in overlay fsys
-.EQU SYS_COUNT,     19      ; update count
+.EQU SYS_UNLINK,     19     ; unlink in overlay fsys
+.EQU SYS_COUNT,     20      ; update count
 
 
 ;=============================================================
@@ -7151,7 +7304,7 @@ tarfs_write:
     LI R1 ERR_ACCES
     RET
 
-; ================================================================
+;=--------------------------------------------------------------=
 ; tarfs_readdir
 ;
 ; R1 = file*
@@ -7161,7 +7314,7 @@ tarfs_write:
 ; FILE_OFFSET = position in tar_dir_index
 ;
 ; inode->private = DIR_ID
-; ================================================================
+;=--------------------------------------------------------------=
 
 tarfs_readdir:
 
@@ -10605,7 +10758,7 @@ console_unlock:
     POP LR
     RET
 
-;------------------------------------------------------
+;=------------------------------------------------------=
 ; bmi_call
 ;
 ; R1 = opcode
@@ -10615,7 +10768,7 @@ console_unlock:
 ;
 ; Returns:
 ;   R1 = BMI reply code
-;------------------------------------------------------
+;=------------------------------------------------------=
 
 bmi_call:
     PUSH LR
@@ -11212,20 +11365,20 @@ ls_argv:
     .WORD 0
 
 
-; ================================================================
+;|+================================================================+|
 ; task_init – PID 1 initial process
-; ================================================================
+;|+================================================================+|
 ; This is the first user‑space process created by the kernel.
 ; It acts as a simple init:
 ;   - fork() a child
 ;   - child execs /bin/sh (the interactive shell)
 ;   - parent waits for the shell to exit, then restarts it
-; ================================================================
+;|+================================================================+|
 
 .org 0x1C000
 TASK_INIT_START:
 
-    ; Optional: print a startup message
+    ; print a startup message
     LI R1 STDOUT_FD
     LI R2 init_start_msg
     LI R3 12
@@ -11277,7 +11430,7 @@ child_process:
     SVC SYS_EXIT
 
     ; ------------------------------------------------------------
-    ; Error handlers (simple: print and halt)
+    ; Error handlers (print and halt)
     ; ------------------------------------------------------------
 fork_error:
     LI R1 STDOUT_FD
