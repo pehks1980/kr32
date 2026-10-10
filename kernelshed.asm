@@ -51,9 +51,10 @@ B KERNEL_START
 
 ;memory map used for data validation when make syscalls which transfer data b/w kernel and user
 .EQU KERNEL_BASE,     0x00000000
-.EQU KERNEL_LIMIT,    0x0003EFFF
+.EQU KERNEL_LIMIT,    0x0003DFFF
+.EQU KERNEL_STACK_TOP, 0x0003E000
 
-.EQU USER_BASE,       0x00019000
+.EQU USER_BASE,       0x0003E000
 .EQU USER_LIMIT,      0x0005FFFF
 
 .EQU USER_STACK_VA,   0x0003F000
@@ -243,7 +244,7 @@ cr_file_append_payload1:
 ; KERNEL CODE (starts at 0x2000)
 ; ================================================================
 func KERNEL_START
-        LI SP 0x0000F000
+        LI SP KERNEL_STACK_TOP
         MOV FP SP
 
         ; Initialize unified IDT (all traps go to trap_entry)
@@ -444,6 +445,21 @@ map_common_kernel:
 
     LI R2 0x0000C000      ; add page (number is page table entry one) tasks data
     LI R3 0x0000C000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x0000D000      ; add page (number is page table entry one) tasks data
+    LI R3 0x0000D000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x0000E000      ; add page (number is page table entry one) tasks data
+    LI R3 0x0000E000
+    LI R4 KERNEL_FLAGS
+    BL map_page
+
+    LI R2 0x0000F000      ; add page (number is page table entry one) tasks data
+    LI R3 0x0000F000
     LI R4 KERNEL_FLAGS
     BL map_page
 
@@ -10974,7 +10990,8 @@ BMI_REG_BASE:
 
 
 ; --TASK 1----------------------------------------------
-.ORG 0x19000
+.ORG 0x40000
+
 TASK_A_START:
     li R1 25
 write_loop1:
@@ -11010,8 +11027,6 @@ write_loop1:
 
 ; ---TASK 2---------------------------------------------
 
-
-.org 0x1a000
 TASK_B_START:
 
     ; Read the built-in TARFS message through open/read/close.
@@ -11102,7 +11117,6 @@ task_b_open_fail:
     B task_b_loop
 
 ; task2 date page
-.org 0x1A100
 task_b_console_path:
     .ASCIIZ "/dev/console"
 
@@ -11123,7 +11137,6 @@ open_fail_msg_len:
 
 
 ; Test program for gettime and brk
-.org 0x1B000
 TASK_C_START:
 
     ; ====================================
@@ -11374,8 +11387,6 @@ ls_argv:
 ;   - child execs /bin/sh (the interactive shell)
 ;   - parent waits for the shell to exit, then restarts it
 ;|+================================================================+|
-
-.org 0x1C000
 TASK_INIT_START:
 
     ; print a startup message

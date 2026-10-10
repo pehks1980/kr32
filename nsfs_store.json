@@ -6,58 +6,34 @@
         "type": "dir"
       }
     },
-    "ns:0:chunk:655": {
+    "ns:0:chunk:666": {
       "data": "QUJDCg==",
       "size": 4
     },
-    "ns:0:chunk:656": {
+    "ns:0:chunk:667": {
       "data": "QUJDCkFCQwo=",
       "size": 8
     },
-    "ns:0:chunk:657": {
+    "ns:0:chunk:668": {
       "data": "V2VsY29tZSB0byBLUjMyCg==",
       "size": 16
     },
-    "ns:0:filever:/bbb/a1.txt:1": {
+    "ns:0:filever:/aaa/motd:1": {
       "chunks": [],
-      "created_txid": 1064,
+      "created_txid": 1094,
       "deleted": false,
-      "modified_txid": 1064,
+      "modified_txid": 1094,
       "previous": null,
       "size": 0,
       "tail": null,
       "type": "file",
       "version": 1
-    },
-    "ns:0:filever:/bbb/motd:1": {
-      "chunks": [],
-      "created_txid": 1066,
-      "deleted": false,
-      "modified_txid": 1066,
-      "previous": null,
-      "size": 0,
-      "tail": null,
-      "type": "file",
-      "version": 1
-    },
-    "ns:0:filever:/bbb/motd:2": {
-      "chunks": [
-        657
-      ],
-      "created_txid": 1066,
-      "deleted": false,
-      "modified_txid": 1067,
-      "previous": "ns:0:filever:/bbb/motd:1",
-      "size": 16,
-      "tail": 657,
-      "type": "file",
-      "version": 2
     },
     "ns:0:filever:/etc/crash.txt:1": {
       "chunks": [],
-      "created_txid": 1059,
+      "created_txid": 1090,
       "deleted": false,
-      "modified_txid": 1059,
+      "modified_txid": 1090,
       "previous": null,
       "size": 0,
       "tail": null,
@@ -66,140 +42,101 @@
     },
     "ns:0:filever:/etc/crash.txt:2": {
       "chunks": [
-        655
+        666
       ],
-      "created_txid": 1059,
+      "created_txid": 1090,
       "deleted": false,
-      "modified_txid": 1060,
+      "modified_txid": 1091,
       "previous": "ns:0:filever:/etc/crash.txt:1",
       "size": 4,
-      "tail": 655,
+      "tail": 666,
       "type": "file",
       "version": 2
     },
-    "ns:0:log:1058": {
+    "ns:0:log:1089": {
       "op": "ns_create",
-      "time": 1791460545.5134668
+      "time": 1791670015.906482
     },
-    "ns:0:log:1059": {
+    "ns:0:log:1090": {
       "op": "file_create",
       "path": "/etc/crash.txt",
-      "time": 1791460545.5164359
+      "time": 1791670015.9113631
     },
-    "ns:0:log:1060": {
+    "ns:0:log:1091": {
       "bytes": 4,
       "new_version": 2,
       "old_version": 1,
       "op": "file_append",
       "path": "/etc/crash.txt",
-      "time": 1791460545.520898
+      "time": 1791670015.919413
     },
-    "ns:0:log:1061": {
+    "ns:0:log:1092": {
       "bytes": 4,
       "new_version": 3,
       "old_version": 2,
       "op": "file_append",
       "path": "/etc/crash.txt",
-      "time": 1791460545.526363
+      "time": 1791670015.926566
     },
-    "ns:0:log:1062": {
+    "ns:0:log:1093": {
       "op": "dir_create",
       "path": "/aaa/",
-      "time": 1791460545.528555
+      "time": 1791670015.930227
     },
-    "ns:0:log:1063": {
-      "op": "dir_create",
-      "path": "/bbb/",
-      "time": 1791460859.558986
-    },
-    "ns:0:log:1064": {
+    "ns:0:log:1094": {
       "op": "file_create",
-      "path": "/bbb/a1.txt",
-      "time": 1791460939.60414
+      "path": "/aaa/motd",
+      "time": 1791670100.073442
     },
-    "ns:0:log:1065": {
-      "old_version": 1,
-      "op": "file_delete",
-      "path": "/bbb/a1.txt",
-      "time": 1791460973.5928051
-    },
-    "ns:0:log:1066": {
-      "op": "file_create",
-      "path": "/bbb/motd",
-      "time": 1791461085.63619
-    },
-    "ns:0:log:1067": {
+    "ns:0:log:1095": {
       "bytes": 16,
       "new_version": 2,
       "old_version": 1,
       "op": "file_append",
-      "path": "/bbb/motd",
-      "time": 1791461085.6943429
-    },
-    "ns:0:log:1068": {
-      "old_version": 2,
-      "op": "file_delete",
-      "path": "/bbb/motd",
-      "time": 1791461155.590297
+      "path": "/aaa/motd",
+      "time": 1791670100.151561
     },
     "ns:0:meta": {
       "admissions": [],
       "checkpoint": null,
-      "created_txid": 1058,
+      "created_txid": 1089,
       "env": {},
       "version": 1
     },
     "ns:0:path:/aaa/": {
       "children": {},
-      "created_txid": 1062,
-      "modified_txid": 1062,
+      "created_txid": 1093,
+      "modified_txid": 1093,
       "type": "dir"
     },
-    "ns:0:path:/bbb/": {
-      "children": {},
-      "created_txid": 1063,
-      "modified_txid": 1063,
-      "type": "dir"
-    },
-    "ns:0:path:/bbb/a1.txt": {
-      "chunks": [],
-      "created_txid": 1064,
-      "deleted": true,
-      "modified_txid": 1065,
-      "previous": "ns:0:filever:/bbb/a1.txt:1",
-      "size": 0,
-      "tail": null,
+    "ns:0:path:/aaa/motd": {
+      "chunks": [
+        668
+      ],
+      "created_txid": 1094,
+      "deleted": false,
+      "modified_txid": 1095,
+      "previous": "ns:0:filever:/aaa/motd:1",
+      "size": 16,
+      "tail": 668,
       "type": "file",
       "version": 2
     },
-    "ns:0:path:/bbb/motd": {
-      "chunks": [
-        657
-      ],
-      "created_txid": 1066,
-      "deleted": true,
-      "modified_txid": 1068,
-      "previous": "ns:0:filever:/bbb/motd:2",
-      "size": 16,
-      "tail": 657,
-      "type": "file",
-      "version": 3
-    },
     "ns:0:path:/etc/crash.txt": {
       "chunks": [
-        656
+        667
       ],
-      "created_txid": 1059,
+      "created_txid": 1090,
       "deleted": false,
-      "modified_txid": 1061,
+      "modified_txid": 1092,
       "previous": "ns:0:filever:/etc/crash.txt:2",
       "size": 8,
-      "tail": 656,
+      "tail": 667,
       "type": "file",
       "version": 3
     }
   },
-  "next_chunk_id": 658,
-  "next_txid": 1069,
+  "next_chunk_id": 669,
+  "next_txid": 1096,
   "version": 1
 }
