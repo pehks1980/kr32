@@ -243,7 +243,8 @@ cr_file_append_payload1:
 ; ================================================================
 ; KERNEL CODE (starts at 0x2000)
 ; ================================================================
-func KERNEL_START
+; Do not use `func` here: its prologue pushes FP before SP is initialized.
+KERNEL_START:
         LI SP KERNEL_STACK_TOP
         MOV FP SP
 
@@ -6040,15 +6041,38 @@ devfs_ops:
 ;=========================================================================
 ; NSFS index table item structure
 ;=========================================================================
-.EQU NSFS_INDEX_TYPE,     0
-.EQU NSFS_INDEX_SIZE,     4
-.EQU NSFS_INDEX_VERSION,  8
-.EQU NSFS_INDEX_PATH,    12
-.EQU NSFS_INDEX_PATH_LEN, 16
-.EQU NSFS_INDEX_ENTRY_SIZEOF, 20
+.EQU NSFS_INDEX_NS,       0
+.EQU NSFS_INDEX_TYPE,     4
+.EQU NSFS_INDEX_SIZE,     8
+.EQU NSFS_INDEX_VERSION, 12
+.EQU NSFS_INDEX_PATH,    16
+.EQU NSFS_INDEX_PATH_LEN,20
+.EQU NSFS_INDEX_ENTRY_SIZEOF, 24
+
 
 .EQU NSFS_INDEX_MAX_ENTRIES, 64
-.EQU NSFS_INDEX_PATH_POOL_SIZE, 2048
+.EQU MAX_NSFS_NAMESPACES,    4
+.EQU MAX_NSFS_INDEX_ENTRIES, 128
+.EQU MAX_NSFS_DIRS,          128
+.EQU MAX_NSFS_DIR_ENTRIES,   256
+;.EQU NSFS_INDEX_PATH_POOL_SIZE, 4096
+
+
+
+.EQU NSFS_DIR_NS,         0
+.EQU NSFS_DIR_PATH,       4
+.EQU NSFS_DIR_FLAGS,      8
+.EQU NSFS_DIR_SIZEOF,    12
+
+.EQU NSFS_DIR_IDX_NS,       0
+.EQU NSFS_DIR_IDX_PARENT,   4
+.EQU NSFS_DIR_IDX_NAME,     8
+.EQU NSFS_DIR_IDX_INDEX,   12
+.EQU NSFS_DIR_IDX_TYPE,    16
+.EQU NSFS_DIR_IDX_SIZEOF,  20
+
+.EQU NSFS_INDEX_MAX_ENTRIES, 64
+.EQU NSFS_INDEX_PATH_POOL_SIZE, 4096
 
 ;=========================================================================
 ;
@@ -6123,6 +6147,25 @@ nsfs_index_path_next:
 ; each path is a null-terminated string
 nsfs_index_path_pool:   
     .SPACE NSFS_INDEX_PATH_POOL_SIZE
+
+;=========================================================================
+; nsfs dir table and path pool for index entries.
+;=========================================================================
+
+; Derived directory table and child index for NSFS.
+; dir_table[0] is always "/" for the currently refreshed namespace.
+nsfs_dir_count:
+    .WORD 0
+
+nsfs_dir_index_count:
+    .WORD 0
+
+nsfs_dir_table:
+    .SPACE MAX_NSFS_DIRS * NSFS_DIR_SIZEOF
+
+nsfs_dir_index:
+    .SPACE MAX_NSFS_DIR_ENTRIES * NSFS_DIR_IDX_SIZEOF
+
 
 ;=========================================================================
 ;
