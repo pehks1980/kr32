@@ -6,19 +6,149 @@
         "type": "dir"
       }
     },
-    "ns:0:chunk:721": {
+    "ns:0:chunk:732": {
       "data": "QUJDCg==",
       "size": 4
     },
-    "ns:0:chunk:722": {
+    "ns:0:chunk:733": {
       "data": "QUJDCkFCQwo=",
       "size": 8
     },
+    "ns:0:chunk:734": {
+      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCA=",
+      "size": 128
+    },
+    "ns:0:chunk:735": {
+      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgIA==",
+      "size": 256
+    },
+    "ns:0:chunk:736": {
+      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBI",
+      "size": 384
+    },
+    "ns:0:chunk:737": {
+      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIPT09PT09PT09PT09PT09PT09PT09Qk9PVElORz09PT09PT09PT09PT09PT09PT09PT09PUgKSCAgICAgICAgICAgICAgICA=",
+      "size": 512
+    },
+    "ns:0:chunk:738": {
+      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIPT09PT09PT09PT09PT09PT09PT09Qk9PVElORz09PT09PT09PT09PT09PT09PT09PT09PUgKSCAgICAgICAgICAgICAgICAgICAgICAgIEggICAgICAgICAgICAgICAgICAgICAgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICBIICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICAgICAgICAgICAgICAgICAkICAgICAgSCAgICAgICQgIA==",
+      "size": 640
+    },
+    "ns:0:chunk:739": {
+      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIPT09PT09PT09PT09PT09PT09PT09Qk9PVElORz09PT09PT09PT09PT09PT09PT09PT09PUgKSCAgICAgICAgICAgICAgICAgICAgICAgIEggICAgICAgICAgICAgICAgICAgICAgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICBIICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICAgICAgICAgICAgICAgICAkICAgICAgSCAgICAgICQgICAgICAgICAgICAgICAgICAgIEgKSD09PT09PT09PT09PT09PT09PT09PT09PUg9PT09PT09PT09PT09PT09PT09PT09PT09PT1ICkhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhI",
+      "size": 768
+    },
+    "ns:0:chunk:740": {
+      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIPT09PT09PT09PT09PT09PT09PT09Qk9PVElORz09PT09PT09PT09PT09PT09PT09PT09PUgKSCAgICAgICAgICAgICAgICAgICAgICAgIEggICAgICAgICAgICAgICAgICAgICAgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICBIICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICAgICAgICAgICAgICAgICAkICAgICAgSCAgICAgICQgICAgICAgICAgICAgICAgICAgIEgKSD09PT09PT09PT09PT09PT09PT09PT09PUg9PT09PT09PT09PT09PT09PT09PT09PT09PT1ICkhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISA==",
+      "size": 769
+    },
+    "ns:0:filever:/aaa/logo.txt:1": {
+      "chunks": [],
+      "created_txid": 1250,
+      "deleted": false,
+      "modified_txid": 1250,
+      "previous": null,
+      "size": 0,
+      "tail": null,
+      "type": "file",
+      "version": 1
+    },
+    "ns:0:filever:/aaa/logo.txt:2": {
+      "chunks": [
+        734
+      ],
+      "created_txid": 1250,
+      "deleted": false,
+      "modified_txid": 1251,
+      "previous": "ns:0:filever:/aaa/logo.txt:1",
+      "size": 128,
+      "tail": 734,
+      "type": "file",
+      "version": 2
+    },
+    "ns:0:filever:/aaa/logo.txt:3": {
+      "chunks": [
+        735
+      ],
+      "created_txid": 1250,
+      "deleted": false,
+      "modified_txid": 1252,
+      "previous": "ns:0:filever:/aaa/logo.txt:2",
+      "size": 256,
+      "tail": 735,
+      "type": "file",
+      "version": 3
+    },
+    "ns:0:filever:/aaa/logo.txt:4": {
+      "chunks": [
+        736
+      ],
+      "created_txid": 1250,
+      "deleted": false,
+      "modified_txid": 1253,
+      "previous": "ns:0:filever:/aaa/logo.txt:3",
+      "size": 384,
+      "tail": 736,
+      "type": "file",
+      "version": 4
+    },
+    "ns:0:filever:/aaa/logo.txt:5": {
+      "chunks": [
+        737
+      ],
+      "created_txid": 1250,
+      "deleted": false,
+      "modified_txid": 1254,
+      "previous": "ns:0:filever:/aaa/logo.txt:4",
+      "size": 512,
+      "tail": 737,
+      "type": "file",
+      "version": 5
+    },
+    "ns:0:filever:/aaa/logo.txt:6": {
+      "chunks": [
+        738
+      ],
+      "created_txid": 1250,
+      "deleted": false,
+      "modified_txid": 1255,
+      "previous": "ns:0:filever:/aaa/logo.txt:5",
+      "size": 640,
+      "tail": 738,
+      "type": "file",
+      "version": 6
+    },
+    "ns:0:filever:/aaa/logo.txt:7": {
+      "chunks": [
+        739
+      ],
+      "created_txid": 1250,
+      "deleted": false,
+      "modified_txid": 1256,
+      "previous": "ns:0:filever:/aaa/logo.txt:6",
+      "size": 768,
+      "tail": 739,
+      "type": "file",
+      "version": 7
+    },
+    "ns:0:filever:/aaa/logo.txt:8": {
+      "chunks": [
+        740
+      ],
+      "created_txid": 1250,
+      "deleted": false,
+      "modified_txid": 1257,
+      "previous": "ns:0:filever:/aaa/logo.txt:7",
+      "size": 769,
+      "tail": 740,
+      "type": "file",
+      "version": 8
+    },
     "ns:0:filever:/etc/crash.txt:1": {
       "chunks": [],
-      "created_txid": 1228,
+      "created_txid": 1246,
       "deleted": false,
-      "modified_txid": 1228,
+      "modified_txid": 1246,
       "previous": null,
       "size": 0,
       "tail": null,
@@ -27,75 +157,155 @@
     },
     "ns:0:filever:/etc/crash.txt:2": {
       "chunks": [
-        721
+        732
       ],
-      "created_txid": 1228,
+      "created_txid": 1246,
       "deleted": false,
-      "modified_txid": 1229,
+      "modified_txid": 1247,
       "previous": "ns:0:filever:/etc/crash.txt:1",
       "size": 4,
-      "tail": 721,
+      "tail": 732,
       "type": "file",
       "version": 2
     },
-    "ns:0:log:1227": {
+    "ns:0:log:1245": {
       "op": "ns_create",
-      "time": 1792187628.810156
+      "time": 1792188651.384801
     },
-    "ns:0:log:1228": {
+    "ns:0:log:1246": {
       "op": "file_create",
       "path": "/etc/crash.txt",
-      "time": 1792187628.815083
+      "time": 1792188651.389684
     },
-    "ns:0:log:1229": {
+    "ns:0:log:1247": {
       "bytes": 4,
       "new_version": 2,
       "old_version": 1,
       "op": "file_append",
       "path": "/etc/crash.txt",
-      "time": 1792187628.822581
+      "time": 1792188651.3962991
     },
-    "ns:0:log:1230": {
+    "ns:0:log:1248": {
       "bytes": 4,
       "new_version": 3,
       "old_version": 2,
       "op": "file_append",
       "path": "/etc/crash.txt",
-      "time": 1792187628.82937
+      "time": 1792188651.4028459
     },
-    "ns:0:log:1231": {
+    "ns:0:log:1249": {
       "op": "dir_create",
       "path": "/aaa/",
-      "time": 1792187628.832743
+      "time": 1792188651.406076
+    },
+    "ns:0:log:1250": {
+      "op": "file_create",
+      "path": "/aaa/logo.txt",
+      "time": 1792188687.583325
+    },
+    "ns:0:log:1251": {
+      "bytes": 128,
+      "new_version": 2,
+      "old_version": 1,
+      "op": "file_append",
+      "path": "/aaa/logo.txt",
+      "time": 1792188687.752087
+    },
+    "ns:0:log:1252": {
+      "bytes": 128,
+      "new_version": 3,
+      "old_version": 2,
+      "op": "file_append",
+      "path": "/aaa/logo.txt",
+      "time": 1792188687.907409
+    },
+    "ns:0:log:1253": {
+      "bytes": 128,
+      "new_version": 4,
+      "old_version": 3,
+      "op": "file_append",
+      "path": "/aaa/logo.txt",
+      "time": 1792188688.0620108
+    },
+    "ns:0:log:1254": {
+      "bytes": 128,
+      "new_version": 5,
+      "old_version": 4,
+      "op": "file_append",
+      "path": "/aaa/logo.txt",
+      "time": 1792188688.2168078
+    },
+    "ns:0:log:1255": {
+      "bytes": 128,
+      "new_version": 6,
+      "old_version": 5,
+      "op": "file_append",
+      "path": "/aaa/logo.txt",
+      "time": 1792188688.410239
+    },
+    "ns:0:log:1256": {
+      "bytes": 128,
+      "new_version": 7,
+      "old_version": 6,
+      "op": "file_append",
+      "path": "/aaa/logo.txt",
+      "time": 1792188688.5844831
+    },
+    "ns:0:log:1257": {
+      "bytes": 1,
+      "new_version": 8,
+      "old_version": 7,
+      "op": "file_append",
+      "path": "/aaa/logo.txt",
+      "time": 1792188688.64026
+    },
+    "ns:0:log:1258": {
+      "old_version": 8,
+      "op": "file_delete",
+      "path": "/aaa/logo.txt",
+      "time": 1792188839.511921
     },
     "ns:0:meta": {
       "admissions": [],
       "checkpoint": null,
-      "created_txid": 1227,
+      "created_txid": 1245,
       "env": {},
       "version": 1
     },
     "ns:0:path:/aaa/": {
       "children": {},
-      "created_txid": 1231,
-      "modified_txid": 1231,
+      "created_txid": 1249,
+      "modified_txid": 1249,
       "type": "dir"
+    },
+    "ns:0:path:/aaa/logo.txt": {
+      "chunks": [
+        740
+      ],
+      "created_txid": 1250,
+      "deleted": true,
+      "modified_txid": 1258,
+      "previous": "ns:0:filever:/aaa/logo.txt:8",
+      "size": 769,
+      "tail": 740,
+      "type": "file",
+      "version": 9
     },
     "ns:0:path:/etc/crash.txt": {
       "chunks": [
-        722
+        733
       ],
-      "created_txid": 1228,
+      "created_txid": 1246,
       "deleted": false,
-      "modified_txid": 1230,
+      "modified_txid": 1248,
       "previous": "ns:0:filever:/etc/crash.txt:2",
       "size": 8,
-      "tail": 722,
+      "tail": 733,
       "type": "file",
       "version": 3
     }
   },
-  "next_chunk_id": 723,
-  "next_txid": 1232,
+  "next_chunk_id": 741,
+  "next_txid": 1259,
   "version": 1
 }

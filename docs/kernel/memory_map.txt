@@ -1,88 +1,84 @@
-# KR32 Memory Map
+KR32 kernel memory map
+=====================
 
-The active scheduler uses dynamically allocated page tables and physical
-pages. Every task sees the same user data and stack virtual addresses, while
-those addresses resolve to different physical pages.
+This document describes the current layout defined in kernelshed.asm. Addresses
+are hexadecimal. Page sizes are 0x1000 bytes unless otherwise noted.
 
-User virtual layout
-===================
+Kernel image and bootstrap
+-------------------------
 
-0x00005000  USER_BASE
+The kernel entry is at 0x00002000. Kernel code and low-memory globals are
+below 0x00010000. The common kernel page table identity-maps
+0x00000000-0x0000FFFF, covering those sections. BMI buffers and registers are
+in the separate 0x00015000-0x00017FFF range described below.
 
-0x00006000  USER_DATA_VA
-            One read/write user page per task.
+The bootstrap stack top is 0x0003E000. KERNEL_START must set SP to this value
+before executing any instruction that pushes to the stack. This stack is used
+only during bootstrap, before the MMU is enabled and a task's kernel stack is
+selected. The stack grows downward into the page below 0x0003E000.
 
-0x00009000  Current idle-task executable VA.
-0x00019000  Current task-A executable VA.
-0x0001A000  Current task-B executable VA.
-            Executable pages retain their assembled VAs for now and are
-            mapped only into the owning task.
+Kernel and common mappings
+--------------------------
 
-0x0003F000  USER_STACK_VA
-            One read/write user stack page per task.
+The common kernel mappings are identity mappings:
 
-0x00040000  USER_STACK_TOP
-            Initial SP for every task. The stack grows down into 0x3F000.
-            This address is also one byte above USER_LIMIT.
+  0x00000000-0x0000FFFF  Kernel image and low-memory kernel pages
+  0x00015000-0x00017FFF  BMI buffers and registers
+  0x00100000-0x00101FFF  MMIO
+  0x00050000-0x000CFFFF  Physical page allocator pool
 
-User pointers are valid only in:
+The range 0x00010000-0x00014FFF is not included in the common mappings.
+Mappings for task-specific user pages are installed in each task's page table.
+The allocator pool is mapped for kernel access; its presence in a common
+mapping does not make those pages user-accessible.
 
-    USER_BASE <= address <= USER_LIMIT (0x0003FFFF)
+Per-task stacks and user address space
+--------------------------------------
 
-Every page in a syscall buffer must additionally be present, user-accessible,
-and have the requested read/write permission in the current task's page table.
+Each task has a separate, dynamically allocated physical page for its kernel
+stack. Task creation builds the initial trapframe on that page. When switching
+to a task, the kernel loads its saved kernel stack pointer (KSP) and page-table
+base register (PTBR) before enabling the MMU. The bootstrap stack at 0x3E000 is
+not the per-task kernel stack.
 
-Dynamic kernel physical pool
-============================
+The configured user-address bounds are:
 
-0x00040000  PAGE_ALLOC_BASE
-0x000C0000  PAGE_ALLOC_END (exclusive)
+  USER_BASE   0x0003E000
+  USER_LIMIT  0x0005FFFF
 
-The allocator manages 128 4-KiB pages. The complete pool is identity-mapped
-in every address space with supervisor-only global permissions:
+These bounds are used to reject out-of-range user pointers; they do not mean
+that every address in this interval is mapped. Each task's page table must
+contain a present, user-accessible mapping for an address to be usable.
 
-    VA physical_address -> PA physical_address [P R W X G]
+Current user virtual addresses:
 
-The pool currently contains dynamically allocated:
+  0x0003F000  Per-task user stack page; initial user SP is 0x00040000
+  0x00040000  Initial task code page (contains TASK_INIT_START at 0x000404FA)
+  0x00042000  Per-task user data page
+  0x00043000  execve-loaded program code page
 
-- Page tables
-- Kernel stacks
-- Per-task file descriptor tables
-- Per-task kernel read/write buffers
-- User data backing pages
-- User stack backing pages
+The user stack is a separately allocated physical page mapped at 0x3F000.
+Addresses such as 0x40000 and 0x42000 are mapped as needed in the task's page
+table; the user pointer bounds alone do not guarantee that they are present.
 
-Because these mappings do not have PTE_U, user mode cannot access the pool.
-Keeping the pool identity-mapped lets kernel code use the physical addresses
-stored in task structures directly.
+Physical page allocator and built-in archive
+--------------------------------------------
 
-Per-task mappings
-=================
+The allocator manages 128 pages in the physical range 0x00050000-0x000CFFFF.
+It supplies physical pages for task kernel stacks, user stacks, user data, and
+other dynamically allocated pages.
 
-Each task owns a dynamically allocated PTBR. A typical task maps:
+The built-in TAR image occupies 0x000A0000-0x000BB5FF, which overlaps the
+allocator pool. The current allocator initialization marks only the page at
+0x000A0000 as reserved; the other archive pages are not all excluded from
+allocation. Do not treat the entire archive range as reserved unless allocator
+initialization is updated to reserve it.
 
-    USER_DATA_VA  -> task-specific allocated PA [P R W U]
-    USER_STACK_VA -> task-specific allocated PA [P R W U]
-    entry page    -> current assembled executable PA [P R X U]
+Bootstrap sequence
+------------------
 
-The idle task runs in supervisor mode, so its entry page is supervisor-only.
-
-Common kernel mappings
-======================
-
-Static kernel code/data pages and MMIO pages remain identity-mapped,
-supervisor-only, and global. The dynamic allocator pool is mapped the same
-way. User executable pages are not common/global mappings.
-
-Boot sequence
-=============
-
-1. Clear the physical-page allocator bitmap.
-2. `init_scheduler` creates tasks and their page tables dynamically.
-3. Load task zero's PTBR and kernel trapframe SP.
-4. Enable the MMU.
-5. Enter `trap_restore`.
-
-The old static `TASK0_PTBR`/`TASK1_PTBR`/`TASK2_PTBR` areas and
-`init_scheduler1` remain only as legacy reference code; the active boot path
-does not use them.
+1. Enter at KERNEL_START and set SP to 0x0003E000 before any push.
+2. Initialize kernel state and create task page tables, task kernel stacks,
+   initial trapframes, and user mappings.
+3. Load the selected task's PTBR and KSP.
+4. Enable the MMU and enter the selected task.
