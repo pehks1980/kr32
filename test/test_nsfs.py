@@ -10,6 +10,8 @@ from device.nsfs import (
     DIR_CREATE,
     BMI_READ_FILE,
     NS_CREATE,
+    NSFS_E2BIG,
+    NSFS_INDEX_ALL,
     NSFS_INDEX,
     NSFS_CHUNK_SIZE,
     NSFS_OK,
@@ -37,6 +39,31 @@ def decode_index(payload):
         offset += (4 - (path_len % 4)) % 4
         entries.append((entry_type, size, version, path))
     return entries
+
+
+def decode_index_all(payload):
+    namespace_count = int.from_bytes(payload[:4], "little")
+    offset = 4
+    namespaces = []
+    for _ in range(namespace_count):
+        namespaces.append(int.from_bytes(payload[offset:offset + 4], "little"))
+        offset += 4
+
+    entry_count = int.from_bytes(payload[offset:offset + 4], "little")
+    offset += 4
+    entries = []
+    for _ in range(entry_count):
+        namespace = int.from_bytes(payload[offset:offset + 4], "little")
+        entry_type = int.from_bytes(payload[offset + 4:offset + 8], "little")
+        size = int.from_bytes(payload[offset + 8:offset + 12], "little")
+        version = int.from_bytes(payload[offset + 12:offset + 16], "little")
+        path_len = int.from_bytes(payload[offset + 16:offset + 20], "little")
+        offset += 20
+        path = payload[offset:offset + path_len].decode("utf-8")
+        offset += path_len + (4 - (path_len % 4)) % 4
+        entries.append((namespace, entry_type, size, version, path))
+    assert offset == len(payload)
+    return namespaces, entries
 
 
 def read_payload(path, offset, length):
@@ -132,6 +159,55 @@ def main():
             (2, 0, 1, "/live"),
             (1, 2, 1, "/live/a.txt"),
         ]
+
+        assert store.handle_packet({
+            "opcode": NS_CREATE,
+            "namespace": 7,
+            "payload": b"",
+            "flags": 0,
+        }) == (NSFS_OK, b"")
+        assert store.handle_packet({
+            "opcode": DIR_CREATE,
+            "namespace": 7,
+            "payload": b"/other",
+            "flags": 0,
+        }) == (NSFS_OK, b"")
+        assert store.handle_packet({
+            "opcode": FILE_CREATE,
+            "namespace": 7,
+            "payload": file_payload("/other/b.txt", b"z"),
+            "flags": 0,
+        }) == (NSFS_OK, b"")
+
+        status, payload = store.handle_packet({
+            "opcode": NSFS_INDEX_ALL,
+            "namespace": 0,
+            "payload": b"",
+            "flags": 0,
+        })
+        assert status == NSFS_OK
+        namespaces, entries = decode_index_all(payload)
+        assert namespaces == [0, 7]
+        assert entries == [
+            (0, 2, 0, 1, "/live"),
+            (0, 1, 2, 1, "/live/a.txt"),
+            (7, 2, 0, 1, "/other"),
+            (7, 1, 1, 1, "/other/b.txt"),
+        ]
+
+        for namespace in (1, 2, 3):
+            assert store.handle_packet({
+                "opcode": NS_CREATE,
+                "namespace": namespace,
+                "payload": b"",
+                "flags": 0,
+            }) == (NSFS_OK, b"")
+        assert store.handle_packet({
+            "opcode": NSFS_INDEX_ALL,
+            "namespace": 0,
+            "payload": b"",
+            "flags": 0,
+        }) == (NSFS_E2BIG, b"")
 
     print("NSFS chunk regression test passed")
 

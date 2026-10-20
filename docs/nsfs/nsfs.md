@@ -28,6 +28,7 @@ FILE_APPEND  0x12  namespace = R4, payload = file payload
 DIR_CREATE   0x20  namespace = R4, payload = UTF-8 path
 DIR_DELETE   0x21  namespace = R4, payload = UTF-8 path
 NSFS_INDEX   0x30  namespace = R4, payload empty
+NSFS_INDEX_ALL 0x32 namespace ignored, payload empty
 ```
 
 Status codes follow errno values:
@@ -35,6 +36,7 @@ Status codes follow errno values:
 ```text
 0   OK
 2   ENOENT
+7   E2BIG
 17  EEXIST
 22  EINVAL
 39  ENOTEMPTY
@@ -65,6 +67,9 @@ Example payload for appending `ABC\n` to `etc/crash.txt`:
 
 `NSFS_INDEX` returns a packed binary table of the latest live namespace state.
 The kernel does not receive JSON and does not see old versions or tombstones.
+`NSFS_INDEX_ALL` returns entries for every namespace, tagged with their
+namespace IDs. The kernel builds per-namespace directory and child tables from
+this aggregate index.
 
 Request:
 
@@ -87,8 +92,25 @@ repeated entry:
   padding         zero bytes to align next entry to 4 bytes
 ```
 
-If the full reply does not fit in the 4 KiB BMI payload area, the host returns
-`E2BIG`. A paged index opcode can be added later when namespaces grow.
+`NSFS_INDEX_ALL` returns:
+
+```text
+u32 namespace_count
+u32 namespace_ids[namespace_count]
+u32 entry_count
+
+repeated entry:
+  u32 namespace_id
+  u32 type        1 = file, 2 = dir
+  u32 size        file size, 0 for dirs
+  u32 version     latest live version
+  u32 path_len    UTF-8 path byte length
+  path bytes      no required NUL
+  padding         zero bytes to align next entry to 4 bytes
+```
+
+The aggregate index supports up to four namespaces and must fit in the 4 KiB
+BMI payload area. The host returns `E2BIG` if either limit is exceeded.
 
 ## KV Layout
 
@@ -190,7 +212,7 @@ opcode 1   NS_CREATE
 opcode 16  FILE_CREATE
 opcode 18  FILE_APPEND
 opcode 17  FILE_DELETE
-opcode 48  NSFS_INDEX
+opcode 50  NSFS_INDEX_ALL
 ```
 
 Expected NSFS state after the demo:

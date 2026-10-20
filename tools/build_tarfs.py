@@ -153,7 +153,7 @@ def main():
         if p.is_file()
     )
 
-    lines = [".ORG 0xA0000", "tarfs_start:"]
+    lines = [".ORG 0x000D0000", "tarfs_start:"]
 
     for d in dirs:
         lines.extend(emit_dir(normalize_path(d)))
@@ -165,7 +165,9 @@ def main():
 
     lines.append("    .SPACE 1024")
     lines.append("tarfs_end:")
+    lines.append(" nop ")
     lines.append("")
+        
 
     Path(args.output).write_text("\n".join(lines), encoding="utf-8")
     print(f"Wrote {args.output} from {len(files)} file(s)")

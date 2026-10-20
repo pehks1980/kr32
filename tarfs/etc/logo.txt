@@ -6,9 +6,9 @@ H  HHHHH    HHHHH   HHH33      22      + + + + +     H
 H  HH  HH   HH HH      33    22          + + +       H
 H  HH   HH  HH  HH  HHH3   2222222      +  +  +      H
 H                                                    H
-H=====================BOOTING========================H
-H                        H                           H
-H                        H                           H
-H                 $      H      $                    H
-H========================H===========================H
+H===========H=========BOOTING==========H=============H
+H           H            H             H          @  H
+H===========H            H             H=============H
+H  @        H      $     H      $      H             H
+H===========H============H=============H=============H
 HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH

@@ -30,11 +30,11 @@ B KERNEL_START
 .EQU PTE_P,       0x0010    ;Privileged mode
 .EQU PTE_G,       0x0020    ;G bit - PTE is not flushed when switch happens (OS related) 
 
-.EQU KERNEL_FLAGS, 0x0037       ; P|R|W|X|G, supervisor-only shared mapping  GP-XWR 
-.EQU USER_RX,      0x001D       ; P|R|X|U  ;                                 -PUX-R
-.EQU USER_RW,      0x001B       ; P|R|W|U  ;                                 -PU-WR ; used for load image to memory in execve
-.EQU KERN_USER_RX, 0x003D       ; P|R|X|U|G, shared executable (kernel can   GPUX-R fetch user code); not used
-.EQU KERNEL_USER_ALL, 0x001F   ; P|R|W|X|U, per-task user executable mapping -PUXWR ;needed for execve kenrel executes loaded code
+.EQU KERNEL_FLAGS,     0x0037    ; P|R|W|X|G, supervisor-only shared mapping  GP-XWR 
+.EQU USER_RX,          0x001D    ; P|R|X|U  ;                                 -PUX-R
+.EQU USER_RW,          0x001B    ; P|R|W|U  ;                                 -PU-WR ; used for load image to memory in execve
+.EQU KERN_USER_RX,     0x003D    ; P|R|X|U|G, shared executable (kernel can   GPUX-R ; fetch user code); not used
+.EQU KERNEL_USER_ALL,  0x001F    ; P|R|W|X|U,per-task user executable mapping -PUXWR ;needed for execve kenrel executes loaded code
 
 .EQU PAGE_SIZE,    0x1000
 .EQU PAGE_MASK,    0x0FFF
@@ -50,17 +50,17 @@ B KERNEL_START
 ;.EQU TASK2_USTACK_PA, 0x0000C000
 
 ;memory map used for data validation when make syscalls which transfer data b/w kernel and user
-.EQU KERNEL_BASE,     0x00000000
-.EQU KERNEL_LIMIT,    0x0003DFFF
+.EQU KERNEL_BASE,      0x00000000
+.EQU KERNEL_LIMIT,     0x0003DFFF
 .EQU KERNEL_STACK_TOP, 0x0003E000
 
-.EQU USER_BASE,       0x0003E000
-.EQU USER_LIMIT,      0x0005FFFF
+.EQU USER_BASE,        0x0003E000
+.EQU USER_LIMIT,       0x0005FFFF
 
-.EQU USER_STACK_VA,   0x0003F000
-.EQU USER_STACK_TOP,  0x00040000
-.EQU USER_DATA_VA,    0x00042000  ; start of user data page for task (process virtual space) 4 KiB per task (form heap memory)
-.EQU USER_CODE_VA,    0x00043000  ; fixed user code VA for execve-loaded user image
+.EQU USER_STACK_VA,    0x0003F000
+.EQU USER_STACK_TOP,   0x00040000
+.EQU USER_DATA_VA,     0x00042000  ; start of user data page for task (process virtual space) 4 KiB per task (form heap memory)
+.EQU USER_CODE_VA,     0x00043000  ; fixed user code VA for execve-loaded user image
 ; USER_CODE_VA is the per-task user-space entry page for execve programs.
 ; Each task's active executable is always mapped here when a program is loaded.
 ; ================================================================
@@ -351,118 +351,50 @@ init_page_tables0:
     POP LR
     RET
 
+; ================================================================
+; Initialize Page Tables
+; used in Memory manager for user space  
+; ================================================================
+
 init_page_tables:
     PUSH LR
-
     ; Clear the refcount array
     LI R1 page_refcounts
     LI R3 MAX_PHYS_PAGES          ; 128 bytes = 128 pages: 1 byte for ea page (4k)
     BL mem_zero                   ; 0 - free, 1 - allocated
-
-    ; Reserve the TAR image page (physical 0xA0000)
-    ; index = (0xA0000 - PAGE_ALLOC_BASE) / 4096
-    ; PAGE_ALLOC_BASE = 0x50000
-    ; (0xA0000 - 0x50000) = 0x50000 = 327680
-    ; 327680 / 4096 = 80
-    LI R2 80
-    LI R1 page_refcounts
-    ADD R1 R1 R2
-    LI R3 1
-    STB R3 [R1]     ;1 = allocated (80 pages for tar image
-
     POP LR
     RET
 
 ; ================================================================
-; Map common kernel pages into the given page table (PTBR in R1)
+; Map common kernel pages into the given page table 
+; (PTBR in R1)
 ; ================================================================
 
 map_common_kernel:
     PUSH LR
     PUSH R12
 
-    ; Boot page, kernel/trap code, static kernel data, and MMIO are
-    ; identity-mapped into every address space.
-    LI R2 0x00000000      ;page 0 - boot (0000)
-    LI R3 0x00000000
-    LI R4 KERNEL_FLAGS
-    bl map_page
+    ;====================================================
+    ; Kernel code and static data from boot.
+    ;====================================================
+    LI R12 0x00000000       ;pages 0 - boot (0000)
+    LI R7  0x00015000       ;till 21 - last kernel (14FFF)
 
-    ; Kernel-only helpers: copy routines and page-table inspection
-    LI R2 0x00001000      ; page for kernel buffers
-    LI R3 0x00001000
+map_common_kernel_loop:
+    CMP R12 R7
+    BGE map_common_kernel_done
+    MOV R2 R12
+    MOV R3 R12
     LI R4 KERNEL_FLAGS
     BL map_page
+    LI R6 PAGE_SIZE
+    ADD R12 R12 R6
+    B map_common_kernel_loop
+map_common_kernel_done:
 
-    LI R2 0x00002000      ;page 1,2,3 = kernel code (2000,3000,4000)
-    LI R3 0x00002000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x00003000
-    LI R3 0x00003000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x00004000
-    LI R3 0x00004000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x00005000
-    LI R3 0x00005000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x00006000
-    LI R3 0x00006000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x00007000      ; page 4 (number is page table entry one) tasks data
-    LI R3 0x00007000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x00008000      ; page 4 (number is page table entry one) tasks data
-    LI R3 0x00008000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x00009000      ; add page (number is page table entry one) tasks data
-    LI R3 0x00009000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x0000A000      ; add page (number is page table entry one) tasks data
-    LI R3 0x0000A000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x0000B000      ; add page (number is page table entry one) tasks data
-    LI R3 0x0000B000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x0000C000      ; add page (number is page table entry one) tasks data
-    LI R3 0x0000C000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x0000D000      ; add page (number is page table entry one) tasks data
-    LI R3 0x0000D000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x0000E000      ; add page (number is page table entry one) tasks data
-    LI R3 0x0000E000
-    LI R4 KERNEL_FLAGS
-    BL map_page
-
-    LI R2 0x0000F000      ; add page (number is page table entry one) tasks data
-    LI R3 0x0000F000
-    LI R4 KERNEL_FLAGS
-    BL map_page
+    ;====================================
+    ; BMI buffers + reg base
+    ;====================================
 
     LI R2 0x00015000      ; page for BMI buffers for NSFS (write) - 4K each
     LI R3 0x00015000
@@ -474,13 +406,10 @@ map_common_kernel:
     LI R4 KERNEL_FLAGS
     BL map_page
 
-    LI R2 0x00017000      ; page for BMI buffers for NSFS (read) - 4K each
+    LI R2 0x00017000      ; page for MMIO BMI_REG_BASE Map for NSFS  - 4K each
     LI R3 0x00017000
     LI R4 KERNEL_FLAGS
     BL map_page
-
-
-    
 
     ; Map MMIO pages (UART, Timer/PIT, and PIC) into kernel address space
     LI R2 0x00100000      ; UART physical and virtual base
@@ -516,6 +445,24 @@ map_common_dynamic_loop:
     B map_common_dynamic_loop
 map_common_dynamic_done:
 
+    ;===================================
+    ; map static tarfs image to kernel
+    ;===================================
+
+    LI R12 tarfs_start
+    LI R7  tarfs_end
+map_tarfs_loop:
+    CMP R12 R7
+    BGE map_tarfs_done
+    MOV R2 R12
+    MOV R3 R12
+    LI R4 KERNEL_FLAGS
+    BL map_page
+    LI R6 PAGE_SIZE
+    ADD R12 R12 R6
+    B map_tarfs_loop
+map_tarfs_done:
+
     POP R12
     POP LR
     RET
@@ -532,21 +479,27 @@ map_page:
     SHR R5 R2 12               ; VPN
     SHL R5 R5 2                ; page-table byte offset
     OR R6 R3 R4                ; PTE = PA page base | flags
-    STW R6 [R1 + R5]
+    STW R6 [R1 + R5]           ; store PTE in page-table: ptbr + offset
     POP R6
     POP R5
     RET
 
+;================================================================
+; Map a single page real-time : R1 PTBR, VA in R2, PA in R3, flags in R4
+;================================================================
+
 map_page_rt:
     ; Runtime page-table update. Same ABI as map_page, but also invalidates
     ; the cached translation for R2 so permission changes take effect now.
+    ; The PTE format stores the physical
+    ; page base in bits [31:12] and KR32 permission bits in [11:0].
     PUSH R5
     PUSH R6
     SHR R5 R2 12               ; VPN
     SHL R5 R5 2                ; page-table byte offset
     OR R6 R3 R4                ; PTE = PA page base | flags
-    STW R6 [R1 + R5]
-    INVLPG R2
+    STW R6 [R1 + R5]           ; store PTE in page-table: ptbr + offset 
+    INVLPG R2                  ; Invalidate /flush tlb cache 
     POP R6
     POP R5
     RET
@@ -758,7 +711,6 @@ syscall_execve1:
     ;================================================================
 
     LDW R8 [SP + TF_R1]        ; user path pointer
-
     LDW R9 [SP + TF_R2]        ; user argv pointer
     PUSH R9
 
@@ -847,8 +799,6 @@ execve_data_ok:
     MOV R3 R11                      ; PA of code page for execve program
     LI R4 KERNEL_USER_ALL
     BL map_page_rt                  ; switch the new code page from RW to RX
-
-   ; DEBUG 2
 
     CMP R12 0                       ; R12 = old code page PA for execve program from task metadata
     BEQ execve_commit_done          ; if no previous code page, skip freeing it
@@ -1051,7 +1001,6 @@ execve_copy_argv_done:
     STW R1 [SP + TF_R3]      ; envp
 
     STW R5 [SP + TF_USP]     ; initial user SP
-
 
     ; Prepare a fresh user register state for the new program.
     LI R1 0
@@ -1298,13 +1247,6 @@ exec_rollback:
 
 exec_commit_image:
 
-  ;  PUSH LR
-  ;  PUSH R8
-  ;  PUSH R9
-  ;  PUSH R10
-  ;  PUSH R11
-  ;  PUSH R12
-
     MOV R11 R1              ; new page
     MOV R12 R2              ; old page
 
@@ -1395,16 +1337,7 @@ no_old_page:
     LI R1 USER_CODE_VA
     STW R1 [SP+TF_SEPC]
 
-  ;  POP R12
-  ;  POP R11
-  ;  POP R10
-  ;  POP R9
-  ;  POP R8
-  ;  POP LR
-
     B trap_restore
-
-
 
 ;====================================================================
 ; exec_build_stack_image
@@ -2123,14 +2056,14 @@ vfs_mkdir:
 
     ; First check whether directory already exists
     MOV R1 R8
-    BL nsfs_lookup
+    BL  nsfs_lookup
     CMP R1 0
     BNE mkdir_exists
 
     ; Ask writable filesystem to create directory
     MOV R1 R8
     MOV R2 R9
-    BL nsfs_mkdir
+    BL  nsfs_mkdir
     ; R1 = 0 or error
     cmp R1 0
     BNE mkdir_error
@@ -2744,13 +2677,10 @@ nsfs_node_free:
 ;=====================================================================
 ; nsfs_refresh_index - refresh the NSFS index from the host JSON KV store
 ;
-; short description:
-;   This function sends a BMI command to the host to retrieve the current NSFS index. then it parses the 
-; reply payload and populates the nsfs_index_table and nsfs_index_path_pool with the entries.
-; nsfs_index_table is an array of nsfs_index_entry structures, 
-; nsfs_index_path_pool is a blob of path stringZ.
-;   
-; in:  R1 = namespace
+; Fetches every namespace and rebuilds the object index and derived directory
+; tables from the aggregate BMI reply.
+;
+; in:  R1 = ignored for compatibility with existing callers
 ; out: R1 = 0 on success, BMI/errno status on failure
 ;=====================================================================
 
@@ -2764,41 +2694,70 @@ nsfs_refresh_index:
 
     MOV R12 R1
 
-    MOV R1 NSFS_INDEX   ; bmi opcode for nsfs index refresh    
+    LI R1 NSFS_INDEX_ALL
     LI R2 0             
     LI R3 0
-    MOV R4 R12
-    CALL bmi_call       ; R1 = bmi status, R2 = reply payload ptr, R3 = reply payload size R4 - namespace
+    LI R4 0
+    CALL bmi_call       ; R1 = status, R2 = payload ptr, R3 = payload size
 
     CMP R1 0
     BNE nsfs_refresh_done
-    ; got reply payload in R2, size in R3
-    ; parse the reply payload and populate the nsfs_index_table and nsfs_index_path_pool
+    ; Payload: namespace_count, namespace IDs, entry_count, entries.
     LI R1 nsfs_index_count
     LI R2 0
     STW R2 [R1]                     ;init index count to 0
     LI R1 nsfs_index_path_next
     LI R2 nsfs_index_path_pool
     STW R2 [R1]           ;init path pool next ptr to start of path pool    
+    LI R1 nsfs_dir_count
+    LI R2 0
+    STW R2 [R1]
+    LI R1 nsfs_dir_index_count
+    STW R2 [R1]
 
     LI R8 BMI_BUF_READ
     ADD R8 R8 BMI_HDR_SIZEOF       ; R8 = reply payload cursor
-    LDW R9 [R8]                    ; R9 = entry_count - first word in the reply payload 
-                                   ; is the number of entries
+    LDW R9 [R8]                    ; namespace count
+    LI R1 MAX_NSFS_NAMESPACES
+    CMP R9 R1
+    BGT nsfs_refresh_too_many_namespaces
+    LI R1 nsfs_namespace_count
+    STW R9 [R1]
     ADD R8 R8 4
     LI R10 0                       ; R10 = parsed count R8 = next is at reply payload
 
+nsfs_refresh_namespace_loop:
+    CMP R10 R9
+    BGE nsfs_refresh_namespaces_done
+    LI R1 nsfs_namespace_ids
+    LI R2 4
+    MUL R2 R10 R2
+    ADD R1 R1 R2
+    LDW R2 [R8]
+    STW R2 [R1]
+    ADD R8 R8 4
+    ADD R10 R10 1
+    B nsfs_refresh_namespace_loop
+
+nsfs_refresh_namespaces_done:
+    LDW R9 [R8]                    ; total entry count across namespaces
+    ADD R8 R8 4
+    LI R10 0
+
 nsfs_refresh_loop:                 ;fill the nsfs_index_table with entries from the reply payload
     CMP R10 R9
-    BGE nsfs_refresh_success       ;if parsed count >= entry_count, or max reached we are done 
-    CMP R10 NSFS_INDEX_MAX_ENTRIES
     BGE nsfs_refresh_success
+    LI R1 MAX_NSFS_INDEX_ENTRIES
+    CMP R10 R1
+    BGE nsfs_refresh_index_full
 
     LI R11 NSFS_INDEX_ENTRY_SIZEOF
     MUL R11 R10 R11
     LI R6 nsfs_index_table
     ADD R11 R6 R11                 ; R11 = &nsfs_index_table[R10], R8 = &reply_payload[R8]
 
+    LDW R1 [R8 + NSFS_WIRE_NS]
+    STW R1 [R11 + NSFS_INDEX_NS]
     LDW R1 [R8 + NSFS_WIRE_TYPE]    ;copy payload wire entries to index entries elements
     STW R1 [R11 + NSFS_INDEX_TYPE]
     LDW R1 [R8 + NSFS_WIRE_SIZE]
@@ -2834,7 +2793,18 @@ nsfs_refresh_loop:                 ;fill the nsfs_index_table with entries from 
 nsfs_refresh_success:
     LI R1 nsfs_index_count
     STW R10 [R1]        ;update index count to parsed count
+    BL nsfs_build_dir_cache_all
+    CMP R1 0
+    BNE nsfs_refresh_done
     LI R1 0
+    B nsfs_refresh_done
+
+nsfs_refresh_too_many_namespaces:
+    LI R1 ERR_NOSPC
+    B nsfs_refresh_done
+
+nsfs_refresh_index_full:
+    LI R1 ERR_NOSPC
 
 nsfs_refresh_done:
     POP R12
@@ -2874,12 +2844,17 @@ nsfs_lookup_loop:
     CMP R10 0
     BEQ nsfs_lookup_not_found
 
+    LDW R1 [R9 + NSFS_INDEX_NS]
+    CMP R1 NSFS_DEFAULT_NS
+    BNE nsfs_lookup_next
+
     MOV R1 R8
     LDW R2 [R9 + NSFS_INDEX_PATH]
     BL strcmp                      ; compare pathname with index entry path
     CMP R1 1
     BEQ nsfs_lookup_found
 
+nsfs_lookup_next:
     ADD R9 R9 NSFS_INDEX_ENTRY_SIZEOF
     SUB R10 R10 1
     B nsfs_lookup_loop
@@ -2890,7 +2865,7 @@ nsfs_lookup_found:
     BEQ nsfs_lookup_not_found
     MOV R11 R1                      ; nsfs node
 
-    LI R1 NSFS_DEFAULT_NS               ;fill in the node with index entry data for that found pathname
+    LDW R1 [R9 + NSFS_INDEX_NS]
     STW R1 [R11 + NSFS_NODE_NAMESPACE]
     LDW R1 [R9 + NSFS_INDEX_PATH]
     STW R1 [R11 + NSFS_NODE_PATH]
@@ -3279,15 +3254,8 @@ nsfs_write_return:
     RET
 ;=====================================================================
 ; nsfs_readdir - read next directory entries from NSFS overlay
-; short description:
-;   This function reads directory entries from the NSFS overlay. 
-; It checks if the provided userspace buffer is valid, retrieves the directory path from the file's inode, 
-; and scans the NSFS index table for entries that match the directory path. 
-; For each matching entry, it constructs a dirent structure and copies it to the userspace buffer. 
-; 
 ; in:  R1 = file ptr, R2 = userspace dirent buffer
 ; out: R1 = 1 entry, 0 EOF, or errno
-; This is a simplified implementation that reads one entry at a time.
 ;=====================================================================
 nsfs_readdir:
     PUSH LR
@@ -3305,71 +3273,59 @@ nsfs_readdir:
     MOV R1 R8
     LI R2 DIRENT_SIZEOF
     LI R3 1
-    BL user_buffer_valid_range  ; check if userspace buffer is valid for writing DIRENT_SIZEOF bytes
+    BL user_buffer_valid_range
     CMP R1 1
     BNE nsfs_readdir_fault
-    ; read the directory path from the file's inode, file ptr is dir 
+
     LDW R4 [R12 + FILE_INODE]
     LDW R5 [R4 + INODE_PRIVATE]
     CMP R5 0
-    BEQ nsfs_readdir_eof
-    LDW R10 [R5 + NSFS_NODE_PATH]   ; directory path, absolute
-    LDW R11 [R12 + FILE_OFFSET]     ; index into nsfs_index_table
-    MOV R6 R11
-    ; scan the nsfs_index_table for entries that match the directory path, starting from index R6
-    ; (each call to readdir returns one entry, so R6 is the index of the next entry to read)
+    BEQ nsfs_readdir_eof_no_node
+    LDW R10 [R5 + NSFS_NODE_NAMESPACE]
+    LDW R2 [R5 + NSFS_NODE_PATH]
+    MOV R1 R10
+    BL nsfs_find_dir_id
+    LI R2 -1
+    CMP R1 R2
+    BEQ nsfs_readdir_invalid_dir
+    MOV R9 R1
+    LDW R11 [R12 + FILE_OFFSET]
+
 nsfs_readdir_scan:
-    LI R1 nsfs_index_count
+    LI R1 nsfs_dir_index_count
     LDW R1 [R1]
-    CMP R6 R1
+    CMP R11 R1
     BGE nsfs_readdir_eof
 
-    LI R7 NSFS_INDEX_ENTRY_SIZEOF
-    MUL R7 R6 R7
-    LI R9 nsfs_index_table
-    ADD R9 R9 R7            ; R9 = &nsfs_index_table[R6]
+    LI R7 NSFS_DIR_IDX_SIZEOF
+    MUL R7 R11 R7
+    LI R6 nsfs_dir_index
+    ADD R7 R6 R7
 
-    LDW R1 [R9 + NSFS_INDEX_PATH]
-    MOV R2 R10
-    BL str_prefix       ; check if the index entry path has the directory path as prefix    
-    CMP R1 1
+    LDW R1 [R7 + NSFS_DIR_IDX_NS]
+    CMP R1 R10
     BNE nsfs_readdir_next
-    ; if the index entry path has the directory path as prefix, extract the next component of the path
-    LDW R1 [R9 + NSFS_INDEX_PATH]
-    MOV R2 R10
-    BL skip_prefix  ; skip the directory path prefix, R1 = pointer to the next component in the path
-    LDB R2 [R1]
-    LI R3 47
-    CMP R2 R3
-    BEQ nsfs_readdir_skip_slash
-    CMP R2 0
-    BEQ nsfs_readdir_next
-    B nsfs_readdir_have_name
-nsfs_readdir_skip_slash:
-    ADD R1 R1 1
-nsfs_readdir_have_name:
-    MOV R8 R1                       ; component name
+    LDW R1 [R7 + NSFS_DIR_IDX_PARENT]
+    CMP R1 R9
+    BNE nsfs_readdir_next
 
-    BL path_component_len           ; get length of the next component in the path
-    MOV R7 R1
-    CMP R7 0
-    BEQ nsfs_readdir_next
-    LI R2 63
-    CMP R7 R2
-    BLE nsfs_readdir_name_ok
-    MOV R7 R2
+    LDW R8 [R7 + NSFS_DIR_IDX_INDEX]
 
-nsfs_readdir_name_ok:               ; name is valid
-    MOV R11 R6                      ; R6 = index of the entry in nsfs_index_table
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     TASK_GET_KBUF_WR R1, R5
 
-    ADD R3 R11 1
-    STW R3 [R1 + DIRENT_INODE]      ; write the next inode number (index + 1) to the dirent structure in task write buffer
-    LDW R2 [R9 + NSFS_INDEX_SIZE]
+    LI R3 NSFS_INDEX_ENTRY_SIZEOF
+    MUL R3 R8 R3
+    LI R6 nsfs_index_table
+    ADD R3 R6 R3
+
+    MOV R2 R8
+    ADD R2 R2 1
+    STW R2 [R1 + DIRENT_INODE]
+    LDW R2 [R3 + NSFS_INDEX_SIZE]
     STW R2 [R1 + DIRENT_SIZE]
-    LDW R2 [R9 + NSFS_INDEX_TYPE]
+    LDW R2 [R7 + NSFS_DIR_IDX_TYPE]
     CMP R2 NSFS_TYPE_DIR
     BEQ nsfs_readdir_type_dir
     LI R2 DT_REG
@@ -3379,27 +3335,31 @@ nsfs_readdir_type_dir:
 nsfs_readdir_type_done:
     STW R2 [R1 + DIRENT_TYPE]
 
-    ADD R3 R11 1
-    STW R3 [R12 + FILE_OFFSET]  ; update the file offset to the next index for the next call to readdir
+    ADD R2 R11 1
+    STW R2 [R12 + FILE_OFFSET]
 
-    MOV R2 R8
+    LDW R2 [R7 + NSFS_DIR_IDX_NAME]
     ADD R3 R1 DIRENT_NAME
     LI R6 0
 nsfs_readdir_copy_name:
-    CMP R6 R7                   ; R7 = component name length
+    CMP R6 63
     BGE nsfs_readdir_copy_done
-    LDB R10 [R2 + R6]
-    STB R10 [R3 + R6]
+    LDB R5 [R2 + R6]
+    CMP R5 0
+    BEQ nsfs_readdir_copy_done
+    CMP R5 47
+    BEQ nsfs_readdir_copy_done
+    STB R5 [R3 + R6]
     ADD R6 R6 1
     B nsfs_readdir_copy_name
 nsfs_readdir_copy_done:
-    LI R10 0
-    STB R10 [R3 + R6]       ; null terminate the name in the dirent structure
+    LI R5 0
+    STB R5 [R3 + R6]
 
     LI R2 DIRENT_SIZEOF
     MOV R4 R1
     POP R1
-    BL copy_to_user          ; copy the dirent structure to the userspace buffer
+    BL copy_to_user
     CMP R1 DIRENT_SIZEOF
     BNE nsfs_readdir_fault_after_pop
     MOV R1 DIRENT_SIZEOF
@@ -3412,12 +3372,26 @@ nsfs_readdir_copy_done:
     RET
 
 nsfs_readdir_next:
-    ADD R6 R6 1
+    ADD R11 R11 1
     B nsfs_readdir_scan
 
 nsfs_readdir_eof:
+    STW R11 [R12 + FILE_OFFSET]
+
+nsfs_readdir_eof_no_node:
     POP R1
     LI R1 0
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+nsfs_readdir_invalid_dir:
+    POP R1
+    LI R1 ERR_INVAL
     POP R12
     POP R11
     POP R10
@@ -3582,34 +3556,31 @@ nsfs_mkdir:
     PUSH R9
     PUSH R10
 
-    MOV R8 R1                  ; pathname
+    MOV R8  R1                  ; pathname
     MOV R10 R2                 ; namespace
 
     LI  R10 NSFS_DEFAULT_NS    ; default namespace for now
 
     MOV R2 R8
     BL  get_path_len
+    
     MOV R3 R1
-
     LI  R1 DIR_CREATE
     MOV R4 R10
-
     CALL bmi_call
-
     CMP R1 0
     BNE nsfs_mkdir_fail
 
     MOV R1 R10
     BL  nsfs_refresh_index
-
     CMP R1 0
     BNE nsfs_mkdir_fail
 
-    MOV R1 R8
-    BL  nsfs_lookup
-
-    CMP R1 0
-    BEQ nsfs_mkdir_fail
+   ; probably we dont need to search for created dir if bmi_call and refresh are success
+   ; MOV R1 R8
+   ; BL  nsfs_lookup
+   ; CMP R1 0
+   ; BEQ nsfs_mkdir_fail
 
     POP R10
     POP R9
@@ -3686,6 +3657,466 @@ nsfs_rmdir_fail:
     POP R6
     POP LR
     RET
+
+;=====================================================================
+; nsfs_build_dir_cache_all
+;
+; Build the derived NSFS directory table and child index from the object
+; index. This mirrors the TARFS dir_table/dir_index design: lookup keeps
+; using nsfs_index_table, while readdir walks immediate children instead of
+; reparsing path strings on every call.
+;
+; out: R1 = 0
+;=====================================================================
+nsfs_build_dir_cache_all:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    LI R1 nsfs_dir_count
+    LI R2 0
+    STW R2 [R1]
+    LI R1 nsfs_dir_index_count
+    LI R2 0
+    STW R2 [R1]
+
+    ; Keep a root entry for the default namespace even if it has no objects.
+    LI R1 NSFS_DEFAULT_NS
+    LI R2 nsfs_root_path
+    BL nsfs_add_dir_to_cache
+    LI R2 -1
+    CMP R1 R2
+    BEQ nsfs_build_dir_cache_full
+
+    LI R8 0
+
+nsfs_build_root_loop:
+    LI R1 nsfs_namespace_count
+    LDW R1 [R1]
+    CMP R8 R1
+    BGE nsfs_build_dir_table_start
+
+    LI R1 nsfs_namespace_ids
+    LI R2 4
+    MUL R2 R8 R2
+    ADD R1 R1 R2
+    LDW R1 [R1]
+    LI R2 nsfs_root_path
+    BL nsfs_add_dir_to_cache
+    LI R2 -1
+    CMP R1 R2
+    BEQ nsfs_build_dir_cache_full
+    ADD R8 R8 1
+    B nsfs_build_root_loop
+
+nsfs_build_dir_table_start:
+    LI R8 0                            ; object index number
+    LI R9 nsfs_index_table
+
+nsfs_build_dir_table_loop:
+    LI R1 nsfs_index_count
+    LDW R1 [R1]
+    CMP R8 R1
+    BGE nsfs_build_child_index_start
+
+    LDW R1 [R9 + NSFS_INDEX_TYPE]
+    CMP R1 NSFS_TYPE_DIR
+    BNE nsfs_build_dir_table_next
+
+    LDW R1 [R9 + NSFS_INDEX_NS]
+    LDW R2 [R9 + NSFS_INDEX_PATH]
+    BL nsfs_add_dir_to_cache
+    LI R2 -1
+    CMP R1 R2
+    BEQ nsfs_build_dir_cache_full
+
+nsfs_build_dir_table_next:
+    ADD R9 R9 NSFS_INDEX_ENTRY_SIZEOF
+    ADD R8 R8 1
+    B nsfs_build_dir_table_loop
+
+nsfs_build_child_index_start:
+    LI R8 0
+    LI R9 nsfs_index_table
+
+nsfs_build_child_index_loop:
+    LI R1 nsfs_index_count
+    LDW R1 [R1]
+    CMP R8 R1
+    BGE nsfs_build_dir_cache_done
+
+    LDW R1 [R9 + NSFS_INDEX_NS]
+    LDW R2 [R9 + NSFS_INDEX_PATH]
+    BL nsfs_find_parent_dir
+
+    LI R4 -1
+    CMP R1 R4
+    BEQ nsfs_build_child_index_next
+
+    ; R1 = parent dir id, R2 = basename ptr, R3 = object type.
+    MOV R10 R1
+    LDW R11 [R9 + NSFS_INDEX_NS]
+    LI R4 nsfs_dir_index_count
+    LDW R5 [R4]
+    LI R1 MAX_NSFS_DIR_ENTRIES
+    CMP R5 R1
+    BGE nsfs_build_dir_cache_full
+
+    LI R6 NSFS_DIR_IDX_SIZEOF
+    MUL R6 R5 R6
+    LI R7 nsfs_dir_index
+    ADD R7 R7 R6
+    STW R11 [R7 + NSFS_DIR_IDX_NS]
+    STW R10 [R7 + NSFS_DIR_IDX_PARENT]
+    STW R2  [R7 + NSFS_DIR_IDX_NAME]
+    STW R8  [R7 + NSFS_DIR_IDX_INDEX]
+    STW R3  [R7 + NSFS_DIR_IDX_TYPE]
+    ADD R5 R5 1
+    STW R5 [R4]
+
+nsfs_build_child_index_next:
+    ADD R9 R9 NSFS_INDEX_ENTRY_SIZEOF ;current index entry ptr
+    ADD R8 R8 1 ;current index entry number
+    B nsfs_build_child_index_loop
+
+nsfs_build_dir_cache_done:
+    LI R1 0
+    B nsfs_build_dir_cache_return
+
+nsfs_build_dir_cache_full:
+    LI R1 nsfs_dir_count
+    LI R2 0
+    STW R2 [R1]
+    LI R1 nsfs_dir_index_count
+    STW R2 [R1]
+    LI R1 ERR_NOSPC
+
+nsfs_build_dir_cache_return:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+
+;=====================================================================
+; nsfs_add_dir_to_cache: Add a directory to the derived dir_table if not already present
+; in:  R1 = namespace, R2 = directory path
+; out: R1 = dir id, or -1 if full
+;=====================================================================
+nsfs_add_dir_to_cache:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R12
+
+    MOV R12 R2
+    MOV  R8 R1
+
+    BL nsfs_find_dir_id     ;find if the directory is already in the derived dir_table
+    ; R1 = dir id, or -1 if not found
+    LI R2 -1
+    CMP R1 R2
+    BNE nsfs_add_dir_done
+
+    LI R9 nsfs_dir_count
+    LDW R10 [R9]
+    LI R1 MAX_NSFS_DIRS
+    CMP R10 R1
+    BGE nsfs_add_dir_full
+
+    LI R1 NSFS_DIR_SIZEOF
+    MUL R1 R10 R1
+    LI R2 nsfs_dir_table
+    ADD R2 R2 R1    ; R2 = &nsfs_dir_table[dir_count]
+
+    STW R8  [R2 + NSFS_DIR_NS]
+    STW R12 [R2 + NSFS_DIR_PATH]
+    LI R1 0
+    STW R1  [R2 + NSFS_DIR_FLAGS]
+
+    MOV R1 R10
+    ADD R10 R10 1
+    STW R10 [R9]    ;Dir count incremented
+    B nsfs_add_dir_done
+
+nsfs_add_dir_full:
+    LI R1 -1
+
+nsfs_add_dir_done:
+    POP R12
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;=====================================================================
+; nsfs_find_dir_id: Find the ID of a directory in the cache (derived dir_table)
+; in:  R1 = namespace, R2 = directory path
+; out: R1 = dir id, or -1
+;=====================================================================
+nsfs_find_dir_id:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+
+    MOV R8 R1
+    MOV R9 R2
+    LI R10 0
+
+nsfs_find_dir_loop:
+    LI R11 nsfs_dir_count
+    LDW R11 [R11]
+    CMP R10 R11
+    BGE nsfs_find_dir_not_found
+
+    LI R1 NSFS_DIR_SIZEOF
+    MUL R1 R10 R1
+    LI R11 nsfs_dir_table
+    ADD R11 R11 R1
+
+    LDW R1 [R11 + NSFS_DIR_NS]
+    CMP R1 R8
+    BNE nsfs_find_dir_next
+
+    MOV R1 R9
+    LDW R2 [R11 + NSFS_DIR_PATH]
+    BL strcmp
+    CMP R1 1
+    BEQ nsfs_find_dir_found
+
+nsfs_find_dir_next:
+    ADD R10 R10 1
+    B nsfs_find_dir_loop
+
+nsfs_find_dir_found:
+    MOV R1 R10
+    B nsfs_find_dir_done
+
+nsfs_find_dir_not_found:
+    LI R1 -1
+
+nsfs_find_dir_done:
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;=====================================================================
+; nsfs_path_is_child
+; in:  R1 = parent path, R2 = object path
+; out: R1 = 1 and R2 = child name when the object is an immediate child
+;=====================================================================
+nsfs_path_is_child:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+
+    MOV R8 R1
+    MOV R9 R2
+
+nsfs_path_child_compare:
+    LDB R10 [R8]
+    LDB R11 [R9]
+    CMP R10 0
+    BEQ nsfs_path_child_parent_matched
+    CMP R10 R11
+    BNE nsfs_path_child_no
+    ADD R8 R8 1
+    ADD R9 R9 1
+    B nsfs_path_child_compare
+
+nsfs_path_child_parent_matched:
+    CMP R11 0
+    BEQ nsfs_path_child_no
+
+    SUB R1 R8 1
+    LDB R1 [R1]
+    LI R5 47
+    CMP R1 R5
+    BEQ nsfs_path_child_component_start
+
+    CMP R11 R5
+    BNE nsfs_path_child_no
+    ADD R9 R9 1
+    LDB R11 [R9]
+    CMP R11 0
+    BEQ nsfs_path_child_no
+
+nsfs_path_child_component_start:
+    MOV R2 R9
+
+nsfs_path_child_scan:
+    LDB R10 [R9]
+    CMP R10 0
+    BEQ nsfs_path_child_yes
+    LI R5 47
+    CMP R10 R5
+    BNE nsfs_path_child_advance
+    ADD R9 R9 1
+    LDB R10 [R9]
+    CMP R10 0
+    BEQ nsfs_path_child_yes
+    B nsfs_path_child_no
+
+nsfs_path_child_advance:
+    ADD R9 R9 1
+    B nsfs_path_child_scan
+
+nsfs_path_child_yes:
+    LI R1 1
+    B nsfs_path_child_done
+
+nsfs_path_child_no:
+    LI R1 0
+
+nsfs_path_child_done:
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;=====================================================================
+; nsfs_find_parent_dir
+; in:  R1 = namespace, R2 = object path
+; out: R1 = parent dir id, R2 = basename ptr, R3 = object type
+;=====================================================================
+nsfs_find_parent_dir:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+    PUSH R12
+
+    MOV R8 R1                          ; namespace
+    MOV R9 R2                          ; object path
+    LI R10 0
+
+nsfs_find_parent_loop:
+    LI R11 nsfs_dir_count
+    LDW R11 [R11]
+    CMP R10 R11
+    BGE nsfs_find_parent_fail
+
+    LI R1 NSFS_DIR_SIZEOF
+    MUL R1 R10 R1
+    LI R11 nsfs_dir_table
+    ADD R11 R11 R1
+
+    LDW R1 [R11 + NSFS_DIR_NS]
+    CMP R1 R8
+    BNE nsfs_find_parent_next
+
+    LDW R1 [R11 + NSFS_DIR_PATH]
+    MOV R2 R9
+    BL nsfs_path_is_child
+    CMP R1 1
+    BEQ nsfs_find_parent_found
+
+nsfs_find_parent_next:
+    ADD R10 R10 1
+    B nsfs_find_parent_loop
+
+nsfs_find_parent_found:
+    ; R2 is the basename pointer from nsfs_path_is_child.
+    MOV R12 R2
+    MOV R1 R8
+    MOV R2 R9
+    BL nsfs_find_index_by_path
+    LI R2 -1
+    CMP R1 R2
+    BEQ nsfs_find_parent_fail
+    MOV R11 R1
+
+    MOV R1 R10
+    MOV R2 R12
+    LDW R3 [R11 + NSFS_INDEX_TYPE]
+    B nsfs_find_parent_done
+
+nsfs_find_parent_fail:
+    LI R1 -1
+    LI R2 0
+    LI R3 0
+
+nsfs_find_parent_done:
+    POP R12
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+;=====================================================================
+; nsfs_find_index_by_path
+; in:  R1 = namespace, R2 = object path
+; out: R1 = object index entry ptr, or -1
+;=====================================================================
+nsfs_find_index_by_path:
+    PUSH LR
+    PUSH R8
+    PUSH R9
+    PUSH R10
+    PUSH R11
+
+    MOV R8 R1                          ; namespace
+    MOV R9 R2                          ; object path
+    LI R10 0
+    LI R11 nsfs_index_table
+
+nsfs_find_index_loop:
+    LI R1 nsfs_index_count
+    LDW R1 [R1]
+    CMP R10 R1
+    BGE nsfs_find_index_fail
+
+    LDW R1 [R11 + NSFS_INDEX_NS]
+    CMP R1 R8
+    BNE nsfs_find_index_next
+
+    MOV R1 R9
+    LDW R2 [R11 + NSFS_INDEX_PATH]
+    BL strcmp
+    CMP R1 1
+    BEQ nsfs_find_index_found
+
+nsfs_find_index_next:
+    ADD R11 R11 NSFS_INDEX_ENTRY_SIZEOF
+    ADD R10 R10 1
+    B nsfs_find_index_loop
+
+nsfs_find_index_found:
+    MOV R1 R11
+    B nsfs_find_index_done
+
+nsfs_find_index_fail:
+    LI R1 -1
+
+nsfs_find_index_done:
+    POP R11
+    POP R10
+    POP R9
+    POP R8
+    POP LR
+    RET
+
+
 
 ;====================================================================
 ; lookup_device in device_table - obsolete replaced by devfs_lookup
@@ -5940,7 +6371,7 @@ trap_restore:
 ; important kernel data structures and constants
 ; =============================================================
 
-.ORG 0x7000
+;.ORG 0x7300
 
 CURRENT_TASK:
     .WORD 0
@@ -6032,11 +6463,12 @@ devfs_ops:
 ; used for building the NSFS index table in guest memory. 
 ;
 ;=========================================================================
-.EQU NSFS_WIRE_TYPE,      0
-.EQU NSFS_WIRE_SIZE,      4
-.EQU NSFS_WIRE_VERSION,   8
-.EQU NSFS_WIRE_PATH_LEN, 12
-.EQU NSFS_WIRE_HDR_SIZEOF, 16
+.EQU NSFS_WIRE_NS,        0
+.EQU NSFS_WIRE_TYPE,      4
+.EQU NSFS_WIRE_SIZE,      8
+.EQU NSFS_WIRE_VERSION,  12
+.EQU NSFS_WIRE_PATH_LEN, 16
+.EQU NSFS_WIRE_HDR_SIZEOF, 20
 
 ;=========================================================================
 ; NSFS index table item structure
@@ -6049,14 +6481,10 @@ devfs_ops:
 .EQU NSFS_INDEX_PATH_LEN,20
 .EQU NSFS_INDEX_ENTRY_SIZEOF, 24
 
-
-.EQU NSFS_INDEX_MAX_ENTRIES, 64
 .EQU MAX_NSFS_NAMESPACES,    4
-.EQU MAX_NSFS_INDEX_ENTRIES, 128
-.EQU MAX_NSFS_DIRS,          128
+.EQU MAX_NSFS_INDEX_ENTRIES, 256
+.EQU MAX_NSFS_DIRS,          512
 .EQU MAX_NSFS_DIR_ENTRIES,   256
-;.EQU NSFS_INDEX_PATH_POOL_SIZE, 4096
-
 
 
 .EQU NSFS_DIR_NS,         0
@@ -6071,7 +6499,6 @@ devfs_ops:
 .EQU NSFS_DIR_IDX_TYPE,    16
 .EQU NSFS_DIR_IDX_SIZEOF,  20
 
-.EQU NSFS_INDEX_MAX_ENTRIES, 64
 .EQU NSFS_INDEX_PATH_POOL_SIZE, 4096
 
 ;=========================================================================
@@ -6130,6 +6557,11 @@ nsfs_node_pool:
 nsfs_node_used:
     .SPACE NSFS_MAX_NODES * 4
 
+nsfs_namespace_count:
+    .WORD 0
+
+nsfs_namespace_ids:
+    .SPACE MAX_NSFS_NAMESPACES * 4
 
 ;=========================================================================
 ; nsfs index table and path pool for index entries.
@@ -6138,7 +6570,7 @@ nsfs_index_count:
     .WORD 0
 
 nsfs_index_table:
-    .SPACE NSFS_INDEX_MAX_ENTRIES * NSFS_INDEX_ENTRY_SIZEOF
+    .SPACE MAX_NSFS_INDEX_ENTRIES * NSFS_INDEX_ENTRY_SIZEOF
 
 nsfs_index_path_next:
     .WORD 0
@@ -6152,8 +6584,7 @@ nsfs_index_path_pool:
 ; nsfs dir table and path pool for index entries.
 ;=========================================================================
 
-; Derived directory table and child index for NSFS.
-; dir_table[0] is always "/" for the currently refreshed namespace.
+; Derived directory table and child index for NSFS, partitioned by namespace.
 nsfs_dir_count:
     .WORD 0
 
@@ -10972,6 +11403,7 @@ bmi_call_error:
 .EQU DIR_CREATE,  0x20
 .EQU DIR_DELETE,  0x21
 .EQU NSFS_INDEX,  0x30
+.EQU NSFS_INDEX_ALL, 0x32
 .EQU BMI_READ_FILE, 0x31
 
 ; ================================================================

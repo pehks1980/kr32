@@ -1,84 +1,87 @@
 KR32 kernel memory map
 =====================
 
-This document describes the current layout defined in kernelshed.asm. Addresses
-are hexadecimal. Page sizes are 0x1000 bytes unless otherwise noted.
+This document describes the layout defined by kernelshed.asm and the generated
+TAR image. Addresses are hexadecimal. Pages are 0x1000 bytes. Ranges below are
+inclusive unless marked as exclusive or described as an end symbol.
 
 Kernel image and bootstrap
 -------------------------
 
-The kernel entry is at 0x00002000. Kernel code and low-memory globals are
-below 0x00010000. The common kernel page table identity-maps
-0x00000000-0x0000FFFF, covering those sections. BMI buffers and registers are
-in the separate 0x00015000-0x00017FFF range described below.
+The kernel entry is at 0x00002000. Each task page table identity-maps
+0x00000000-0x00014FFF for kernel code and static data. BMI buffers/registers
+are mapped separately at 0x00015000-0x00017FFF.
 
-The bootstrap stack top is 0x0003E000. KERNEL_START must set SP to this value
-before executing any instruction that pushes to the stack. This stack is used
-only during bootstrap, before the MMU is enabled and a task's kernel stack is
-selected. The stack grows downward into the page below 0x0003E000.
+KERNEL_START sets the bootstrap SP to 0x0003E000 before making calls or pushing
+registers. This temporary stack grows through 0x0003D000-0x0003DFFF and is used
+before the MMU is enabled. It is not a task's kernel stack, and this range is
+not part of the common post-bootstrap mappings. KERNEL_BASE (0x00000000) and
+KERNEL_LIMIT (0x0003DFFF) are address-validation bounds, not a declaration that
+the whole range is mapped.
 
-Kernel and common mappings
---------------------------
+Common kernel mappings
+----------------------
 
-The common kernel mappings are identity mappings:
+map_common_kernel installs these identity mappings in every task page table.
+They use supervisor-only kernel permissions:
 
-  0x00000000-0x0000FFFF  Kernel image and low-memory kernel pages
+  0x00000000-0x00014FFF  Kernel code and static data
   0x00015000-0x00017FFF  BMI buffers and registers
-  0x00100000-0x00101FFF  MMIO
   0x00050000-0x000CFFFF  Physical page allocator pool
+  0x000D0000-0x000EAFFF  Built-in TAR image mapping
+  0x00100000-0x00102FFF  UART, PIT, and PIC MMIO pages
 
-The range 0x00010000-0x00014FFF is not included in the common mappings.
-Mappings for task-specific user pages are installed in each task's page table.
-The allocator pool is mapped for kernel access; its presence in a common
-mapping does not make those pages user-accessible.
+The TAR image bytes occupy 0x000D0000-0x000EB5FF; tarfs_end is the exclusive
+end address 0x000EB600. The mapping loop rounds up to a page boundary, so the
+last mapped page is 0x000EA000-0x000EAFFF. The image is outside the allocator
+pool.
 
-Per-task stacks and user address space
---------------------------------------
+Per-task address spaces
+-----------------------
 
-Each task has a separate, dynamically allocated physical page for its kernel
-stack. Task creation builds the initial trapframe on that page. When switching
-to a task, the kernel loads its saved kernel stack pointer (KSP) and page-table
-base register (PTBR) before enabling the MMU. The bootstrap stack at 0x3E000 is
-not the per-task kernel stack.
+The user-pointer bounds are USER_BASE = 0x0003E000 through USER_LIMIT =
+0x0005FFFF, inclusive. Validation also checks that every page touched by a
+pointer is present and user-accessible in the current task's page table. The
+bounds alone do not make an address mapped.
 
-The configured user-address bounds are:
+Current user virtual addresses and mappings:
 
-  USER_BASE   0x0003E000
-  USER_LIMIT  0x0005FFFF
+  0x0003F000  User stack page; initial user SP is 0x00040000
+  0x00040000  Initial task code page; TASK_INIT_START is in this page
+  0x00042000  Per-task user data and heap page
+  0x00043000  Starting VA for an execve-loaded program image
 
-These bounds are used to reject out-of-range user pointers; they do not mean
-that every address in this interval is mapped. Each task's page table must
-contain a present, user-accessible mapping for an address to be usable.
+Task creation allocates a distinct physical user-stack page and data page for
+each task, mapping them read/write for user mode at 0x0003F000 and 0x00042000.
+The heap occupies 0x00042100-0x00042FFF; its initial break is 0x00042100.
+The task's entry-code page is mapped from the entry address. execve maps its
+loaded image starting at 0x00043000. These mappings are task-specific.
 
-Current user virtual addresses:
+Each task also receives a dynamically allocated physical kernel-stack page.
+The initial trapframe is built on that page. Kernel stacks, page tables, file
+descriptor tables, kernel buffers, and user pages are allocated from the
+physical page pool and accessed through the common supervisor mapping.
 
-  0x0003F000  Per-task user stack page; initial user SP is 0x00040000
-  0x00040000  Initial task code page (contains TASK_INIT_START at 0x000404FA)
-  0x00042000  Per-task user data page
-  0x00043000  execve-loaded program code page
+Physical page allocator
+-----------------------
 
-The user stack is a separately allocated physical page mapped at 0x3F000.
-Addresses such as 0x40000 and 0x42000 are mapped as needed in the task's page
-table; the user pointer bounds alone do not guarantee that they are present.
+The active allocator manages 128 pages of 0x1000 bytes each:
 
-Physical page allocator and built-in archive
---------------------------------------------
+  Base:             0x00050000
+  End (exclusive):  0x000D0000
+  Capacity:         0x00080000 bytes (512 KiB)
 
-The allocator manages 128 pages in the physical range 0x00050000-0x000CFFFF.
-It supplies physical pages for task kernel stacks, user stacks, user data, and
-other dynamically allocated pages.
-
-The built-in TAR image occupies 0x000A0000-0x000BB5FF, which overlaps the
-allocator pool. The current allocator initialization marks only the page at
-0x000A0000 as reserved; the other archive pages are not all excluded from
-allocation. Do not treat the entire archive range as reserved unless allocator
-initialization is updated to reserve it.
+page_alloc uses the 128-byte page_refcounts array to find free pages; the
+array is cleared during page-table initialization. The source also retains
+older bitmap-based routines and data, but they are not the active allocator.
+The TAR image begins at the pool's exclusive end, so it does not overlap these
+allocations.
 
 Bootstrap sequence
 ------------------
 
-1. Enter at KERNEL_START and set SP to 0x0003E000 before any push.
-2. Initialize kernel state and create task page tables, task kernel stacks,
-   initial trapframes, and user mappings.
-3. Load the selected task's PTBR and KSP.
-4. Enable the MMU and enter the selected task.
+1. Enter KERNEL_START and set SP to 0x0003E000 before any push.
+2. Initialize page-allocation state, then create task page tables and their
+   kernel stacks, trapframes, user stacks, data pages, and mappings.
+3. Mount the built-in TAR image and select the initial task's PTBR and KSP.
+4. Enable the MMU and restore the selected task's trapframe.

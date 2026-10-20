@@ -19,6 +19,7 @@ DIR_CREATE = 0x20   #Create a new directory in a namespace
 DIR_DELETE = 0x21   #Delete an existing directory in a namespace
 NSFS_INDEX = 0x30   #Return active namespace file/dir index
 BMI_READ_FILE = 0x31 #Read a byte range from a file manifest
+NSFS_INDEX_ALL = 0x32
 
 NSFS_CHUNK_SIZE = 1024
 NSFS_OK = 0
@@ -30,6 +31,7 @@ NSFS_E2BIG = 7
 NSFS_TYPE_FILE = 1
 NSFS_TYPE_DIR = 2
 NSFS_INDEX_MAX_PAYLOAD = 4096 - 12
+NSFS_MAX_NAMESPACES = 4
 
 
 class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
@@ -451,10 +453,7 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
         print(f"[NSFS] delete dir ns={namespace} path={path} descendants_marked_deleted={len(descendants)}")
         return NSFS_OK, b""
 
-    def namespace_index(self, namespace):
-        if not self.namespace_exists(namespace):
-            return NSFS_ENOENT, b""
-
+    def _namespace_index_entries(self, namespace):
         prefix = self._key(namespace, "path") + ":"
         entries = []
         # iterate over all keys in the KV store that start with the namespace's path prefix,
@@ -472,18 +471,28 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
                 continue
             path = key[len(prefix):]
             path_bytes = path.encode("utf-8")
-            # pack the entry type, size, version, and path length into a binary structure,
-            # followed by the path bytes and padding to align to 4 bytes
-            entry = struct.pack(
-                "<LLLL",
+            entries.append((
                 entry_type,
                 int(node.get("size", 0)),
                 int(node.get("version", 1)),
+                path_bytes,
+            ))
+        return entries
+
+    def namespace_index(self, namespace):
+        if not self.namespace_exists(namespace):
+            return NSFS_ENOENT, b""
+
+        entries = []
+        for entry_type, size, version, path_bytes in self._namespace_index_entries(namespace):
+            entries.append(struct.pack(
+                "<LLLL",
+                entry_type,
+                size,
+                version,
                 len(path_bytes),
-            )
-            entry += path_bytes
-            entry += b"\x00" * ((4 - (len(path_bytes) % 4)) % 4)
-            entries.append(entry)
+            ) + path_bytes + b"\x00" * ((4 - (len(path_bytes) % 4)) % 4))
+
         # pack the number of entries and concatenate all entries into a single payload,
         # if the payload exceeds the maximum allowed size, return NSFS_E2BIG
         payload = struct.pack("<L", len(entries)) + b"".join(entries)
@@ -492,6 +501,40 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
 
         self.debug(f"[NSFS] index ns={namespace} entries={len(entries)} bytes={len(payload)}")
         return NSFS_OK, payload
+
+    def namespace_index_all(self):
+        namespace_ids = sorted({
+            int(key[3:-5])
+            for key in self.data["kv"]
+            if key.startswith("ns:") and key.endswith(":meta") and key[3:-5].isdigit()
+        })
+        if len(namespace_ids) > NSFS_MAX_NAMESPACES:
+            return NSFS_E2BIG, b""
+
+        payload = bytearray(struct.pack("<L", len(namespace_ids)))
+        payload.extend(b"".join(struct.pack("<L", namespace) for namespace in namespace_ids))
+        all_entries = []
+        for namespace in namespace_ids:
+            for entry_type, size, version, path_bytes in self._namespace_index_entries(namespace):
+                all_entries.append(struct.pack(
+                    "<LLLLL",
+                    namespace,
+                    entry_type,
+                    size,
+                    version,
+                    len(path_bytes),
+                ) + path_bytes + b"\x00" * ((4 - (len(path_bytes) % 4)) % 4))
+
+        payload.extend(struct.pack("<L", len(all_entries)))
+        payload.extend(b"".join(all_entries))
+        if len(payload) > NSFS_INDEX_MAX_PAYLOAD:
+            return NSFS_E2BIG, b""
+
+        self.debug(
+            f"[NSFS] index all namespaces={len(namespace_ids)} "
+            f"entries={len(all_entries)} bytes={len(payload)}"
+        )
+        return NSFS_OK, bytes(payload)
     # read a byte range from a file manifest in a namespace, returning the requested bytes or an error code
     #
     def read_file(self, namespace, payload):
@@ -559,6 +602,8 @@ class NSFSStore:        # class NSFSStore: deal with KV store for NSFS
             return self.delete_dir(namespace, packet["payload"])
         if opcode == NSFS_INDEX:
             return self.namespace_index(namespace)
+        if opcode == NSFS_INDEX_ALL:
+            return self.namespace_index_all()
         if opcode == BMI_READ_FILE:
             return self.read_file(namespace, packet["payload"])
 
