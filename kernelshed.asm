@@ -2870,8 +2870,17 @@ nsfs_lookup_found:
 
     LDW R1 [R9 + NSFS_INDEX_NS]
     STW R1 [R11 + NSFS_NODE_NAMESPACE]
-    LDW R1 [R9 + NSFS_INDEX_PATH]
+    ; The index path pool is rebuilt by nsfs_refresh_index. Keep open vnode
+    ; paths stable by copying each pathname into its node-owned storage.
+    LDW R7 [R9 + NSFS_INDEX_PATH]
+    MOV R1 R7
+    BL get_path_len
+    ADD R3 R1 1
+    MOV R2 R7
+    MOV R1 R11
+    ADD R1 R1 NSFS_NODE_PATH_BUF
     STW R1 [R11 + NSFS_NODE_PATH]
+    BL memcpy
     LDW R1 [R9 + NSFS_INDEX_TYPE]
     CMP R1 NSFS_TYPE_DIR
     BEQ nsfs_lookup_type_dir
@@ -6485,7 +6494,8 @@ devfs_ops:
 .EQU NSFS_NODE_TYPE,      8
 .EQU NSFS_NODE_SIZE,     12
 .EQU NSFS_NODE_FLAGS,    16
-.EQU NSFS_NODE_SIZEOF,   20
+.EQU NSFS_NODE_PATH_BUF, 20
+.EQU NSFS_NODE_SIZEOF,   NSFS_NODE_PATH_BUF + EXEC_MAX_PATH
 ;================================================================
 
 .EQU NSFS_DEFAULT_NS,     0
