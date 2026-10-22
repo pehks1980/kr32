@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""End-to-end regression for quoted shell arguments passed to execve."""
+
+from contextlib import redirect_stdout
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from device.nsfs import NSFSStore
+from tools.assembler import Assembler
+from tools.preprocess_cmacros import Preprocessor
+from vmp import CPU
+
+
+def main():
+    root = Path(__file__).resolve().parents[1]
+    source = root / "kernelshed.asm"
+    processed = Preprocessor(root).process(
+        source.read_text(encoding="utf-8").splitlines()
+    )
+
+    with TemporaryDirectory() as tmpdir:
+        image = Path(tmpdir) / "memory.img"
+        assembler = Assembler()
+        with redirect_stdout(StringIO()):
+            assembler.build(processed, out=str(image))
+
+        cpu = CPU()
+        cpu.bmi.nsfs = NSFSStore(Path(tmpdir) / "nsfs_store.json")
+        command = b'/bin/print "a=%s b=%d c=%b d=%s" "aaa" 1222 256 "ddd"\n'
+        cpu.uart.rx_fifo.extend(command)
+        cpu.load_image(str(image))
+        cpu.quiet = True
+
+        with redirect_stdout(StringIO()):
+            cpu.run(0, max_steps=3000000)
+
+        output = bytes(cpu.uart.tx_output).decode("ascii", errors="replace")
+        assert cpu.last_execve_path == "/bin/print", cpu.last_execve_path
+        assert "a=aaa b=1222 c=100000000 d=ddd" in output, output
+
+    print("Shell exec argv regression test passed")
+
+
+if __name__ == "__main__":
+    main()

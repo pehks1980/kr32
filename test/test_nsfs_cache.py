@@ -9,11 +9,15 @@ from pathlib import Path
 from device.nsfs import DIR_CREATE, FILE_CREATE, NS_CREATE, NSFSStore
 from tools.assembler import Assembler
 from tools.preprocess_cmacros import Preprocessor
-from vmp import CPU
+from vmp import CPU, MODE_KERNEL
 
 
 def read_u32(cpu, address):
     return int.from_bytes(cpu.physical_memory[address:address + 4], "little")
+
+
+def write_u32(cpu, address, value):
+    cpu.physical_memory[address:address + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
 
 
 def read_cstr(cpu, address):
@@ -95,6 +99,82 @@ def main():
             ))
         assert (7, 1, "other") in children
         assert (7, other_dir_id, "a.txt") in children
+
+        # Exercise the reader itself with descendants that must not appear
+        # as duplicate entries in their ancestor directory.
+        scratch = labels["BMI_BUF_WRITE"] + 0x800
+        names = labels["BMI_BUF_READ"] + 0x200
+        user_dirent = labels["BMI_BUF_READ"] + 0x100
+        file_ptr = scratch + 0x100
+        frame = scratch + 0x200
+        sentinel = 0x1F00
+        root_path = labels["NSFS_ROOT_PATH"]
+        aaa_path = names
+        bbb_path = names + 8
+        nested_name = names + 16
+        def write_cstr(address, text):
+            encoded = text.encode("utf-8") + b"\0"
+            cpu.physical_memory[address:address + len(encoded)] = encoded
+
+        write_cstr(aaa_path, "aaa")
+        write_cstr(bbb_path, "bbb")
+        write_cstr(nested_name, "inside.txt")
+
+        write_u32(cpu, labels["NSFS_DIR_COUNT"], 2)
+        for index, (path, path_ptr) in enumerate((("/", root_path), ("/aaa/", names + 32))):
+            entry = labels["NSFS_DIR_TABLE"] + index * 12
+            write_u32(cpu, entry, 0)
+            write_u32(cpu, entry + 4, path_ptr)
+            write_u32(cpu, entry + 8, 0)
+            if path != "/":
+                write_cstr(path_ptr, path)
+
+        write_u32(cpu, labels["NSFS_INDEX_COUNT"], 3)
+        for index, (entry_type, size) in enumerate(((2, 0), (2, 0), (1, 11))):
+            entry = labels["NSFS_INDEX_TABLE"] + index * 24
+            write_u32(cpu, entry, 0)
+            write_u32(cpu, entry + 4, entry_type)
+            write_u32(cpu, entry + 8, size)
+
+        write_u32(cpu, labels["NSFS_DIR_INDEX_COUNT"], 3)
+        child_records = (
+            (0, aaa_path, 0, 2),
+            (0, bbb_path, 1, 2),
+            (1, nested_name, 2, 1),
+        )
+        for index, (parent_id, name_ptr, object_index, entry_type) in enumerate(child_records):
+            entry = labels["NSFS_DIR_INDEX"] + index * 20
+            write_u32(cpu, entry, 0)
+            write_u32(cpu, entry + 4, parent_id)
+            write_u32(cpu, entry + 8, name_ptr)
+            write_u32(cpu, entry + 12, object_index)
+            write_u32(cpu, entry + 16, entry_type)
+
+        write_u32(cpu, file_ptr + 4, 0)
+        tar_count = read_u32(cpu, labels["TAR_COUNT"])
+        write_u32(cpu, file_ptr + 4, tar_count)
+        cpu.quiet = True
+
+        def read_merged_entry():
+            frame_values = (user_dirent, file_ptr, 0, root_path, 0, 0, sentinel)
+            for word_index, value in enumerate(frame_values):
+                write_u32(cpu, frame + word_index * 4, value)
+            cpu.set_sp(frame)
+            cpu.reg[6] = read_u32(cpu, file_ptr + 4)
+            cpu.reg[10] = root_path
+            cpu.reg[12] = file_ptr
+            cpu.reg[15] = sentinel
+            cpu.mode = MODE_KERNEL
+            cpu.add_breakpoint(sentinel)
+            cpu.run(labels["READDIR_NSFS_START"], max_steps=1000)
+            cpu.clear_breakpoint(sentinel)
+            return cpu.reg[1], read_cstr(cpu, user_dirent + 12)
+
+        assert read_merged_entry() == (76, "aaa")
+        assert read_u32(cpu, file_ptr + 4) == tar_count + 1
+        assert read_merged_entry() == (76, "bbb")
+        assert read_u32(cpu, file_ptr + 4) == tar_count + 2
+        assert read_merged_entry()[0] == 0
 
     print("NSFS directory cache regression test passed")
 

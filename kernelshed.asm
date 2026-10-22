@@ -1489,6 +1489,9 @@ exec_load_binary:
     PUSH R11
     PUSH R12
 
+    ; Executables are looked up read-only; R2 otherwise contains argv-copy
+    ; scratch data and can accidentally make vfs_lookup skip TARFS.
+    LI R2 O_RDONLY
     BL vfs_lookup   ; lookup inode for the file 
     CMP R1 0
     BEQ load_noent
@@ -3676,6 +3679,8 @@ nsfs_build_dir_cache_all:
     PUSH R11
     PUSH R12
 
+    ; Rebuild from scratch so deleted/changed entries cannot leave stale IDs.
+    ; Directory IDs are array indices; child entries store those IDs as parents.
     LI R1 nsfs_dir_count
     LI R2 0
     STW R2 [R1]
@@ -3683,7 +3688,9 @@ nsfs_build_dir_cache_all:
     LI R2 0
     STW R2 [R1]
 
-    ; Keep a root entry for the default namespace even if it has no objects.
+    ; Seed the default root even when the namespace has no indexed objects.
+    ; The namespace loop below adds one root per reported namespace; the
+    ; duplicate default root is ignored by nsfs_add_dir_to_cache.
     LI R1 NSFS_DEFAULT_NS
     LI R2 nsfs_root_path
     BL nsfs_add_dir_to_cache
@@ -3691,6 +3698,7 @@ nsfs_build_dir_cache_all:
     CMP R1 R2
     BEQ nsfs_build_dir_cache_full
 
+    ; Add roots first so every namespace has a parent for top-level objects.
     LI R8 0
 
 nsfs_build_root_loop:
@@ -3699,6 +3707,8 @@ nsfs_build_root_loop:
     CMP R8 R1
     BGE nsfs_build_dir_table_start
 
+    ; R8 is the namespace_ids[] index; each call either finds the existing
+    ; root or appends it and returns its directory ID in R1.
     LI R1 nsfs_namespace_ids
     LI R2 4
     MUL R2 R8 R2
@@ -3713,6 +3723,8 @@ nsfs_build_root_loop:
     B nsfs_build_root_loop
 
 nsfs_build_dir_table_start:
+    ; Add every explicitly indexed directory before building child links.
+    ; R8 is the object index and R9 points at nsfs_index_table[R8].
     LI R8 0                            ; object index number
     LI R9 nsfs_index_table
 
@@ -3739,6 +3751,8 @@ nsfs_build_dir_table_next:
     B nsfs_build_dir_table_loop
 
 nsfs_build_child_index_start:
+    ; For each indexed object, resolve its immediate parent and append one
+    ; child record. R8 remains the object's index for NSFS_DIR_IDX_INDEX.
     LI R8 0
     LI R9 nsfs_index_table
 
@@ -3756,7 +3770,7 @@ nsfs_build_child_index_loop:
     CMP R1 R4
     BEQ nsfs_build_child_index_next
 
-    ; R1 = parent dir id, R2 = basename ptr, R3 = object type.
+    ; R1 = parent dir ID, R2 = basename pointer, R3 = NSFS file/dir type.
     MOV R10 R1
     LDW R11 [R9 + NSFS_INDEX_NS]
     LI R4 nsfs_dir_index_count
@@ -3787,6 +3801,7 @@ nsfs_build_dir_cache_done:
     B nsfs_build_dir_cache_return
 
 nsfs_build_dir_cache_full:
+    ; Do not expose a partially rebuilt cache if either fixed-size table fills.
     LI R1 nsfs_dir_count
     LI R2 0
     STW R2 [R1]
@@ -3816,15 +3831,18 @@ nsfs_add_dir_to_cache:
     PUSH R10
     PUSH R12
 
+    ; Preserve the key while the lookup helper reuses argument registers.
     MOV R12 R2
     MOV  R8 R1
 
-    BL nsfs_find_dir_id     ;find if the directory is already in the derived dir_table
-    ; R1 = dir id, or -1 if not found
+    ; Reuse an existing namespace/path pair to keep directory IDs unique.
+    ; R1 is the existing ID, or -1 when the pair is not in the table.
+    BL nsfs_find_dir_id
     LI R2 -1
     CMP R1 R2
     BNE nsfs_add_dir_done
 
+    ; A new ID is the current count, so IDs stay dense from zero upward.
     LI R9 nsfs_dir_count
     LDW R10 [R9]
     LI R1 MAX_NSFS_DIRS
@@ -3836,6 +3854,7 @@ nsfs_add_dir_to_cache:
     LI R2 nsfs_dir_table
     ADD R2 R2 R1    ; R2 = &nsfs_dir_table[dir_count]
 
+    ; Store namespace and path together; paths may be shared across namespaces.
     STW R8  [R2 + NSFS_DIR_NS]
     STW R12 [R2 + NSFS_DIR_PATH]
     LI R1 0
@@ -3869,6 +3888,8 @@ nsfs_find_dir_id:
     PUSH R10
     PUSH R11
 
+    ; Search by the full composite key (namespace, exact path), not path alone.
+    ; R10 is the candidate ID and therefore the dir_table array index.
     MOV R8 R1
     MOV R9 R2
     LI R10 0
@@ -3879,6 +3900,7 @@ nsfs_find_dir_loop:
     CMP R10 R11
     BGE nsfs_find_dir_not_found
 
+    ; Compute &nsfs_dir_table[R10] and skip entries from other namespaces.
     LI R1 NSFS_DIR_SIZEOF
     MUL R1 R10 R1
     LI R11 nsfs_dir_table
@@ -3925,6 +3947,8 @@ nsfs_path_is_child:
     PUSH R10
     PUSH R11
 
+    ; Match the parent prefix, then accept only one remaining path component.
+    ; The returned R2 points at that component in the original object path.
     MOV R8 R1
     MOV R9 R2
 
@@ -3940,6 +3964,8 @@ nsfs_path_child_compare:
     B nsfs_path_child_compare
 
 nsfs_path_child_parent_matched:
+    ; An exact parent path is not its own child. For root "/", the previous
+    ; character test below recognizes the slash already consumed as the prefix.
     CMP R11 0
     BEQ nsfs_path_child_no
 
@@ -3960,6 +3986,8 @@ nsfs_path_child_component_start:
     MOV R2 R9
 
 nsfs_path_child_scan:
+    ; A single trailing slash is allowed for directory paths; another
+    ; component after a slash means this object is not an immediate child.
     LDB R10 [R9]
     CMP R10 0
     BEQ nsfs_path_child_yes
@@ -4004,6 +4032,8 @@ nsfs_find_parent_dir:
     PUSH R11
     PUSH R12
 
+    ; Find a matching parent directory in this namespace, then resolve the
+    ; object's own index entry so the result also includes its stored type.
     MOV R8 R1                          ; namespace
     MOV R9 R2                          ; object path
     LI R10 0
@@ -4014,6 +4044,7 @@ nsfs_find_parent_loop:
     CMP R10 R11
     BGE nsfs_find_parent_fail
 
+    ; R10 is a directory ID; ignore directories belonging to other namespaces.
     LI R1 NSFS_DIR_SIZEOF
     MUL R1 R10 R1
     LI R11 nsfs_dir_table
@@ -4035,6 +4066,8 @@ nsfs_find_parent_next:
 
 nsfs_find_parent_found:
     ; R2 is the basename pointer from nsfs_path_is_child.
+    ; Keep the basename returned by the matcher while doing the exact object
+    ; lookup; that lookup supplies the type stored in the child-index record.
     MOV R12 R2
     MOV R1 R8
     MOV R2 R9
@@ -4075,6 +4108,8 @@ nsfs_find_index_by_path:
     PUSH R10
     PUSH R11
 
+    ; Return the address of the exact namespace/path entry, or -1 if absent.
+    ; Callers use the pointer to read the entry's type and other metadata.
     MOV R8 R1                          ; namespace
     MOV R9 R2                          ; object path
     LI R10 0
@@ -4086,6 +4121,7 @@ nsfs_find_index_loop:
     CMP R10 R1
     BGE nsfs_find_index_fail
 
+    ; R10 is the object index and R11 points to that entry.
     LDW R1 [R11 + NSFS_INDEX_NS]
     CMP R1 R8
     BNE nsfs_find_index_next
@@ -8210,59 +8246,58 @@ readdir_skip:
 readdir_nsfs_start:
     LI R1 tar_count
     LDW R1 [R1]
-    SUB R6 R6 R1              ; convert merged file offset to nsfs index
+    SUB R6 R6 R1              ; convert merged offset to child-index position
+
+    ; Resolve this directory in the default namespace. The child index stores
+    ; parent IDs, so descendants cannot leak into an ancestor's listing.
+    LI R1 NSFS_DEFAULT_NS
+    MOV R2 R10
+    BL nsfs_find_dir_id
+    LI R2 -1
+    CMP R1 R2
+    BEQ readdir_eof
+    MOV R5 R1                  ; NSFS parent directory ID
 
 readdir_nsfs_scan:
-    LI R1 nsfs_index_count
+    LI R1 nsfs_dir_index_count
     LDW R1 [R1]
     CMP R6 R1
     BGE readdir_eof
 
-    LI R1 NSFS_INDEX_ENTRY_SIZEOF
+    ; R6 walks the derived child records, not all object paths.
+    LI R1 NSFS_DIR_IDX_SIZEOF
     MUL R3 R6 R1
-    LI R7 nsfs_index_table
-    ADD R7 R7 R3              ; R7 = &nsfs_index_table[R6]
+    LI R7 nsfs_dir_index
+    ADD R7 R7 R3              ; R7 = &nsfs_dir_index[R6]
 
-    LDW R1 [R7 + NSFS_INDEX_PATH]
-    MOV R2 R10
-    BL str_prefix
-    CMP R1 1
+    LDW R1 [R7 + NSFS_DIR_IDX_NS]
+    CMP R1 NSFS_DEFAULT_NS
     BNE readdir_nsfs_skip
 
-    LDW R1 [R7 + NSFS_INDEX_PATH]
-    MOV R2 R10
-    BL skip_prefix
-    MOV R9 R1
+    LDW R1 [R7 + NSFS_DIR_IDX_PARENT]
+    CMP R1 R5
+    BNE readdir_nsfs_skip
 
-    LDB R2 [R9]
-    CMP R2 0
-    BEQ readdir_nsfs_skip
+    ; The matched child record provides its basename and object-table index.
+    LDW R8 [R7 + NSFS_DIR_IDX_INDEX]
+    MOV R11 R6                 ; retain child-index cursor for FILE_OFFSET
 
-    MOV R1 R9
-    BL path_component_len
-    MOV R8 R1
-    CMP R8 0
-    BEQ readdir_nsfs_skip
-    LI R2 63
-    CMP R8 R2
-    BLE readdir_nsfs_name_ok
-    MOV R8 R2
-
-readdir_nsfs_name_ok:
     GET_CURR_TASK_IDX R4
     GET_TASK_PTR R5, R4
     TASK_GET_KBUF_WR R1, R5
 
-    LI R2 tar_count
-    LDW R2 [R2]
-    ADD R3 R2 R6
+    ; Resolve size from the source object; the child record supplies name/type.
+    LI R2 NSFS_INDEX_ENTRY_SIZEOF
+    MUL R2 R8 R2
+    LI R4 nsfs_index_table
+    ADD R4 R4 R2              ; R4 = matching NSFS object entry
+    MOV R3 R8
     ADD R3 R3 1
     STW R3 [R1 + DIRENT_INODE]
-    STW R3 [R12 + FILE_OFFSET]
 
-    LDW R2 [R7 + NSFS_INDEX_SIZE]
+    LDW R2 [R4 + NSFS_INDEX_SIZE]
     STW R2 [R1 + DIRENT_SIZE]
-    LDW R2 [R7 + NSFS_INDEX_TYPE]
+    LDW R2 [R7 + NSFS_DIR_IDX_TYPE]
     CMP R2 NSFS_TYPE_DIR
     BEQ readdir_nsfs_type_dir
     LI R2 DT_REG
@@ -8272,13 +8307,17 @@ readdir_nsfs_type_dir:
 readdir_nsfs_type_done:
     STW R2 [R1 + DIRENT_TYPE]
 
-    MOV R2 R9
+    LDW R2 [R7 + NSFS_DIR_IDX_NAME]
     ADD R3 R1 DIRENT_NAME
     LI R6 0
 readdir_nsfs_copy_name:
-    CMP R6 R8
+    CMP R6 63
     BGE readdir_nsfs_copy_done
     LDB R10 [R2 + R6]
+    CMP R10 0
+    BEQ readdir_nsfs_copy_done
+    CMP R10 47
+    BEQ readdir_nsfs_copy_done
     STB R10 [R3 + R6]
     ADD R6 R6 1
     B readdir_nsfs_copy_name
@@ -8286,20 +8325,14 @@ readdir_nsfs_copy_done:
     LI R10 0
     STB R10 [R3 + R6]
 
-    LI R2 DIRENT_SIZEOF
-    MOV R4 R1
-    POP R1
-    BL copy_to_user
-    CMP R1 DIRENT_SIZEOF
-    BNE readdir_fault_after_user_pop
-    MOV R1 DIRENT_SIZEOF
-    POP R12
-    POP R11
-    POP R10
-    POP R9
-    POP R8
-    POP LR
-    RET
+    ; Persist the next global merged position before copying the dirent out.
+    LI R2 tar_count
+    LDW R2 [R2]
+    ADD R2 R2 R11
+    ADD R2 R2 1
+    STW R2 [R12 + FILE_OFFSET]
+
+    B readdir_ops_go_on
 
 readdir_nsfs_skip:
     ADD R6 R6 1
