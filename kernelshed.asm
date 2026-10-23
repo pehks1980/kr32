@@ -165,22 +165,23 @@ idle_loop:
     ;DEBUG 10
     B idle_loop
 
-nsfs_bmi_demo:
+nsfs_bootstrap_ns0:
     PUSH LR
     ;------------------------------------------------------
-    ; NSFS/BMI demo sequence from system task 0.
-    ; Recreates namespace 0, creates a file, appends bytes, then deletes it.
+    ; Bootstrap the mutable root layout in namespace 0.
+    ; This keeps NS0 usable for runtime data while leaving the
+    ; read-only tarfs tree in place.
     ;
     ; R1 = opcode
     ; R2 = payload pointer
     ; R3 = payload length
     ; R4 = namespace
 
-    MOV R1 NS_DELETE    
+    MOV R1 NS_DELETE
     LI R2 0x00000000
     MOV R3 R2
     MOV R4 R2
-    CALL bmi_call       
+    CALL bmi_call
 
     MOV R1 NS_CREATE
     LI R2 0x00000000
@@ -188,26 +189,32 @@ nsfs_bmi_demo:
     MOV R4 R2
     CALL bmi_call
 
-    MOV R1 FILE_CREATE
-    LI R2 cr_file
-    LI R3 13
-    LI R4 0
-    CALL bmi_call
-
-    MOV R1 FILE_APPEND
-    LI R2 cr_file_append_payload
-    LI R3 21
-    LI R4 0
-    CALL bmi_call
-
-    MOV R1 FILE_APPEND
-    LI R2 cr_file_append_payload1
-    LI R3 21
+    MOV R1 DIR_CREATE
+    LI R2 nsfs_tmp_dir
+    LI R3 4
     LI R4 0
     CALL bmi_call
 
     MOV R1 DIR_CREATE
-    LI R2 cr_dir
+    LI R2 nsfs_var_dir
+    LI R3 4
+    LI R4 0
+    CALL bmi_call
+
+    MOV R1 DIR_CREATE
+    LI R2 nsfs_var_tmp_dir
+    LI R3 8
+    LI R4 0
+    CALL bmi_call
+
+    MOV R1 DIR_CREATE
+    LI R2 nsfs_var_run_dir
+    LI R3 8
+    LI R4 0
+    CALL bmi_call
+
+    MOV R1 DIR_CREATE
+    LI R2 nsfs_home_dir
     LI R3 5
     LI R4 0
     CALL bmi_call
@@ -215,28 +222,20 @@ nsfs_bmi_demo:
     POP LR
     RET
 
-cr_file:
-    .asciiz "etc/crash.txt"
+nsfs_tmp_dir:
+    .asciiz "/tmp"
 
-cr_dir:
-    .asciiz "/aaa/"
+nsfs_var_dir:
+    .asciiz "/var"
 
+nsfs_var_tmp_dir:
+    .asciiz "/var/tmp"
 
-cr_file_append_payload:
-    .WORD 0x0000000D    ; path length = 13
-    .WORD 0x2F637465    ; "etc/"
-    .WORD 0x73617263    ; "cras"
-    .WORD 0x78742E68    ; "h.tx"
-    .WORD 0x43424174    ; "tABC"
-    .WORD 0x0000000A    ; "\n"
+nsfs_var_run_dir:
+    .asciiz "/var/run"
 
-cr_file_append_payload1:
-    .WORD 0x0000000D    ; path length = 13
-    .WORD 0x2F637465    ; "etc/"
-    .WORD 0x73617263    ; "cras"
-    .WORD 0x78742E68    ; "h.tx"
-    .WORD 0x43424174    ; "tABC"
-    .WORD 0x0000000A    ; "\n"
+nsfs_home_dir:
+    .asciiz "/home"
 
 .org 0x2000
 
@@ -261,9 +260,9 @@ KERNEL_START:
         ; Initialize MMIO devices (PIC, PIT, UART)
         call init_mmio_devices
 
-        ; Run the NSFS/BMI demo once during boot so the host log shows it
-        ; even when user init starts before the idle task gets scheduled.
-        call nsfs_bmi_demo
+        ; Bootstrap the writable namespace root once during boot so the
+        ; host log shows the initial NS0 layout before user init starts.
+        call nsfs_bootstrap_ns0
         LI R1 NSFS_DEFAULT_NS
         call nsfs_refresh_index
 
@@ -8030,6 +8029,9 @@ readdir_tar_copy_name:
 
     CMP R10 0
     BEQ readdir_tar_copy_name_done
+    LI R1 47
+    CMP R10 R1
+    BEQ readdir_tar_copy_name_done
 
     STB R10 [R3 + R6]
 
@@ -8218,6 +8220,9 @@ readdir_copy_name:
     CMP R6 R8                  ;R8 = component name length
     BGE readdir_copy_name_done
     LDB R10 [R2 + R6]
+    LI R1 47
+    CMP R10 R1
+    BEQ readdir_copy_name_done
     STB R10 [R3 + R6]
     ADD R6 R6 1
     B readdir_copy_name
