@@ -1,0 +1,211 @@
+KR32 Developer Manual
+====================
+
+Status: Draft / Working notes
+
+This document is a developer-oriented system manual for KR32. It is intended to explain the project in practical terms, not as a user-facing guide. KR32 is a hobby computer system and kernel project built around explicit machine contracts, low-level assembly, a virtual machine, and a small toolchain. It is not a polished production OS. It is a learning and experimentation platform for understanding operating systems, memory management, task switching, and device interfaces from the ground up.
+
+1. Introduction
+---------------
+
+KR32 is a custom system built from first principles. The core idea is simple: the machine comes first, then the software, and the interfaces between them must be explicit and inspectable.
+
+The system is designed around a visible implementation model instead of hidden abstraction layers. That means kernel logic, device behavior, memory mapping, task switching, and syscall conventions are all meant to be readable and debuggable at the machine level.
+
+The project blends several layers:
+
+- a custom assembly-based kernel and bootstrap code
+- a virtual machine environment that emulates core hardware
+- device modules for MMU, UART, timer, PIC, cache, and BMI/NSFS
+- a built-in TAR filesystem image
+- a small command/userland environment
+- Python scripts that assemble and build the system image
+
+The overall design philosophy is deliberately engineer-first: simpler mechanisms, explicit contracts, replaceable implementations, and strong observability.
+
+2. Purpose of the system
+------------------------
+
+KR32 is a hobby operating system and hardware-exploration project. It is not aimed at replacing a mainstream desktop or server OS; it is aimed at understanding how a machine, a kernel, and a software stack fit together when the interfaces are kept explicit and inspectable.
+
+The practical aims are:
+
+- build a small but coherent kernel from first principles
+- understand task switching, memory mapping, trap handling, and device interaction at the machine boundary
+- use a VM and virtual devices to validate architectural choices before committing to hardware
+- develop a clean software/hardware workflow that can eventually be mapped onto FPGA-style implementation targets
+- keep the system understandable for future engineers and contributors
+
+The project deliberately does not revolve around polished user software or broad compatibility. The focus is on the architecture and the implementation path. The manifesto captures the philosophy; this manual focuses on the current technical shape of the system and what it is likely to become.
+
+3. System overview
+------------------
+
+KR32 is best understood as a layered system with a very low-level kernel and a VM-backed hardware model. The major parts are:
+
+- kernel source in kernelshed.asm
+- preprocess/build step via buildshed.py and tools/
+- assembler and generated listing output under lst/
+- VM/device model under device/
+- tarfs-generated filesystem payloads
+- small userland binaries under tarfs/bin and examples/
+- additional documentation for scheduler, memory layout, and filesystem design
+
+The build path is conceptually simple:
+
+1. preprocess the assembly sources with the C-macro style preprocessing step
+2. assemble into memory.img and listing output
+3. load the image into the VM environment
+4. boot the kernel and initialize task/page mappings
+5. run kernel, device, and user-mode logic together
+
+The project uses a custom kernel language and a custom toolchain, but the key idea is not “invented syntax for its own sake”; it is to keep the system inspectable and direct enough that the underlying machine behavior is easy to debug.
+
+4. Current technical architecture
+-------------------------------
+
+4.1 Kernel bootstrap and memory layout
+
+The kernel is designed around explicit addresses and mapping regions. The current memory layout is documented in docs/kernel/memory_map.txt and is one of the most important developer references in the tree.
+
+Key points include:
+
+- the kernel starts from a bootstrap entry and initializes early stacks before the MMU is fully active
+- common kernel mappings are installed in each task page table
+- core supervisor regions cover kernel code, static data, MMIO, allocator pool, and the tarfs image
+- user areas are separated from kernel space and validated against task-local page tables
+- task creation allocates a distinct user stack, data page, and kernel stack for each process
+
+The main physical allocator region is a page pool used for task structures, kernel buffers, page tables, and user pages. The TAR image sits outside this allocator region and is mapped into the address space as a built-in image.
+
+4.2 Task model and context switching
+
+The scheduler is built around trap-driven context switching. A task runs until an interrupt, trap, fault, or syscall occurs. At that point, the kernel saves the interrupted user execution state, switches stacks, and restores the state of the next task.
+
+The relevant technical flow is:
+
+- trap_entry enters kernel mode and swaps the user stack into a kernel stack
+- general-purpose registers and privileged state are saved in the trapframe
+- the kernel saves user SP and privileged state such as SEPC, SSTATUS, SCAUSE, and STVAL
+- the scheduler selects the next task and loads its PTBR and KSP
+- trap_restore loads the saved state and returns using SRET
+
+The project also includes a second scheduling path for blocking or waiting inside kernel code. In that case, the task is not simply resumed via a standard trap-return sequence; instead it resumes directly within kernel execution after a continuation point. This matters for syscalls such as waiting or resource-dependent operations.
+
+4.3 Syscalls and device boundary
+
+The kernel exposes system interfaces through explicit syscall dispatch and trap handling. The system is built around the belief that low-level ABI and calling conventions should be visible rather than hidden behind a large abstraction layer.
+
+The kernel interacts with devices through a set of low-level device contracts and hardware models, including:
+
+- MMU for page translations and permission checks
+- UART for console I/O
+- PIC for interrupts
+- timer for scheduler ticks and time-related behavior
+- BMI/NSFS for namespace and storage interactions
+- TLB and cache modules for memory-system experiments
+
+This does not try to mimic a modern Linux driver model. Instead, it keeps the boundary explicit so that debugging and hardware evolution remain straightforward.
+
+4.4 Filesystem and namespace model
+
+The filesystem layer is intentionally split into two functional layers:
+
+- tarfs: static or generated filesystem image used for built-in files and programs
+- NSFS: writable namespace filesystem backed by the BMI device and persisted state
+
+This is useful for testing the distinction between a simple embedded image and a more dynamic namespace-backed store. NSFS supports file creation, file append, deletion, directory operations, and index state generation. The project also tracks versioned file state and append semantics rather than a simple overwrite-only model.
+
+The goal is not only to support a shell and command set, but also to test how storage semantics, metadata, and mutable state can be built in a small kernel environment.
+
+4.5 Userspace and command model
+
+KR32 already contains a small set of built-in user programs, including commands such as ls, cat, cp, echo, mkdir, rm, rmdir, sh, print, and fc. These are not full POSIX shells or large userland ecosystems; they are a compact and useful environment for validating kernel contracts.
+
+This is enough to test:
+
+- execve-like startup paths
+- basic syscall behavior
+- shell parsing and process launch
+- file and directory operations
+- console I/O and task scheduling under simple workloads
+
+The userland is intentionally minimal, but it is a real working environment for kernel testing and debugging.
+
+4.6 Toolchain and build flow
+
+The system is currently driven by a small but practical toolchain:
+
+- preprocess_cmacros.py prepares assembly source for the kernel build
+- buildshed.py assembles the kernel and produces output artifacts
+- Assembler builds memory.img and listing files under lst/
+- tarfs generation tools create the embedded filesystem image and generated include data
+- debug scripts support inspection and memory state analysis
+
+The build flow is deliberately low-level: developers are expected to inspect generated listings and memory regions when debugging. This is consistent with the overall project principle that the machine should remain visible.
+
+5. Current strengths and limitations
+------------------------------------
+
+KR32 is strongest where the project wants it to be strongest: low-level architecture, explicit interfaces, and direct debugging.
+
+Current strengths:
+
+- explicit memory layout and validation model
+- task and trap architecture that is easy to follow in code
+- direct device interfaces rather than hidden driver stacks
+- filesystem experimentation with both static tarfs and dynamic NSFS
+- enough userspace to exercise kernel behavior without requiring a full desktop environment
+
+Current limitations:
+
+- the system is not a polished end-user platform
+- the kernel and toolchain are intentionally small and evolving
+- compatibility with existing software is limited
+- the project still depends on a custom ABI and custom architecture decisions
+- a lot of the platform is geared toward experimentation, not turnkey usability
+
+This is normal for a system in active development. The important point is that the design is intentionally chosen to keep the internals understandable, not to preserve legacy compatibility for its own sake.
+
+6. Near-term development direction
+----------------------------------
+
+The most important next step is not “make it more like Linux.” The more relevant direction is to make KR32 more capable while preserving the same engineering discipline.
+
+The likely path is:
+
+- expand the syscall and userland surface in a disciplined, explicit way
+- improve memory management, process lifecycle, and filesystem semantics
+- add more operational tools and debugging interfaces
+- formalize the kernel/device contract between VM hardware and software layers
+- improve the generated toolchain and build outputs
+
+A major milestone in this path is the move toward krcc. The krcc compiler is important because it will allow the project to express more substantial user programs and system logic without being tightly limited to hand-written assembly alone. This is a major transition from a purely assembly-heavy system to a richer development environment.
+
+7. Future direction: krcc, FPGA, and hardware experimentation
+-------------------------------------------------------------
+
+KR32 is intended to grow beyond a software-only VM prototype. The long-term vision is a system that can evolve into a hardware-relevant implementation target and eventually be run on real table-top hardware. In other words: the project is not only a kernel experiment, but a path toward a custom machine that can be built, debugged, and refined as hardware and software evolve together.
+
+The future direction includes:
+
+- a stronger front-end compiler and toolchain through krcc
+- more complex user programs and code generation beyond the current minimal assembly ecosystem
+- richer kernel services and a clearer system ABI
+- better isolation between VM workflows and hardware-oriented implementation paths
+- FPGA-oriented development where hardware units can be added and tested in a realistic, iterative way
+
+This is a major reason the project keeps the architecture explicit: it creates a better foundation for hardware development. A developer can change the machine model, test assumptions in the VM, add or adjust device behavior, and then implement the same design in hardware or FPGA-oriented form without rewriting the entire software stack from scratch.
+
+From a developer perspective, this is one of the strongest reasons to keep the system simple and inspectable. The project is not just building a kernel; it is building a platform for experimenting with machine design itself.
+
+8. Summary
+-----------
+
+KR32 is a low-level kernel and VM project with an engineer-first architecture. It is designed to expose how a machine, kernel, memory model, scheduler, and device interfaces actually work, rather than hiding them behind a polished abstraction layer.
+
+The current system already demonstrates a meaningful set of features: explicit memory layout, task switching, trap-based control flow, static and writable filesystem concepts, and a small userland environment. It is not yet a complete consumer OS, but it is already a useful development platform for understanding operating-system mechanics and machine-level design.
+
+The key long-term idea is simple: build the system so that it can grow from software experimentation into a real machine design suitable for FPGA and hardware development. The krcc compiler and FPGA-oriented direction are central to that future. KR32 is therefore best understood as a foundational platform for future kernel, system, and hardware work, not as a finished product in its own right.
+
+This manual is intentionally concise and technical. It focuses on the current system shape and the likely development path, while leaving the deeper design philosophy to the manifesto and the project docs.
