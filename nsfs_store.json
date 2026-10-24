@@ -6,265 +6,74 @@
         "type": "dir"
       }
     },
-    "ns:0:chunk:1393": {
-      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCA=",
-      "size": 128
-    },
-    "ns:0:chunk:1394": {
-      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgIA==",
-      "size": 256
-    },
-    "ns:0:chunk:1395": {
-      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBI",
-      "size": 384
-    },
-    "ns:0:chunk:1396": {
-      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIPT09PT09PT09PT1IPT09PT09PT09Qk9PVElORz09PT09PT09PT1IPT09PT09PT09PT09PUgKSCAgICAgICAgICAgSCAgICA=",
-      "size": 512
-    },
-    "ns:0:chunk:1397": {
-      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIPT09PT09PT09PT1IPT09PT09PT09Qk9PVElORz09PT09PT09PT1IPT09PT09PT09PT09PUgKSCAgICAgICAgICAgSCAgICAgICAgICAgIEggICAgICAgICAgICAgSCAgICAgICAgICBAICBICkg9PT09PT09PT09PUggICAgICAgICAgICBIICAgICAgICAgICAgIEg9PT09PT09PT09PT09SApIICBAICAgICAgICBIICAgICAgJCAgICAgSCAgICAgICQgIA==",
-      "size": 640
-    },
-    "ns:0:chunk:1398": {
-      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIPT09PT09PT09PT1IPT09PT09PT09Qk9PVElORz09PT09PT09PT1IPT09PT09PT09PT09PUgKSCAgICAgICAgICAgSCAgICAgICAgICAgIEggICAgICAgICAgICAgSCAgICAgICAgICBAICBICkg9PT09PT09PT09PUggICAgICAgICAgICBIICAgICAgICAgICAgIEg9PT09PT09PT09PT09SApIICBAICAgICAgICBIICAgICAgJCAgICAgSCAgICAgICQgICAgICBIICAgICAgICAgICAgIEgKSD09PT09PT09PT09SD09PT09PT09PT09PUg9PT09PT09PT09PT09SD09PT09PT09PT09PT1ICkhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhI",
-      "size": 768
-    },
-    "ns:0:chunk:1399": {
-      "data": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIICBISCAgIEhIICBISEhISCAgIEhISDMgICAgMjIyMjIgICAgICAgKyAgKyAgKyAgICAgIEgKSCAgSEggIEhIICAgSEggIEhIICAgICAzMyAgMjIgICAyMiAgICAgICArICsgKyAgICAgICBICkggIEhISEhIICAgIEhISEhIICAgSEhIMzMgICAgICAyMiAgICAgICsgKyArICsgKyAgICAgSApIICBISCAgSEggICBISCBISCAgICAgIDMzICAgIDIyICAgICAgICAgICsgKyArICAgICAgIEgKSCAgSEggICBISCAgSEggIEhIICBISEgzICAgMjIyMjIyMiAgICAgICsgICsgICsgICAgICBICkggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgSApIPT09PT09PT09PT1IPT09PT09PT09Qk9PVElORz09PT09PT09PT1IPT09PT09PT09PT09PUgKSCAgICAgICAgICAgSCAgICAgICAgICAgIEggICAgICAgICAgICAgSCAgICAgICAgICBAICBICkg9PT09PT09PT09PUggICAgICAgICAgICBIICAgICAgICAgICAgIEg9PT09PT09PT09PT09SApIICBAICAgICAgICBIICAgICAgJCAgICAgSCAgICAgICQgICAgICBIICAgICAgICAgICAgIEgKSD09PT09PT09PT09SD09PT09PT09PT09PUg9PT09PT09PT09PT09SD09PT09PT09PT09PT1ICkhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISA==",
-      "size": 769
-    },
-    "ns:0:filever:/tmp/logo.txt:1": {
-      "chunks": [],
-      "created_txid": 2092,
-      "deleted": false,
-      "modified_txid": 2092,
-      "previous": null,
-      "size": 0,
-      "tail": null,
-      "type": "file",
-      "version": 1
-    },
-    "ns:0:filever:/tmp/logo.txt:2": {
-      "chunks": [
-        1393
-      ],
-      "created_txid": 2092,
-      "deleted": false,
-      "modified_txid": 2093,
-      "previous": "ns:0:filever:/tmp/logo.txt:1",
-      "size": 128,
-      "tail": 1393,
-      "type": "file",
-      "version": 2
-    },
-    "ns:0:filever:/tmp/logo.txt:3": {
-      "chunks": [
-        1394
-      ],
-      "created_txid": 2092,
-      "deleted": false,
-      "modified_txid": 2094,
-      "previous": "ns:0:filever:/tmp/logo.txt:2",
-      "size": 256,
-      "tail": 1394,
-      "type": "file",
-      "version": 3
-    },
-    "ns:0:filever:/tmp/logo.txt:4": {
-      "chunks": [
-        1395
-      ],
-      "created_txid": 2092,
-      "deleted": false,
-      "modified_txid": 2095,
-      "previous": "ns:0:filever:/tmp/logo.txt:3",
-      "size": 384,
-      "tail": 1395,
-      "type": "file",
-      "version": 4
-    },
-    "ns:0:filever:/tmp/logo.txt:5": {
-      "chunks": [
-        1396
-      ],
-      "created_txid": 2092,
-      "deleted": false,
-      "modified_txid": 2096,
-      "previous": "ns:0:filever:/tmp/logo.txt:4",
-      "size": 512,
-      "tail": 1396,
-      "type": "file",
-      "version": 5
-    },
-    "ns:0:filever:/tmp/logo.txt:6": {
-      "chunks": [
-        1397
-      ],
-      "created_txid": 2092,
-      "deleted": false,
-      "modified_txid": 2097,
-      "previous": "ns:0:filever:/tmp/logo.txt:5",
-      "size": 640,
-      "tail": 1397,
-      "type": "file",
-      "version": 6
-    },
-    "ns:0:filever:/tmp/logo.txt:7": {
-      "chunks": [
-        1398
-      ],
-      "created_txid": 2092,
-      "deleted": false,
-      "modified_txid": 2098,
-      "previous": "ns:0:filever:/tmp/logo.txt:6",
-      "size": 768,
-      "tail": 1398,
-      "type": "file",
-      "version": 7
-    },
-    "ns:0:log:2086": {
+    "ns:0:log:2508": {
       "op": "ns_create",
-      "time": 1792785721.140495
+      "time": 1792871523.052442
     },
-    "ns:0:log:2087": {
+    "ns:0:log:2509": {
       "op": "dir_create",
       "path": "/tmp",
-      "time": 1792785721.14351
+      "time": 1792871523.055372
     },
-    "ns:0:log:2088": {
+    "ns:0:log:2510": {
       "op": "dir_create",
       "path": "/var",
-      "time": 1792785721.146407
+      "time": 1792871523.058208
     },
-    "ns:0:log:2089": {
+    "ns:0:log:2511": {
       "op": "dir_create",
       "path": "/var/tmp",
-      "time": 1792785721.1501398
+      "time": 1792871523.061905
     },
-    "ns:0:log:2090": {
+    "ns:0:log:2512": {
       "op": "dir_create",
       "path": "/var/run",
-      "time": 1792785721.1539042
+      "time": 1792871523.065962
     },
-    "ns:0:log:2091": {
+    "ns:0:log:2513": {
       "op": "dir_create",
       "path": "/home",
-      "time": 1792785721.157197
-    },
-    "ns:0:log:2092": {
-      "op": "file_create",
-      "path": "/tmp/logo.txt",
-      "time": 1792785789.3482969
-    },
-    "ns:0:log:2093": {
-      "bytes": 128,
-      "new_version": 2,
-      "old_version": 1,
-      "op": "file_append",
-      "path": "/tmp/logo.txt",
-      "time": 1792785789.675657
-    },
-    "ns:0:log:2094": {
-      "bytes": 128,
-      "new_version": 3,
-      "old_version": 2,
-      "op": "file_append",
-      "path": "/tmp/logo.txt",
-      "time": 1792785789.98702
-    },
-    "ns:0:log:2095": {
-      "bytes": 128,
-      "new_version": 4,
-      "old_version": 3,
-      "op": "file_append",
-      "path": "/tmp/logo.txt",
-      "time": 1792785790.308447
-    },
-    "ns:0:log:2096": {
-      "bytes": 128,
-      "new_version": 5,
-      "old_version": 4,
-      "op": "file_append",
-      "path": "/tmp/logo.txt",
-      "time": 1792785790.8239
-    },
-    "ns:0:log:2097": {
-      "bytes": 128,
-      "new_version": 6,
-      "old_version": 5,
-      "op": "file_append",
-      "path": "/tmp/logo.txt",
-      "time": 1792785791.2681139
-    },
-    "ns:0:log:2098": {
-      "bytes": 128,
-      "new_version": 7,
-      "old_version": 6,
-      "op": "file_append",
-      "path": "/tmp/logo.txt",
-      "time": 1792785793.2837272
-    },
-    "ns:0:log:2099": {
-      "bytes": 1,
-      "new_version": 8,
-      "old_version": 7,
-      "op": "file_append",
-      "path": "/tmp/logo.txt",
-      "time": 1792785793.500222
+      "time": 1792871523.069242
     },
     "ns:0:meta": {
       "admissions": [],
       "checkpoint": null,
-      "created_txid": 2086,
+      "created_txid": 2508,
       "env": {},
       "version": 1
     },
     "ns:0:path:/home": {
       "children": {},
-      "created_txid": 2091,
-      "modified_txid": 2091,
+      "created_txid": 2513,
+      "modified_txid": 2513,
       "type": "dir"
     },
     "ns:0:path:/tmp": {
       "children": {},
-      "created_txid": 2087,
-      "modified_txid": 2087,
+      "created_txid": 2509,
+      "modified_txid": 2509,
       "type": "dir"
-    },
-    "ns:0:path:/tmp/logo.txt": {
-      "chunks": [
-        1399
-      ],
-      "created_txid": 2092,
-      "deleted": false,
-      "modified_txid": 2099,
-      "previous": "ns:0:filever:/tmp/logo.txt:7",
-      "size": 769,
-      "tail": 1399,
-      "type": "file",
-      "version": 8
     },
     "ns:0:path:/var": {
       "children": {},
-      "created_txid": 2088,
-      "modified_txid": 2088,
+      "created_txid": 2510,
+      "modified_txid": 2510,
       "type": "dir"
     },
     "ns:0:path:/var/run": {
       "children": {},
-      "created_txid": 2090,
-      "modified_txid": 2090,
+      "created_txid": 2512,
+      "modified_txid": 2512,
       "type": "dir"
     },
     "ns:0:path:/var/tmp": {
       "children": {},
-      "created_txid": 2089,
-      "modified_txid": 2089,
+      "created_txid": 2511,
+      "modified_txid": 2511,
       "type": "dir"
     }
   },
-  "next_chunk_id": 1400,
-  "next_txid": 2100,
+  "next_chunk_id": 1774,
+  "next_txid": 2514,
   "version": 1
 }

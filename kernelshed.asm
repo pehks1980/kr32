@@ -6462,11 +6462,35 @@ file_stderr:
     .WORD O_WRONLY           ; FILE_FLAGS
 
 console_inode:
-    .WORD devfs_ops          ; INODE_OPS
+    .WORD dev_console_ops    ; INODE_OPS
     .WORD con_device         ; INODE_PRIVATE
     .WORD INODE_CHAR         ; INODE_TYPE
     .WORD 0                  ; size
     .WORD 1                  ; refcnt
+
+dev_console_ops:
+    .WORD devfs_open
+    .WORD devfs_read
+    .WORD devfs_write
+    .WORD devfs_close
+    .WORD 0
+    .WORD devfs_lookup
+    .WORD 0
+    .WORD 0
+    .WORD 0
+    .WORD 0
+
+null_ops:
+    .WORD devfs_open
+    .WORD null_read
+    .WORD null_write
+    .WORD devfs_close
+    .WORD 0
+    .WORD devfs_lookup
+    .WORD 0
+    .WORD 0
+    .WORD 0
+    .WORD 0
 
 devfs_ops:
     .WORD devfs_open
@@ -6701,12 +6725,12 @@ device_table:
 
 dev_console:
     .WORD dev_console_name
-    .WORD devfs_ops
+    .WORD dev_console_ops
     .WORD con_device
 
 dev_null:
     .WORD dev_null_name
-    .WORD devfs_ops
+    .WORD null_ops
     .WORD null_device
 
 null_device:
