@@ -6717,7 +6717,8 @@ dev_null_name:
 .EQU DEVICE_COUNT, 2
 
 ;=========================================================================
-;
+; device table - used to enumarate and find exact device and privide with ops 
+; for that device
 ;
 ;=========================================================================
 
