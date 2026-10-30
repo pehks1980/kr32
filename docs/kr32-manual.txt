@@ -139,6 +139,7 @@ The system is currently driven by a small but practical toolchain:
 - preprocess_cmacros.py prepares assembly source for the kernel build
 - buildshed.py assembles the kernel and produces output artifacts
 - Assembler builds memory.img and listing files under lst/
+- C compiler builds generate source-specific assembly listings under lst/c/
 - tarfs generation tools create the embedded filesystem image and generated include data
 - debug scripts support inspection and memory state analysis
 

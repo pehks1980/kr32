@@ -19,7 +19,12 @@ def compile_source(source_path, output_path):
     assembly = CodeGenerator().generate(ast)
 
     assembler = Assembler()
-    assembler.build(assembly.splitlines(), write_output=False)
+    listing_path = PROJECT_ROOT / "lst" / "c" / f"{source_path.stem}.lst.asm"
+    assembler.build(
+        assembly.splitlines(),
+        write_output=False,
+        listing_out=listing_path,
+    )
 
     entry = assembler.labels.get("PROGRAM_START")
     if entry is None or assembler.pc <= entry:
