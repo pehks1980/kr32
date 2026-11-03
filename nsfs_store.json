@@ -6,115 +6,126 @@
         "type": "dir"
       }
     },
-    "ns:0:chunk:1788": {
-      "data": "AAABDwEAAAAAAAIPKDAEAAAAAw8RAAAAAAAEQAAAAQ8AAAAAAAABQEhlbGxvIGZyb20gS1IzMiEKAA==",
-      "size": 58
+    "ns:0:chunk:1789": {
+      "data": "AAABDwEAAAAAAAIPRDAEAAAAAw8RAAAAAAAEQAAAAQ8BAAAAAAACD1YwBAAAAAMPKAAAAAAABEAAAAEPAAAAAAAAAUBIZWxsbyBmcm9tIEtSMzIhCgBIb3cgZHkgd2UgaGF2ZSBjIG5vdyEgd2hhdCBhIGltcHJlc3Npb24KAA==",
+      "size": 127
     },
-    "ns:0:filever:/tmp/hello:1": {
+    "ns:0:filever:/abc/hello:1": {
       "chunks": [],
-      "created_txid": 2561,
+      "created_txid": 2570,
       "deleted": false,
-      "modified_txid": 2561,
+      "modified_txid": 2570,
       "previous": null,
       "size": 0,
       "tail": null,
       "type": "file",
       "version": 1
     },
-    "ns:0:log:2555": {
+    "ns:0:log:2563": {
       "op": "ns_create",
-      "time": 1793393710.569538
+      "time": 1793394410.265682
     },
-    "ns:0:log:2556": {
+    "ns:0:log:2564": {
       "op": "dir_create",
       "path": "/tmp",
-      "time": 1793393710.572441
+      "time": 1793394410.268619
     },
-    "ns:0:log:2557": {
+    "ns:0:log:2565": {
       "op": "dir_create",
       "path": "/var",
-      "time": 1793393710.5753112
+      "time": 1793394410.27152
     },
-    "ns:0:log:2558": {
+    "ns:0:log:2566": {
       "op": "dir_create",
       "path": "/var/tmp",
-      "time": 1793393710.57905
+      "time": 1793394410.275254
     },
-    "ns:0:log:2559": {
+    "ns:0:log:2567": {
       "op": "dir_create",
       "path": "/var/run",
-      "time": 1793393710.582825
+      "time": 1793394410.279019
     },
-    "ns:0:log:2560": {
+    "ns:0:log:2568": {
       "op": "dir_create",
       "path": "/home",
-      "time": 1793393710.586029
+      "time": 1793394410.2822242
     },
-    "ns:0:log:2561": {
+    "ns:0:log:2569": {
+      "op": "dir_create",
+      "path": "/abc/",
+      "time": 1793402090.204553
+    },
+    "ns:0:log:2570": {
       "op": "file_create",
-      "path": "/tmp/hello",
-      "time": 1793393880.760813
+      "path": "/abc/hello",
+      "time": 1793402150.330451
     },
-    "ns:0:log:2562": {
-      "bytes": 58,
+    "ns:0:log:2571": {
+      "bytes": 127,
       "new_version": 2,
       "old_version": 1,
       "op": "file_append",
-      "path": "/tmp/hello",
-      "time": 1793393881.0262022
+      "path": "/abc/hello",
+      "time": 1793402150.697964
     },
     "ns:0:meta": {
       "admissions": [],
       "checkpoint": null,
-      "created_txid": 2555,
+      "created_txid": 2563,
       "env": {},
       "version": 1
     },
+    "ns:0:path:/abc/": {
+      "children": {},
+      "created_txid": 2569,
+      "modified_txid": 2569,
+      "type": "dir"
+    },
+    "ns:0:path:/abc/hello": {
+      "chunks": [
+        1789
+      ],
+      "created_txid": 2570,
+      "deleted": false,
+      "modified_txid": 2571,
+      "previous": "ns:0:filever:/abc/hello:1",
+      "size": 127,
+      "tail": 1789,
+      "type": "file",
+      "version": 2
+    },
     "ns:0:path:/home": {
       "children": {},
-      "created_txid": 2560,
-      "modified_txid": 2560,
+      "created_txid": 2568,
+      "modified_txid": 2568,
       "type": "dir"
     },
     "ns:0:path:/tmp": {
       "children": {},
-      "created_txid": 2556,
-      "modified_txid": 2556,
+      "created_txid": 2564,
+      "modified_txid": 2564,
       "type": "dir"
-    },
-    "ns:0:path:/tmp/hello": {
-      "chunks": [
-        1788
-      ],
-      "created_txid": 2561,
-      "deleted": false,
-      "modified_txid": 2562,
-      "previous": "ns:0:filever:/tmp/hello:1",
-      "size": 58,
-      "tail": 1788,
-      "type": "file",
-      "version": 2
     },
     "ns:0:path:/var": {
       "children": {},
-      "created_txid": 2557,
-      "modified_txid": 2557,
+      "created_txid": 2565,
+      "modified_txid": 2565,
       "type": "dir"
     },
     "ns:0:path:/var/run": {
       "children": {},
-      "created_txid": 2559,
-      "modified_txid": 2559,
+      "created_txid": 2567,
+      "modified_txid": 2567,
       "type": "dir"
     },
     "ns:0:path:/var/tmp": {
       "children": {},
-      "created_txid": 2558,
-      "modified_txid": 2558,
+      "created_txid": 2566,
+      "modified_txid": 2566,
       "type": "dir"
     }
   },
-  "next_chunk_id": 1789,
-  "next_txid": 2563,
+  "next_chunk_id": 1790,
+  "next_txid": 2572,
   "version": 1
 }

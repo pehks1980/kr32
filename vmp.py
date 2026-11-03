@@ -24,16 +24,54 @@ from device.uart import UARTDevice
 
 from device.bmi import BMIDevice
 
-# KR32 REGS CONVENTION:
-#   R0        = hardwired ZERO
-#   R1-R4     = argument registers (arg0..arg3)
-#   R1        = return value register
-#   R5-R11    = caller-saved temporaries
-#   R12       = callee-saved temporary (optional)
-#   R13       = SP (stack pointer)
-#   R14       = FP (frame pointer)
-#   R15       = LR (return link)
-#   Callees must preserve FP/LR/SP and may use R1-R11 freely.
+# ================================================================
+# KR32 ABI v1.0 — REGISTER AND CALLING CONVENTION
+# ================================================================
+#
+# REGISTER ROLES:
+#
+#   R0        = Hardwired ZERO register
+#
+#   R1-R4     = Argument registers (arg0..arg3)
+#               Also used for return values (R1-R4)
+#               Caller-saved / volatile
+#
+#   R5-R11    = General-purpose working registers
+#               Callee-saved / preserved
+#
+#   R12       = General-purpose working register
+#               Callee-saved / preserved
+#
+#   R13       = SP (Stack Pointer)
+#   R14       = FP (Frame Pointer)
+#   R15       = LR (Link Register)
+#
+# CALLING CONVENTION:
+#
+#   1. Arguments 0-3 are passed in R1-R4.
+#   2. Additional arguments are passed on the stack.
+#   3. Return values are returned in R1-R4.
+#   4. R1-R4 may be modified by the callee.
+#   5. R5-R12 must be preserved by the callee.
+#      Save only registers actually modified.
+#   6. SP must be restored before returning.
+#   7. FP must be preserved by the callee.
+#   8. LR must be preserved across nested function calls.
+#      A leaf function need not save LR if it does not overwrite it.
+#   9. Stack grows downward (towards lower addresses).
+#  10. PUSH: SP = SP - 4, then MEM[SP] = value.
+#  11. POP:  value = MEM[SP], then SP = SP + 4.
+#
+# VOLATILE REGISTERS:
+#   R1-R4
+#
+# NON-VOLATILE REGISTERS:
+#   R5-R12, R14
+#
+# SPECIAL:
+#   R0 = ZERO, R13 = SP, R15 = LR
+#
+# ================================================================
 
 # =========================================================
 # TRAP/INTERRUPT VECTOR DEFINITIONS

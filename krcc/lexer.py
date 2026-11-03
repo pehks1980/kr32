@@ -14,7 +14,23 @@ class Token:
 
 # Words with special meaning in our initial subset of C.
 # Other names, such as "main", are ordinary identifiers.
-KEYWORDS = {"int", "void", "return"}
+
+KEYWORDS = {
+    "int",
+    "void",
+    "return",
+    "while",
+    "do",
+}
+
+# Operators
+OPERATORS = {
+    "+", "-", "*", "/", "%",
+    "=", "<", ">", "!",
+    "==", "!=", "<=", ">=",
+    "&&", "||",
+}
+
 
 # Punctuation recognized by the first version of the lexer.
 # We will add operators such as +, -, and = when needed.
@@ -219,6 +235,25 @@ class Lexer:
 
                 self.advance()
                 tokens.append(Token("STRING", "".join(value), line, column))
+                continue
+
+            # -------------------------------------------------
+            # Operators
+            # Check two-character operators first (longest match).
+            # -------------------------------------------------
+            matched = False
+
+            for op in sorted(OPERATORS, key=len, reverse=True):
+                if self.source.startswith(op, self.pos):
+                    tokens.append(Token("OP", op, line, column))
+
+                    for _ in op:
+                        self.advance()
+
+                    matched = True
+                    break
+
+            if matched:
                 continue
 
             # -------------------------------------------------

@@ -9,7 +9,13 @@ program_start:
 0x00043008       LI R2 printf_string_0
 0x00043010       LI R3 17
 0x00043018       SVC SYS_WRITE
-0x0004301C       LI R1 0
-0x00043024       SVC SYS_EXIT
+0x0004301C       LI R1 1
+0x00043024       LI R2 printf_string_2
+0x0004302C       LI R3 40
+0x00043034       SVC SYS_WRITE
+0x00043038       LI R1 0
+0x00043040       SVC SYS_EXIT
 printf_string_0:
     .ASCIIZ 'Hello from KR32!\n'
+printf_string_2:
+    .ASCIIZ 'How dy we have c now! what a impression\n'

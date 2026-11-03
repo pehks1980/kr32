@@ -13,9 +13,11 @@ class StringLiteral:
     value: str
 
 
+# pritnf has arguments
 @dataclass
 class Print:
-    value: StringLiteral
+    format_string: StringLiteral
+    arguments: list
 
 
 # Represents a return statement, such as:
@@ -44,3 +46,39 @@ class Function:
 @dataclass
 class TranslationUnit:
     functions: list
+
+# 
+@dataclass
+class VariableDeclaration:
+    var_type: str
+    names: list
+
+
+@dataclass
+class Variable:
+    name: str
+
+
+@dataclass
+class BinaryExpression:
+    left: object
+    operator: str
+    right: object
+
+
+@dataclass
+class Assignment:
+    name: str
+    value: object
+
+
+@dataclass
+class While:
+    condition: object
+    body: list
+
+
+@dataclass
+class DoWhile:
+    body: list
+    condition: object
