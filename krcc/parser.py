@@ -303,9 +303,7 @@ class Parser:
         self.expect("PUNCT", ";")
 
         # Construct the AST nodes.
-        return Return(
-            value=IntLiteral(value=value)
-        )
+        return Return(value=value)
 
     def parse_variable_declaration(self):
         """

@@ -6,126 +6,74 @@
         "type": "dir"
       }
     },
-    "ns:0:chunk:1789": {
-      "data": "AAABDwEAAAAAAAIPRDAEAAAAAw8RAAAAAAAEQAAAAQ8BAAAAAAACD1YwBAAAAAMPKAAAAAAABEAAAAEPAAAAAAAAAUBIZWxsbyBmcm9tIEtSMzIhCgBIb3cgZHkgd2UgaGF2ZSBjIG5vdyEgd2hhdCBhIGltcHJlc3Npb24KAA==",
-      "size": 127
-    },
-    "ns:0:filever:/abc/hello:1": {
-      "chunks": [],
-      "created_txid": 2570,
-      "deleted": false,
-      "modified_txid": 2570,
-      "previous": null,
-      "size": 0,
-      "tail": null,
-      "type": "file",
-      "version": 1
-    },
-    "ns:0:log:2563": {
+    "ns:0:log:2578": {
       "op": "ns_create",
-      "time": 1793394410.265682
+      "time": 1793741416.9858718
     },
-    "ns:0:log:2564": {
+    "ns:0:log:2579": {
       "op": "dir_create",
       "path": "/tmp",
-      "time": 1793394410.268619
+      "time": 1793741416.988856
     },
-    "ns:0:log:2565": {
+    "ns:0:log:2580": {
       "op": "dir_create",
       "path": "/var",
-      "time": 1793394410.27152
+      "time": 1793741416.991728
     },
-    "ns:0:log:2566": {
+    "ns:0:log:2581": {
       "op": "dir_create",
       "path": "/var/tmp",
-      "time": 1793394410.275254
+      "time": 1793741416.995609
     },
-    "ns:0:log:2567": {
+    "ns:0:log:2582": {
       "op": "dir_create",
       "path": "/var/run",
-      "time": 1793394410.279019
+      "time": 1793741416.999341
     },
-    "ns:0:log:2568": {
+    "ns:0:log:2583": {
       "op": "dir_create",
       "path": "/home",
-      "time": 1793394410.2822242
-    },
-    "ns:0:log:2569": {
-      "op": "dir_create",
-      "path": "/abc/",
-      "time": 1793402090.204553
-    },
-    "ns:0:log:2570": {
-      "op": "file_create",
-      "path": "/abc/hello",
-      "time": 1793402150.330451
-    },
-    "ns:0:log:2571": {
-      "bytes": 127,
-      "new_version": 2,
-      "old_version": 1,
-      "op": "file_append",
-      "path": "/abc/hello",
-      "time": 1793402150.697964
+      "time": 1793741417.002451
     },
     "ns:0:meta": {
       "admissions": [],
       "checkpoint": null,
-      "created_txid": 2563,
+      "created_txid": 2578,
       "env": {},
       "version": 1
     },
-    "ns:0:path:/abc/": {
-      "children": {},
-      "created_txid": 2569,
-      "modified_txid": 2569,
-      "type": "dir"
-    },
-    "ns:0:path:/abc/hello": {
-      "chunks": [
-        1789
-      ],
-      "created_txid": 2570,
-      "deleted": false,
-      "modified_txid": 2571,
-      "previous": "ns:0:filever:/abc/hello:1",
-      "size": 127,
-      "tail": 1789,
-      "type": "file",
-      "version": 2
-    },
     "ns:0:path:/home": {
       "children": {},
-      "created_txid": 2568,
-      "modified_txid": 2568,
+      "created_txid": 2583,
+      "modified_txid": 2583,
       "type": "dir"
     },
     "ns:0:path:/tmp": {
       "children": {},
-      "created_txid": 2564,
-      "modified_txid": 2564,
+      "created_txid": 2579,
+      "modified_txid": 2579,
       "type": "dir"
     },
     "ns:0:path:/var": {
       "children": {},
-      "created_txid": 2565,
-      "modified_txid": 2565,
+      "created_txid": 2580,
+      "modified_txid": 2580,
       "type": "dir"
     },
     "ns:0:path:/var/run": {
       "children": {},
-      "created_txid": 2567,
-      "modified_txid": 2567,
+      "created_txid": 2582,
+      "modified_txid": 2582,
       "type": "dir"
     },
     "ns:0:path:/var/tmp": {
       "children": {},
-      "created_txid": 2566,
-      "modified_txid": 2566,
+      "created_txid": 2581,
+      "modified_txid": 2581,
       "type": "dir"
     }
   },
   "next_chunk_id": 1790,
-  "next_txid": 2572,
+  "next_txid": 2584,
   "version": 1
 }

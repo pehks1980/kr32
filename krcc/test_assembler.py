@@ -8,6 +8,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from codegen import CodeGenerator
 from lexer import Lexer
 from parser import Parser
+
+from semantic import SemanticAnalyzer
+from layout import StorageLayout
+
 from tools.assembler import Assembler
 
 
@@ -16,6 +20,13 @@ def compile_source(source_path, output_path):
 
     tokens = Lexer(source).tokenize()
     ast = Parser(tokens).parse_translation_unit()
+    # Pass 1: Resolve identifiers and attach symbols to AST nodes.
+    semantic = SemanticAnalyzer()
+    ast = semantic.analyze(ast)
+
+    # Pass 2: Assign stack offsets and calculate function frame sizes.
+    layout = StorageLayout()
+    ast = layout.layout(ast)
     assembly = CodeGenerator().generate(ast)
 
     assembler = Assembler()
@@ -26,7 +37,11 @@ def compile_source(source_path, output_path):
         listing_out=listing_path,
     )
 
-    entry = assembler.labels.get("PROGRAM_START")
+    entry = assembler.labels.get("_START")
+    if entry is None:
+        entry = assembler.labels.get("PROGRAM_START")
+    if entry is None:
+        entry = assembler.labels.get("MAIN")
     if entry is None or assembler.pc <= entry:
         raise RuntimeError("Compiler produced an empty or invalid executable")
 

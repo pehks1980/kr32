@@ -27,7 +27,7 @@ class Print:
 # Later, it can hold expressions such as "return a + b;".
 @dataclass
 class Return:
-    value: IntLiteral
+    value: object
 
 
 # Represents one function definition, for example:

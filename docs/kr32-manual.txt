@@ -145,6 +145,27 @@ The system is currently driven by a small but practical toolchain:
 
 The build flow is deliberately low-level: developers are expected to inspect generated listings and memory regions when debugging. This is consistent with the overall project principle that the machine should remain visible.
 
+4.7 Memory instruction formats
+------------------------------
+
+The original load/store opcodes (`0x20`-`0x27`) retain their R-format encoding
+for register-offset addressing. Immediate-offset loads and stores use distinct
+M-format opcodes (`0x61`-`0x68`), allowing existing register-offset binaries to
+remain valid.
+
+An M-format instruction is one 32-bit word:
+
+    OP | (value-register:4, base-register:4) | signed-offset:16
+
+The value register is the load destination or store source. Both registers must
+be R0-R15. The byte offset is signed and byte-addressed; the assembler accepts
+values from -32767 through +32767. Assembly syntax accepts either
+`LDB R1 [FP - 4]` or `LDB R1 [FP + -4]`.
+
+The assembler selects M format for immediate offsets and keeps the original
+R-format opcodes for register offsets, for example `LDB R1 [R8 + R9]`.
+Disassembly and execution recognize both formats.
+
 5. Current strengths and limitations
 ------------------------------------
 

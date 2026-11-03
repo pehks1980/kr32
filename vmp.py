@@ -115,6 +115,19 @@ SFLAGS_N = 1 << 1
 SFLAGS_C = 1 << 2
 SFLAGS_V = 1 << 3
 
+# Immediate-offset memory instructions use distinct opcodes to preserve the
+# original register-offset encodings.
+M_FORMAT_OPS = {
+    0x61: 0x20,  # LDB
+    0x62: 0x21,  # LDH
+    0x63: 0x22,  # LDW
+    0x64: 0x23,  # STB
+    0x65: 0x24,  # STH
+    0x66: 0x25,  # STW
+    0x67: 0x26,  # LDBS
+    0x68: 0x27,  # LDHS
+}
+
 
 class TrapDelivery(Exception):
     """Internal exception used to abort instruction execution when a trap is delivered."""
@@ -522,6 +535,14 @@ class CPU:
             0x5E: "EOI",
             0x5F: "TRACE",
             0x60: "INVLPG",
+            0x61: "LDB",
+            0x62: "LDH",
+            0x63: "LDW",
+            0x64: "STB",
+            0x65: "STH",
+            0x66: "STW",
+            0x67: "LDBS",
+            0x68: "LDHS",
 
             0xFF: "HLT",
         }.get(op)
@@ -563,6 +584,16 @@ class CPU:
         if op == 0x11:
             return f"POP {self.reg_name(a)}"
         
+        if op in M_FORMAT_OPS:
+            value_reg = (a >> 4) & 0x0F
+            base = a & 0x0F
+            offset = self.sign_extend((b << 8) | c, 16)
+            sign = "+" if offset >= 0 else "-"
+            return (
+                f"{op_name} {self.reg_name(value_reg)}, "
+                f"[{self.reg_name(base)} {sign} {abs(offset)}]"
+            )
+
         if op in (0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27):
             offset = self.reg_name(c) if c & 0x80 else f"#{c}"
             return f"{op_name} {self.reg_name(a)}, [{self.reg_name(b)} + {offset}]"
@@ -707,6 +738,11 @@ class CPU:
             skip_regs.add(a & 0x1F)
         elif op in (0x23, 0x24, 0x25):
             skip_mem = True
+        elif op in M_FORMAT_OPS:
+            if M_FORMAT_OPS[op] in (0x20, 0x21, 0x22, 0x26, 0x27):
+                skip_regs.add((a >> 4) & 0x0F)
+            else:
+                skip_mem = True
         elif op == 0x11:
             skip_regs.add(a & 0x1F)
         elif op in (0x57, 0x58, 0x5D):
@@ -772,6 +808,26 @@ class CPU:
 
         if op == 0x11:
             return f"pop -> {dstfmt(a)}"
+
+        if op in M_FORMAT_OPS:
+            value_reg = (a >> 4) & 0x0F
+            base = a & 0x0F
+            offset = self.sign_extend((b << 8) | c, 16)
+            addr = (regv(base) + offset) & 0xFFFFFFFF
+            base_op = M_FORMAT_OPS[op]
+            if base_op in (0x20, 0x21, 0x22, 0x26, 0x27):
+                return (
+                    f"{dstfmt(value_reg)}; addr=0x{addr:08X} "
+                    f"({regfmt(base)} + #{offset})"
+                )
+            stored = ""
+            if mem_write is not None:
+                _, value, size = mem_write
+                stored = f"; stored{size * 8}=0x{value:0{size * 2}X}"
+            return (
+                f"src {regfmt(value_reg)}; addr=0x{addr:08X} "
+                f"({regfmt(base)} + #{offset}){stored}"
+            )
 
         if op in (0x20, 0x21, 0x22, 0x26, 0x27):
             off = regv(c & 0x1F) if c & 0x80 else c
@@ -1493,6 +1549,32 @@ class CPU:
 
             elif op == 0x11:
                 self.setr(a, self.pop())
+            elif op in M_FORMAT_OPS:
+                value_reg = (a >> 4) & 0x0F
+                base = a & 0x0F
+                offset = self.sign_extend((b << 8) | c, 16)
+                addr = (self.r(base) + offset) & 0xFFFFFFFF
+                base_op = M_FORMAT_OPS[op]
+
+                if base_op == 0x20:
+                    self.setr(value_reg, self.mem_read_u8(addr))
+                elif base_op == 0x21:
+                    self.setr(value_reg, self.mem_read_u16(addr))
+                elif base_op == 0x22:
+                    self.setr(value_reg, self.mem_read_u32(addr))
+                elif base_op == 0x26:
+                    self.setr(value_reg, self.sign_extend(self.mem_read_u8(addr), 8))
+                elif base_op == 0x27:
+                    self.setr(value_reg, self.sign_extend(self.mem_read_u16(addr), 16))
+                elif base_op == 0x23:
+                    self.mem_write_u8(addr, self.r(value_reg))
+                    mem_write = (addr, self.r(value_reg) & 0xFF, 1)
+                elif base_op == 0x24:
+                    self.mem_write_u16(addr, self.r(value_reg))
+                    mem_write = (addr, self.r(value_reg) & 0xFFFF, 2)
+                else:
+                    self.mem_write_u32(addr, self.r(value_reg))
+                    mem_write = (addr, self.r(value_reg), 4)
             #-------------------------------------------------
             # op is instructions like LOAD/STORE with register+offset addressing, 
             # where the effective address is calculated as the value in the base register 

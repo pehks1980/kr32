@@ -79,6 +79,19 @@ OP = {
     "INVLPG": 0x60,
 }
 
+# M-format variants use an opcode of their own so the VM can distinguish
+# packed-register/immediate instructions from legacy R-format register offsets.
+M_OP = {
+    "LDB":  0x61,
+    "LDH":  0x62,
+    "LDW":  0x63,
+    "STB":  0x64,
+    "STH":  0x65,
+    "STW":  0x66,
+    "LDBS": 0x67,
+    "LDHS": 0x68,
+}
+
 REG_ALIAS = {
     "ZERO": 0,
     "SP": 13,
@@ -381,7 +394,28 @@ class Assembler:
             a, b = s.split("+", 1) # split into base and offset
             return a.strip(), b.strip()
 
+        if "-" in s:
+            a, b = s.split("-", 1)
+            return a.strip(), f"-{b.strip()}"
+
         return s.strip(), "0" # +0 if no offset
+
+    def encode_memory_operand(self, op, value_reg, base, off):
+        if is_reg_token(off):
+            off_reg = reg(off)
+            return self.encode(OP[op], value_reg, base, 0x80 | off_reg)
+
+        imm = self.resolve_expr(off)
+        if imm < -32767 or imm > 32767:
+            raise ValueError(f"{op} offset out of range (-32767..32767): {imm}")
+        if value_reg > 15 or base > 15:
+            raise ValueError(
+                f"{op} M-format registers must be R0-R15 "
+                f"(got R{value_reg} and R{base})"
+            )
+
+        packed_regs = (value_reg << 4) | base
+        return self.encode(M_OP[op], packed_regs, (imm >> 8) & 0xFF, imm & 0xFF)
 
     # -----------------------------------------------------
     # resolve operand
@@ -638,26 +672,7 @@ class Assembler:
             base, off = self.parse_mem_operand(mem)
 
             base = reg(base)
-
-            if is_reg_token(off):
-                off_reg = reg(off)
-
-                self.emit32(
-                    self.encode(OP[op], rd, base, 0x80 | off_reg)
-                )
-
-            else:
-                imm = self.resolve_expr(off)
-
-                if imm < 0 or imm > 0x7F:
-                    raise ValueError(
-                        f"{op} offset out of range (0..127): {imm}"
-                    )
-
-                self.emit32(
-                    self.encode(OP[op], rd, base, imm)
-                )
-
+            self.emit32(self.encode_memory_operand(op, rd, base, off))
 
         elif op in ("STB", "STH", "STW"):
             rs = reg(p[1])
@@ -666,25 +681,7 @@ class Assembler:
             base, off = self.parse_mem_operand(mem)
 
             base = reg(base)
-
-            if is_reg_token(off):
-                off_reg = reg(off)
-
-                self.emit32(
-                    self.encode(OP[op], rs, base, 0x80 | off_reg)
-                )
-
-            else:
-                imm = self.resolve_expr(off)
-
-                if imm < 0 or imm > 0x7F:
-                    raise ValueError(
-                        f"{op} offset out of range (0..127): {imm}"
-                    )
-
-                self.emit32(
-                    self.encode(OP[op], rs, base, imm)
-                )
+            self.emit32(self.encode_memory_operand(op, rs, base, off))
 
             # =================================================
             # MMU CONTROL

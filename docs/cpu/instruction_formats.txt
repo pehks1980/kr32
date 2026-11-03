@@ -1,0 +1,124 @@
+KR32 Instruction Formats
+========================
+
+Status
+------
+
+R-format is the existing general-purpose instruction layout. M-format is
+implemented for load/store instructions with immediate offsets. I-format and
+X-format are future design directions only; their bit-level encodings and
+opcodes have not been defined.
+
+Instruction word
+----------------
+
+Each instruction occupies one 32-bit word. In the assembler's instruction
+encoding, the fields are laid out from most significant to least significant:
+
+    OP (8 bits) | A (8 bits) | B (8 bits) | C (8 bits)
+
+The VM fetches and executes the word as a single 32-bit instruction. Some
+instructions, such as branches and LI, also consume a following 32-bit word;
+those are exceptions to the one-word formats summarized below.
+
+Format summary
+--------------
+
+    Format  Layout                         Usage
+    ------  -----------------------------  -------------------------------
+    R       OP + A + B + C                 Register arithmetic and legacy
+                                           register-offset memory operations
+    M       OP + packed A/B + OFFSET16     Immediate-offset loads/stores
+    I       OP + A + IMM20                 Future: immediate arithmetic
+    X       OP + extension fields          Future: instruction expansion
+
+R-format
+--------
+
+R-format is the established four-byte instruction layout. The meaning of
+A, B, and C depends on the opcode. For example, register arithmetic uses
+register fields, while legacy load/store instructions use A for the value
+register, B for the base register, and C for an 8-bit offset encoding.
+
+Legacy memory instructions are retained for register-offset addressing:
+
+    LDB R16 [R20 + R31]
+
+In this form C has its high bit set to indicate that the low five bits select
+the offset register. Existing register-offset binaries continue to use these
+opcodes and semantics.
+
+M-format memory instructions
+----------------------------
+
+M-format is selected for load/store instructions when the address offset is
+an immediate expression rather than a register. It uses a distinct opcode so
+the VM can distinguish it from the legacy R-format memory encoding:
+
+    OP (8 bits) | packed registers (8 bits) | signed byte offset (16 bits)
+
+The packed register byte contains:
+
+    high nibble = value/destination register (loads) or value/source
+                  register (stores)
+    low nibble  = base register
+
+Both packed registers must be R0-R15. The offset is a signed, byte-addressed
+value; the assembler accepts -32767 through +32767. At execution, the VM
+sign-extends the offset and computes:
+
+    effective address = base register + signed offset
+
+Examples:
+
+    LDB R1 [FP - 4]       ; M-format, signed immediate offset
+    STW R8 [SP + 12]      ; M-format, signed immediate offset
+    LDW R16 [R20 + R31]   ; legacy R-format, register offset
+
+An omitted offset is treated as zero and therefore also selects M-format:
+
+    LDB R1 [FP]           ; equivalent to [FP + 0]
+
+The assembler chooses the format based on the parsed offset token:
+
+* A register token selects the legacy R-format. The general register range is
+  retained for this form.
+* A numeric value or resolvable constant selects M-format. The value/base
+  registers must be R0-R15, and the offset must be in the accepted range.
+
+Thus a small immediate such as +4 still uses M-format; the assembler does not
+choose based on whether the value would fit in the legacy 8-bit field.
+
+Current M-format opcodes
+------------------------
+
+    Opcode  Instruction
+    ------  -----------
+    0x61    LDB
+    0x62    LDH
+    0x63    LDW
+    0x64    STB
+    0x65    STH
+    0x66    STW
+    0x67    LDBS
+    0x68    LDHS
+
+Future development
+------------------
+
+The following formats are planned concepts, not implemented encodings:
+
+I-format
+    Intended for immediate arithmetic, with the conceptual layout
+    OP + A + IMM20. The exact allocation of bits, signedness, immediate
+    range, and opcode assignments still need to be specified.
+
+X-format
+    Reserved as a direction for future expansion using extension fields.
+    No extension-word convention, field layout, or opcode assignments have
+    been finalized.
+
+Before implementing either format, update the architecture contract together
+with the assembler, VM execution, disassembler/debugger, tests, and generated
+documentation or listings that expose instruction encodings. Preserve existing
+opcode behavior unless an intentional compatibility change is documented.
