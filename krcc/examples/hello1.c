@@ -7,7 +7,7 @@ int main(void) {
     y = 20;
     result = x + y;
 
-    printf("The result is:\n");
+    printf("The result is: %d\n", result);
 
     return result;
 }

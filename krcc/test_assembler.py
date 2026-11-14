@@ -13,6 +13,7 @@ from semantic import SemanticAnalyzer
 from layout import StorageLayout
 
 from tools.assembler import Assembler
+from tools.preprocess_cmacros import Preprocessor
 
 
 def compile_source(source_path, output_path):
@@ -28,11 +29,12 @@ def compile_source(source_path, output_path):
     layout = StorageLayout()
     ast = layout.layout(ast)
     assembly = CodeGenerator().generate(ast)
+    assembly = Preprocessor(PROJECT_ROOT).process(assembly.splitlines())
 
     assembler = Assembler()
     listing_path = PROJECT_ROOT / "lst" / "c" / f"{source_path.stem}.lst.asm"
     assembler.build(
-        assembly.splitlines(),
+        assembly,
         write_output=False,
         listing_out=listing_path,
     )

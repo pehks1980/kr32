@@ -34,6 +34,22 @@ int main(void)
     return 0;
 }
 """
+source = r"""
+int calculate(int a, int b)
+{
+    return a + b;
+}
+
+int helper(int value)
+{
+    return value * 2;
+}
+
+int main(void)
+{
+    return 0;
+}
+"""
 
 # Stage 1: Lexing
 tokens = Lexer(source).tokenize()
@@ -73,5 +89,12 @@ for function in ast.functions:
 
             if hasattr(statement, "body"):
                 show_layout(statement.body)
+
+
+    for parameter in function.parameters:
+        print(
+            f"Parameter {parameter.name}: "
+            f"{parameter.symbol.stack_offset}"
+        )
 
     show_layout(function.body)

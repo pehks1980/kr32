@@ -70,16 +70,34 @@ int main(void) {
 """
 
 source = r"""
+int calculate(int a, int b)
+{
+    return a + b;
+}
+
 int main(void)
 {
-    printf("Hello from KR32!\n");
-    printf("How dy we have c now! what a impression\n");
-    return 0;
+    int result;
+    result = calculate(10, 20);
+    return result;
 }
 """
+
+source = r"""
+int main(void)
+{
+    int result;
+
+    result = 2 + 3 * 4;
+
+    return result;
+}
+"""
+
+
 # Stage 1: Lexical analysis
 tokens = Lexer(source).tokenize()
-print(tokens)
+#print(tokens)
 
 # Stage 2: Syntax analysis
 parser = Parser(tokens)

@@ -1489,9 +1489,9 @@ printf_string:
 printf_int:
     CALL _fetch_arg_r2  ;get integer ptr from R2
     
-    MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
-    CALL atoi
-    MOV R2 R1 
+   ; MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+   ; CALL atoi
+   ; MOV R2 R1 
     
     ADD R9 R9 1
     MOV R1 R11          ; r11 is the conversion buffer (on stack)
@@ -1501,9 +1501,9 @@ printf_int:
 printf_hex:
     CALL _fetch_arg_r2
 
-    MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
-    CALL atoi
-    MOV R2 R1
+  ;  MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+  ;  CALL atoi
+  ;  MOV R2 R1
 
     ADD R9 R9 1
     MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
@@ -1511,18 +1511,20 @@ printf_hex:
     B   printf_continue
 
 printf_char:
-    CALL _fetch_arg_r1
-    LDb R1 [R1]         ;get char by its ptr
+    ;CALL _fetch_arg_r1
+    CALL _fetch_arg_r2
+   ; LDb R1 [R1]         ;get char by its ptr
     ADD R9 R9 1
+    MOV R1 R2           ;get char 
     CALL putchar
     B   printf_continue
 
 printf_bin:
     CALL _fetch_arg_r2
     
-    MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
-    CALL atoi
-    MOV R2 R1
+  ;  MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+  ;  CALL atoi
+  ;  MOV R2 R1
 
     ADD R9 R9 1
     MOV R1 R11
@@ -1532,9 +1534,9 @@ printf_bin:
 printf_oct:
     CALL _fetch_arg_r2
 
-    MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
-    CALL atoi
-    MOV R2 R1
+  ;  MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+  ;  CALL atoi
+  ;  MOV R2 R1
 
     ADD R9 R9 1
     MOV R1 R11

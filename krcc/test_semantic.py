@@ -33,14 +33,67 @@ int main(void) {
     return 0;
 }
 """
+source = r"""
+int calculate(void) {
+    return 42;
+}
+
+int helper(void) {
+    return 100;
+}
+
+int main(void) {
+    return 0;
+}
+"""
+source = r"""
+int calculate(int a, int b)
+{
+    return a + b;
+}
+
+int helper(int value)
+{
+    return value * 2;
+}
+
+int main(void)
+{
+    return 0;
+}
+"""
+
+source = r"""
+int calculate(int a, int b)
+{
+    return a + b;
+}
+
+int main(void)
+{
+    int result;
+    result = calculate(10,20,30);
+    return result;
+}
+"""
+source = r"""
+int main(void)
+{
+    int result;
+
+    result = 2 + 3 * 4;
+
+    return result;
+}
+"""
 
 # Stage 1: Lexical analysis.
 tokens = Lexer(source).tokenize()
 
 print("=== TOKENS ===")
 
-for token in tokens:
-    print(token)
+#for token in tokens:
+   # print(token)
 
 # Stage 2: Parsing.
 parser = Parser(tokens)

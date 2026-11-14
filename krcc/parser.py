@@ -4,6 +4,7 @@ from nodes import (
     Return,
     StringLiteral,
     Function,
+    Parameter,
     TranslationUnit,
     VariableDeclaration,
     Variable,
@@ -11,6 +12,7 @@ from nodes import (
     BinaryExpression,
     While,
     DoWhile,
+    CallExpression,
 )
 
 
@@ -85,20 +87,34 @@ class Parser:
 
         return int(token.value, 10)
 
+    
     def parse_translation_unit(self):
         """
         Parse the complete source file.
 
-        Our first compiler version supports one function only.
-        EOF ensures that no unexpected tokens remain afterwards.
+        Grammar:
+            translation_unit := function+
+
+        A translation unit contains one or more
+        function definitions.
         """
 
         functions = []
 
-        # Parse the function defined in the source.
-        functions.append(self.parse_function())
+        # Parse functions until we reach the end of the file.
+        while self.current().kind != "EOF":
+            functions.append(self.parse_function())
 
-        # The complete input must now be consumed.
+        # Require at least one function definition.
+        # its needed for the program to be valid, otherwise 
+        # we will have a program with no entry point. 
+        if not functions:
+            token = self.current()
+            raise ParserError(
+                f"{token.line}:{token.column}: "
+                "expected at least one function definition"
+            )
+
         self.expect("EOF")
 
         return TranslationUnit(functions=functions)
@@ -106,7 +122,16 @@ class Parser:
     def parse_function(self):
         """
         Grammar:
-            function := "int" IDENT "(" "void" ")" block
+
+            function :=
+                "int" IDENT "(" parameter_list ")" block
+
+            parameter_list :=
+                "void"
+                | parameter ("," parameter)*
+
+            parameter :=
+                "int" IDENT
         """
 
         # Function return type.
@@ -118,21 +143,51 @@ class Parser:
         # Opening parenthesis.
         self.expect("PUNCT", "(")
 
-        # Only main(void) is supported for now.
-        self.expect("KEYWORD", "void")
+        parameters = []
+
+        # Handle main(void) or other zero-parameter functions.
+        if (
+            self.current().kind == "KEYWORD"
+            and self.current().value == "void"
+        ):
+            self.advance()
+
+        else:
+            # Parse one or more typed parameters.
+            while True:
+
+                param_type = self.expect("KEYWORD", "int").value
+                param_name = self.expect("IDENT").value
+
+                parameters.append(
+                    Parameter(
+                        var_type=param_type,
+                        name=param_name,
+                    )
+                )
+
+                # No comma means the parameter list is finished.
+                if not (
+                    self.current().kind == "PUNCT"
+                    and self.current().value == ","
+                ):
+                    break
+
+                self.advance()
 
         # Closing parenthesis.
         self.expect("PUNCT", ")")
 
-        # Parse the function body.
+        # Function body.
         body = self.parse_block()
 
         return Function(
             return_type=return_type,
             name=name,
-            parameters=[],
+            parameters=parameters,
             body=body,
         )
+
 
     def parse_block(self):
         """
@@ -338,14 +393,18 @@ class Parser:
         )
 
 
+    # parse variable assignment statement and function call statement
     def parse_primary(self):
         """
         Parse a primary expression.
 
         Grammar:
             primary := INT
-                     | IDENT
-                     | "(" expression ")"
+                    | IDENT
+                    | IDENT "(" arguments ")"
+                    | "(" expression ")"
+
+            arguments := expression ("," expression)*
 
         Primary expressions are the basic building blocks
         of larger expressions.
@@ -354,9 +413,12 @@ class Parser:
             42
             x
             (x + y)
+            calculate(10, 20)
+            get_value()
 
         Integer literals become IntLiteral AST nodes.
         Variable names become Variable AST nodes.
+        Function calls become CallExpression AST nodes.
         Parentheses contain another complete expression.
         """
 
@@ -380,20 +442,76 @@ class Parser:
             )
 
         # -------------------------------------------------
-        # Variable reference
+        # Variable reference OR function call
         #
-        # Example:
+        # Examples:
         #     x
+        #     calculate(10, 20)
+        #     get_value()
         #
-        # At this stage we only record the variable name.
-        # Later semantic analysis will check whether the
-        # variable has actually been declared.
+        # An identifier followed by '(' is a function call.
+        # Otherwise, it is a variable reference.
+        #
+        # The parser only builds the AST here. Semantic
+        # analysis will later check whether the function
+        # exists and whether the arguments are valid.
         # -------------------------------------------------
         if token.kind == "IDENT":
-            self.advance()
+            name = self.advance().value
 
+            # Is the identifier followed by an opening
+            # parenthesis? If so, this is a function call.
+            if (
+                self.current().kind == "PUNCT"
+                and self.current().value == "("
+            ):
+                # Consume '('.
+                self.advance()
+
+                arguments = []
+
+                # An immediate ')' means there are no arguments.
+                #
+                # Example:
+                #     get_value()
+                if not (
+                    self.current().kind == "PUNCT"
+                    and self.current().value == ")"
+                ):
+                    # Parse the first argument.
+                    #
+                    # parse_expression() allows arguments to be
+                    # expressions, not just simple literals.
+                    #
+                    # Example:
+                    #     calculate(10 + 2, 20)
+                    arguments.append(self.parse_expression())
+
+                    # Parse any additional comma-separated arguments.
+                    #
+                    # Example:
+                    #     calculate(10, 20, 30)
+                    while (
+                        self.current().kind == "PUNCT"
+                        and self.current().value == ","
+                    ):
+                        self.advance()  # consume ','
+
+                        arguments.append(self.parse_expression())
+
+                # Every function call must end with ')'.
+                self.expect("PUNCT", ")")
+
+                # Build a function-call AST node.
+                return CallExpression(
+                    name=name,
+                    arguments=arguments
+                )
+
+            # No '(' after the identifier means it is
+            # an ordinary variable reference.
             return Variable(
-                name=token.value
+                name=name
             )
 
         # -------------------------------------------------
@@ -425,6 +543,7 @@ class Parser:
             f"{token.line}:{token.column}: expected expression, "
             f"got {token.value!r}"
         )
+
 
     def get_precedence(self, operator):
         """

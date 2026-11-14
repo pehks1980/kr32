@@ -1508,71 +1508,73 @@ printf_string:
 printf_int:
 0x00043E24   CALL _fetch_arg_r2
 
-0x00043E2C       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
-0x00043E30   CALL atoi
-0x00043E38       MOV R2 R1
+   ; MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+   ; CALL atoi
+   ; MOV R2 R1
 
-0x00043E3C       ADD R9 R9 1
-0x00043E40       MOV R1 R11          ; r11 is the conversion buffer (on stack)
-0x00043E44   CALL _print_number
-0x00043E4C       B   printf_continue
+0x00043E2C       ADD R9 R9 1
+0x00043E30       MOV R1 R11          ; r11 is the conversion buffer (on stack)
+0x00043E34   CALL _print_number
+0x00043E3C       B   printf_continue
 
 printf_hex:
-0x00043E54   CALL _fetch_arg_r2
+0x00043E44   CALL _fetch_arg_r2
 
-0x00043E5C       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
-0x00043E60   CALL atoi
-0x00043E68       MOV R2 R1
+  ;  MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+  ;  CALL atoi
+  ;  MOV R2 R1
 
-0x00043E6C       ADD R9 R9 1
-0x00043E70       MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
-0x00043E74   CALL _print_hex
-0x00043E7C       B   printf_continue
+0x00043E4C       ADD R9 R9 1
+0x00043E50       MOV R1 R11          ; r11 is the conversion buffer (on stack) and so on for other conversions helpers..
+0x00043E54   CALL _print_hex
+0x00043E5C       B   printf_continue
 
 printf_char:
-0x00043E84   CALL _fetch_arg_r1
-0x00043E8C       LDb R1 [R1]         ;get char by its ptr
-0x00043E90       ADD R9 R9 1
-0x00043E94   CALL putchar
-0x00043E9C       B   printf_continue
+    ;CALL _fetch_arg_r1
+0x00043E64   CALL _fetch_arg_r2
+   ; LDb R1 [R1]         ;get char by its ptr
+0x00043E6C       ADD R9 R9 1
+0x00043E70       MOV R1 R2           ;get char
+0x00043E74   CALL putchar
+0x00043E7C       B   printf_continue
 
 printf_bin:
-0x00043EA4   CALL _fetch_arg_r2
+0x00043E84   CALL _fetch_arg_r2
 
-0x00043EAC       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
-0x00043EB0   CALL atoi
-0x00043EB8       MOV R2 R1
+  ;  MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+  ;  CALL atoi
+  ;  MOV R2 R1
 
-0x00043EBC       ADD R9 R9 1
-0x00043EC0       MOV R1 R11
-0x00043EC4   CALL _print_bin
-0x00043ECC       B   printf_continue
+0x00043E8C       ADD R9 R9 1
+0x00043E90       MOV R1 R11
+0x00043E94   CALL _print_bin
+0x00043E9C       B   printf_continue
 
 printf_oct:
-0x00043ED4   CALL _fetch_arg_r2
+0x00043EA4   CALL _fetch_arg_r2
 
-0x00043EDC       MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
-0x00043EE0   CALL atoi
-0x00043EE8       MOV R2 R1
+  ;  MOV R1 R2           ;convert number from string format cmd to integer (may be singed)
+  ;  CALL atoi
+  ;  MOV R2 R1
 
-0x00043EEC       ADD R9 R9 1
-0x00043EF0       MOV R1 R11
-0x00043EF4   CALL _print_oct
-0x00043EFC       B   printf_continue
+0x00043EAC       ADD R9 R9 1
+0x00043EB0       MOV R1 R11
+0x00043EB4   CALL _print_oct
+0x00043EBC       B   printf_continue
 
 printf_continue:    ;to continue processing format string
-0x00043F04       ADD R8 R8 1
-0x00043F08       B   printf_loop
+0x00043EC4       ADD R8 R8 1
+0x00043EC8       B   printf_loop
 
 printf_done:
-0x00043F10       ADD SP SP 80
-0x00043F14       POP R12
-0x00043F18       POP R11
-0x00043F1C       POP R10
-0x00043F20       POP R9
-0x00043F24       POP R8
-0x00043F28       POP LR
-0x00043F2C       RET
+0x00043ED0       ADD SP SP 80
+0x00043ED4       POP R12
+0x00043ED8       POP R11
+0x00043EDC       POP R10
+0x00043EE0       POP R9
+0x00043EE4       POP R8
+0x00043EE8       POP LR
+0x00043EEC       RET
 
 ;------------------------------------------------------------------------------
 ; _print_string - Write a null‑terminated string to stdout (no newline)
@@ -1583,20 +1585,20 @@ printf_done:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_string:
-0x00043F30       PUSH LR
-0x00043F34       PUSH R8
-0x00043F38       PUSH R9
-0x00043F3C       MOV R8 R1
-0x00043F40   CALL strlen
-0x00043F48       MOV R9 R1
-0x00043F4C       LI  R1 STDOUT_FD
-0x00043F54       MOV R2 R8
-0x00043F58       MOV R3 R9
-0x00043F5C   CALL write
-0x00043F64       POP R9
-0x00043F68       POP R8
-0x00043F6C       POP LR
-0x00043F70       RET
+0x00043EF0       PUSH LR
+0x00043EF4       PUSH R8
+0x00043EF8       PUSH R9
+0x00043EFC       MOV R8 R1
+0x00043F00   CALL strlen
+0x00043F08       MOV R9 R1
+0x00043F0C       LI  R1 STDOUT_FD
+0x00043F14       MOV R2 R8
+0x00043F18       MOV R3 R9
+0x00043F1C   CALL write
+0x00043F24       POP R9
+0x00043F28       POP R8
+0x00043F2C       POP LR
+0x00043F30       RET
 
 
 ;------------------------------------------------------------------------------
@@ -1607,12 +1609,12 @@ _print_string:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_number:
-0x00043F74       PUSH LR
-0x00043F78   CALL itoa_dec
-0x00043F80       MOV R1 R1                 ; R1 still points to buffer start
-0x00043F84   CALL _print_string
-0x00043F8C       POP LR
-0x00043F90       RET
+0x00043F34       PUSH LR
+0x00043F38   CALL itoa_dec
+0x00043F40       MOV R1 R1                 ; R1 still points to buffer start
+0x00043F44   CALL _print_string
+0x00043F4C       POP LR
+0x00043F50       RET
 
 ;------------------------------------------------------------------------------
 ; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
@@ -1622,12 +1624,12 @@ _print_number:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_hex:
-0x00043F94       PUSH LR
-0x00043F98   CALL itoa_hex
-0x00043FA0       MOV R1 R1
-0x00043FA4   CALL _print_string
-0x00043FAC       POP LR
-0x00043FB0       RET
+0x00043F54       PUSH LR
+0x00043F58   CALL itoa_hex
+0x00043F60       MOV R1 R1
+0x00043F64   CALL _print_string
+0x00043F6C       POP LR
+0x00043F70       RET
 
 ;------------------------------------------------------------------------------
 ; _print_hex - Format and print an unsigned integer in hex (uses itoa_hex)
@@ -1637,12 +1639,12 @@ _print_hex:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_bin:
-0x00043FB4       PUSH LR
-0x00043FB8   CALL itoa_bin
-0x00043FC0       MOV R1 R1
-0x00043FC4   CALL _print_string
-0x00043FCC       POP LR
-0x00043FD0       RET
+0x00043F74       PUSH LR
+0x00043F78   CALL itoa_bin
+0x00043F80       MOV R1 R1
+0x00043F84   CALL _print_string
+0x00043F8C       POP LR
+0x00043F90       RET
 
 ;------------------------------------------------------------------------------
 ; _print_oct - Format and print an unsigned integer in octal (uses itoa_oct)
@@ -1652,12 +1654,12 @@ _print_bin:
 ; OUT: none
 ;------------------------------------------------------------------------------
 _print_oct:
-0x00043FD4       PUSH LR
-0x00043FD8   CALL itoa_oct
-0x00043FE0       MOV R1 R1
-0x00043FE4   CALL _print_string
-0x00043FEC       POP LR
-0x00043FF0       RET
+0x00043F94       PUSH LR
+0x00043F98   CALL itoa_oct
+0x00043FA0       MOV R1 R1
+0x00043FA4   CALL _print_string
+0x00043FAC       POP LR
+0x00043FB0       RET
 
 ;==============================================================================
 ; Data Section
@@ -1691,54 +1693,54 @@ ch_buf:
 ;------------------------------------------------------------------------------
 
 atoi:
-0x00043FFA       PUSH LR
-0x00043FFE       PUSH R8
-0x00044002       PUSH R9
-0x00044006       PUSH R10
+0x00043FBA       PUSH LR
+0x00043FBE       PUSH R8
+0x00043FC2       PUSH R9
+0x00043FC6       PUSH R10
 
-0x0004400A       MOV R8 R1          ; R8 = string
-0x0004400E       LI  R9 0           ; R9 = result
-0x00044016       LI  R10 0          ; R10 = negative flag
+0x00043FCA       MOV R8 R1          ; R8 = string
+0x00043FCE       LI  R9 0           ; R9 = result
+0x00043FD6       LI  R10 0          ; R10 = negative flag
 
     ; Check '-'
-0x0004401E       LDB R2 [R8]
-0x00044022       CMP R2 45          ; '-'
-0x00044026       BNE atoi_loop
-0x0004402E       LI R10 1
-0x00044036       ADD R8 R8 1
+0x00043FDE       LDB R2 [R8]
+0x00043FE2       CMP R2 45          ; '-'
+0x00043FE6       BNE atoi_loop
+0x00043FEE       LI R10 1
+0x00043FF6       ADD R8 R8 1
 atoi_loop:
-0x0004403A       LDB R2 [R8]
+0x00043FFA       LDB R2 [R8]
     ; end of string
-0x0004403E       CMP R2 0
-0x00044042       BEQ atoi_done
+0x00043FFE       CMP R2 0
+0x00044002       BEQ atoi_done
     ; only accept '0'..'9'
-0x0004404A       CMP R2 48       ; '0'
-0x0004404E       BLT atoi_done
-0x00044056       CMP R2 57       ; '9'
-0x0004405A       BGT atoi_done
+0x0004400A       CMP R2 48       ; '0'
+0x0004400E       BLT atoi_done
+0x00044016       CMP R2 57       ; '9'
+0x0004401A       BGT atoi_done
 
     ; digit = char - '0'
-0x00044062       SUB R2 R2 48
+0x00044022       SUB R2 R2 48
 
     ; result = result * 10 + digit
-0x00044066       LI  R3 10
-0x0004406E       MUL R9 R9 R3
-0x00044072       ADD R9 R9 R2
-0x00044076       ADD R8 R8 1
-0x0004407A       B atoi_loop
+0x00044026       LI  R3 10
+0x0004402E       MUL R9 R9 R3
+0x00044032       ADD R9 R9 R2
+0x00044036       ADD R8 R8 1
+0x0004403A       B atoi_loop
 atoi_done:
-0x00044082       CMP R10 1
-0x00044086       BNE atoi_positive
+0x00044042       CMP R10 1
+0x00044046       BNE atoi_positive
     ; negate NEG =)
-0x0004408E       NOT R9 R9
-0x00044092       ADD R9 R9 1
+0x0004404E       NOT R9 R9
+0x00044052       ADD R9 R9 1
 atoi_positive:
-0x00044096       MOV R1 R9
-0x0004409A       POP R10
-0x0004409E       POP R9
-0x000440A2       POP R8
-0x000440A6       POP LR
-0x000440AA       RET
+0x00044056       MOV R1 R9
+0x0004405A       POP R10
+0x0004405E       POP R9
+0x00044062       POP R8
+0x00044066       POP LR
+0x0004406A       RET
 
 
 ;==============================================================================
@@ -1746,23 +1748,23 @@ atoi_positive:
 ;==============================================================================
 
 main:
-0x000440AE       PUSH LR
-0x000440B2       PUSH R6
-0x000440B6       PUSH R7
-0x000440BA       PUSH R8
-0x000440BE       PUSH R9
-0x000440C2       PUSH R10
-0x000440C6       PUSH R11
+0x0004406E       PUSH LR
+0x00044072       PUSH R6
+0x00044076       PUSH R7
+0x0004407A       PUSH R8
+0x0004407E       PUSH R9
+0x00044082       PUSH R10
+0x00044086       PUSH R11
 
-0x000440CA       MOV R8 R1                  ; R8 = argc
-0x000440CE       MOV R9 R2                  ; R9 = argv
+0x0004408A       MOV R8 R1                  ; R8 = argc
+0x0004408E       MOV R9 R2                  ; R9 = argv
 
     ; Need at least one pathname
-0x000440D2       CMP R8 2
-0x000440D6       BLT usage
+0x00044092       CMP R8 2
+0x00044096       BLT usage
 
-0x000440DE       LI R10 1                   ; R10 = current argv index
-0x000440E6       LI R6 0                    ; R6 = return code
+0x0004409E       LI R10 1                   ; R10 = current argv index
+0x000440A6       LI R6 0                    ; R6 = return code
                                ; 0 = all successful
                                ; 1 = at least one failure
 
@@ -1773,8 +1775,8 @@ main:
 
 dir_loop:
 
-0x000440EE       CMP R10 R8
-0x000440F2       BGE dir_done
+0x000440AE       CMP R10 R8
+0x000440B2       BGE dir_done
 
     ;----------------------------------------------------------
     ; Get argv[R10]
@@ -1783,28 +1785,28 @@ dir_loop:
     ; R1 = argv[index] = pathname
     ;----------------------------------------------------------
 
-0x000440FA       MOV R2 R10
-0x000440FE       SHL R2 R2 2
-0x00044102       ADD R2 R9 R2
+0x000440BA       MOV R2 R10
+0x000440BE       SHL R2 R2 2
+0x000440C2       ADD R2 R9 R2
 
-0x00044106       LDW R1 [R2]                ; R1 = pathname
-0x0004410A       li  R2 0                   ; NS=0
+0x000440C6       LDW R1 [R2]                ; R1 = pathname
+0x000440CA       li  R2 0                   ; NS=0
 
 
     ;----------------------------------------------------------
     ; mkdir(pathname)
     ;----------------------------------------------------------
 
-0x00044112       BL mkdir
+0x000440D2       BL mkdir
 
-0x0004411A       MOV R11 R1                ; R11 = return value
+0x000440DA       MOV R11 R1                ; R11 = return value
 
     ; negative = failure
-0x0004411E       CMP R11 0
-0x00044122       BLT create_failed
+0x000440DE       CMP R11 0
+0x000440E2       BLT create_failed
 
-0x0004412A       ADD R10 R10 1
-0x0004412E       B dir_loop
+0x000440EA       ADD R10 R10 1
+0x000440EE       B dir_loop
 
 
 ;==============================================================================
@@ -1816,25 +1818,25 @@ create_failed:
     ; Print:
     ;   mkdir: cannot create <pathname>
 
-0x00044136       LI R1 error_prefix
-0x0004413E       BL puts
+0x000440F6       LI R1 error_prefix
+0x000440FE       BL puts
 
     ; argv[R10]
 
-0x00044146       MOV R2 R10
-0x0004414A       SHL R2 R2 2
-0x0004414E       ADD R2 R9 R2
+0x00044106       MOV R2 R10
+0x0004410A       SHL R2 R2 2
+0x0004410E       ADD R2 R9 R2
 
-0x00044152       LDW R1 [R2]
-0x00044156       BL puts
+0x00044112       LDW R1 [R2]
+0x00044116       BL puts
 
-0x0004415E       LI R1 newline_str_mkdir
-0x00044166       BL puts
+0x0004411E       LI R1 newline_str_mkdir
+0x00044126       BL puts
 
-0x0004416E       LI R6 1                    ; remember failure
+0x0004412E       LI R6 1                    ; remember failure
 
-0x00044176       ADD R10 R10 1
-0x0004417A       B dir_loop
+0x00044136       ADD R10 R10 1
+0x0004413A       B dir_loop
 
 
 ;==============================================================================
@@ -1843,17 +1845,17 @@ create_failed:
 
 dir_done:
 
-0x00044182       MOV R1 R6                  ; return status
+0x00044142       MOV R1 R6                  ; return status
 
-0x00044186       POP R11
-0x0004418A       POP R10
-0x0004418E       POP R9
-0x00044192       POP R8
-0x00044196       POP R7
-0x0004419A       POP R6
-0x0004419E       POP LR
+0x00044146       POP R11
+0x0004414A       POP R10
+0x0004414E       POP R9
+0x00044152       POP R8
+0x00044156       POP R7
+0x0004415A       POP R6
+0x0004415E       POP LR
 
-0x000441A2       RET
+0x00044162       RET
 
 
 ;==============================================================================
@@ -1862,11 +1864,11 @@ dir_done:
 
 usage:
 
-0x000441A6       LI R1 mkdir_usage_str
-0x000441AE       BL puts
+0x00044166       LI R1 mkdir_usage_str
+0x0004416E       BL puts
 
-0x000441B6       LI R1 1
-0x000441BE       B dir_done
+0x00044176       LI R1 1
+0x0004417E       B dir_done
 
 
 ;==============================================================================

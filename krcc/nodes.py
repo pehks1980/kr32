@@ -82,3 +82,15 @@ class While:
 class DoWhile:
     body: list
     condition: object
+
+# Represents one function parameter.
+# Example: int a
+@dataclass
+class Parameter:
+    var_type: str
+    name: str
+
+@dataclass
+class CallExpression:
+    name: str
+    arguments: list

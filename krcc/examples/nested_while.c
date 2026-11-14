@@ -14,6 +14,6 @@ int main(void) {
 
         x = x + 1;
     }
-
+    printf("exit: %d", x + y);
     return x + y;
 }
